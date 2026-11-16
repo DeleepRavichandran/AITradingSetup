@@ -1,0 +1,3 @@
+TradDt,BizDt,Sgmt,Src,FinInstrmTp,FinInstrmId,ISIN,TckrSymb,SctySrs,XpryDt,FininstrmActlXpryDt,StrkPric,OptnTp,FinInstrmNm,OpnPric,HghPric,LwPric,ClsPric,LastPric,PrvsClsgPric,UndrlygPric,SttlmPric,OpnIntrst,ChngInOpnIntrst,TtlTradgVol,TtlTrfVal,TtlNbOfTxsExctd,SsnId,NewBrdLotQty,Rmks,Rsvd1,Rsvd2,Rsvd3,Rsvd4
+2025-01-06,2025-01-06,CM,NSE,STK,1001,INE000X01010,SAMPLECO,EQ,,,,,SAMPLE COMPANY LTD,101.50,104.00,101.00,103.00,103.00,101.50,,103.00,,,300000,30900000.00,5200,F1,1,,,,,
+2025-01-06,2025-01-06,CM,NSE,STK,1003,IN0000000001,SAMPLEGS,GS,,,,,SAMPLE GSEC,99.00,99.00,99.00,99.00,99.00,99.00,,99.00,,,10,990.00,1,F1,1,,,,,

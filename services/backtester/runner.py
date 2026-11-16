@@ -20,6 +20,7 @@ from nseql.backtester.engine import Allocation, BacktestEngine, EngineResult
 from nseql.backtester.execution import ExecutionConfig
 from nseql.data.portal import DataPortal
 from nseql.data.store import Dataset
+from nseql.instruments import structure
 from nseql.instruments.rules import BrokerageProfile, ChargeSchedule, MarginRules
 from nseql.risk.limits import RiskLimits
 from nseql.strategies import registry
@@ -186,6 +187,10 @@ def run_backtest(cfg: BacktestConfig, data_dir: Path, *, portal: DataPortal | No
     flags = list(res.flags)
     if ds.synthetic:
         flags.insert(0, "SYNTHETIC DATA — results say nothing about real markets")
+    structure_warnings: list[str] = []
+    if not ds.synthetic and len(res.ts):
+        kinds = {"EQ" if portal.instruments[s].is_cash else portal.instruments[s].kind.value for s in portal.symbols}
+        structure_warnings = structure.window_warnings(kinds, pd.Timestamp(res.ts[0]).date(), pd.Timestamp(res.ts[-1]).date())
     payload = cfg.fingerprint_payload()
     src = {b: _source_hash(s) for b, s in zip(books, strategies)}
     fp = hashlib.sha256(json.dumps({"cfg": payload, "dataset": ds.content_hash, "src": src}, sort_keys=True).encode()).hexdigest()
@@ -206,6 +211,7 @@ def run_backtest(cfg: BacktestConfig, data_dir: Path, *, portal: DataPortal | No
                    "interval": cfg.interval, "symbols": len(portal.symbols)},
         "metrics": metrics, "per_book": per_book, "charges_breakdown": charge_break, "reconciliation": recon,
         "orders": counts, "fills": len(acct.fills), "open_positions": open_positions, "flags": flags,
+        "structure_warnings": structure_warnings,
         "strategies": [{"book": b, "name": ref.name, "params": s.params, "capital": ref.capital,
                         "hypothesis": s.hypothesis, "family": s.family}
                        for b, ref, s in zip(books, cfg.strategies, strategies)],
