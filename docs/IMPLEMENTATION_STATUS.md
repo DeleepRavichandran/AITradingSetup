@@ -31,7 +31,7 @@ without something only the operator can supply), **NOT IMPLEMENTED**.
 - DONE: immutable content-hashed datasets, raw-file retention, ingest audit trail, quality report,
   point-in-time portal, corporate actions (splits, bonuses, cash dividends), index membership
   records, generic CSV import, synthetic fixture, event store, market-structure timeline.
-- UNVERIFIED: Kite historical adapter.
+- UNVERIFIED (mock-tested): Kite login (`nseql kite-login`), instrument master, chunked historical candles and `nseql import-kite` for equities and indices. Limits: current listings only (no delisted names), no expired F&O contracts, no corporate-action feed, no point-in-time index membership, price bands unknown.
 - NOT IMPLEMENTED: incremental update jobs, streaming ingestion, fundamentals, a holiday
   calendar (operator must supply), real-time stale-feed monitoring against a live feed,
   strategies reading news events inside a backtest.

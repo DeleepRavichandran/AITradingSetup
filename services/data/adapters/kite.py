@@ -3,13 +3,17 @@
 Requires a Kite Connect subscription with the historical-data add-on and a valid daily
 access token (KITE_API_KEY / KITE_ACCESS_TOKEN in the environment — never in code or logs).
 
-STATUS: BLOCKED / UNVERIFIED. Request construction and response parsing are unit-tested
+STATUS: UNVERIFIED. Request construction and response parsing are unit-tested
 against a mocked transport using the documented response shape. No live call has been made
 from this environment, so behaviour against the real API is unverified.
 """
 from __future__ import annotations
 
+import hashlib
+import io
+import json
 import os
+import stat
 import time
 from datetime import datetime, timedelta
 
@@ -28,6 +32,47 @@ class CredentialsMissing(RuntimeError):
     pass
 
 
+class KiteAuthError(PermissionError):
+    """The access token is missing, expired or rejected. Kite tokens expire every day (~06:00 IST)."""
+
+
+LOGIN_URL = "https://kite.zerodha.com/connect/login?v=3&api_key={api_key}"
+
+
+def login_url(api_key: str) -> str:
+    return LOGIN_URL.format(api_key=api_key)
+
+
+def exchange_request_token(api_key: str, api_secret: str, request_token: str, *,
+                           transport: httpx.BaseTransport | None = None) -> dict:
+    """Step 2 of the daily login: swap the request_token (from the redirect URL) for an access token."""
+    checksum = hashlib.sha256(f"{api_key}{request_token}{api_secret}".encode()).hexdigest()
+    with httpx.Client(base_url=BASE_URL, transport=transport, timeout=30.0, headers={"X-Kite-Version": "3"}) as c:
+        r = c.post("/session/token", data={"api_key": api_key, "request_token": request_token, "checksum": checksum})
+    if r.status_code != 200:
+        raise KiteAuthError(f"token exchange failed (HTTP {r.status_code}): {r.text[:200]}")
+    return r.json()["data"]
+
+
+def token_file(experiments_dir: str | os.PathLike) -> "os.PathLike":
+    from pathlib import Path
+    return Path(experiments_dir) / "kite_session.json"
+
+
+def save_session(experiments_dir, api_key: str, access_token: str) -> None:
+    """The token is a secret: stored in the git-ignored experiments folder, readable only by the owner."""
+    from datetime import datetime
+    f = token_file(experiments_dir)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps({"api_key": api_key, "access_token": access_token, "saved_at": datetime.now().isoformat(timespec="seconds")}))
+    f.chmod(stat.S_IRUSR | stat.S_IWUSR)
+
+
+def load_session(experiments_dir) -> dict | None:
+    f = token_file(experiments_dir)
+    return json.loads(f.read_text()) if f.exists() else None
+
+
 class KiteHistorical:
     def __init__(self, api_key: str | None = None, access_token: str | None = None, *,
                  transport: httpx.BaseTransport | None = None, min_interval_s: float = 0.35):
@@ -40,6 +85,25 @@ class KiteHistorical:
         self._min_interval = min_interval_s      # stay under the documented 3 req/s historical limit
         self._last = 0.0
 
+    def _get(self, path: str, **params) -> httpx.Response:
+        wait = self._min_interval - (time.monotonic() - self._last)
+        if wait > 0:
+            time.sleep(wait)
+        r = self._client.get(path, params=params)
+        self._last = time.monotonic()
+        if r.status_code in (401, 403):
+            raise KiteAuthError("Kite rejected the access token (it expires daily). Run `nseql kite-login` again.")
+        r.raise_for_status()
+        return r
+
+    def instruments(self, exchange: str = "NSE") -> pd.DataFrame:
+        """Instrument master for one exchange (CSV). Lists CURRENT instruments only: expired contracts are not included."""
+        df = pd.read_csv(io.StringIO(self._get(f"/instruments/{exchange}").text))
+        for c in ("expiry",):
+            if c in df:
+                df[c] = pd.to_datetime(df[c], errors="coerce").dt.date
+        return df
+
     def candles(self, instrument_token: int, interval: str, start: datetime, end: datetime, oi: bool = False) -> pd.DataFrame:
         """Bars in the platform convention (exchange-local, tz-naive, stamped at bar END)."""
         out = []
@@ -47,19 +111,14 @@ class KiteHistorical:
         cur = start
         while cur <= end:
             to = min(cur + step, end)
-            wait = self._min_interval - (time.monotonic() - self._last)
-            if wait > 0:
-                time.sleep(wait)
-            r = self._client.get(f"/instruments/historical/{instrument_token}/{KITE_INTERVAL[interval]}",
-                                 params={"from": cur.strftime("%Y-%m-%d %H:%M:%S"), "to": to.strftime("%Y-%m-%d %H:%M:%S"),
-                                         "oi": int(oi)})
-            self._last = time.monotonic()
-            r.raise_for_status()
+            r = self._get(f"/instruments/historical/{instrument_token}/{KITE_INTERVAL[interval]}",
+                          **{"from": cur.strftime("%Y-%m-%d %H:%M:%S"), "to": to.strftime("%Y-%m-%d %H:%M:%S"), "oi": int(oi)})
             body = r.json()
             if body.get("status") != "success":
                 raise RuntimeError(f"kite error: {body.get('message', body)}")
             out += body["data"]["candles"]
             cur = to + timedelta(seconds=1)
+        self.last_raw = out
         return self.parse(out, interval)
 
     @staticmethod

@@ -24,6 +24,12 @@ def main(argv: list[str] | None = None) -> int:
     q = sub.add_parser("quality", help="data-quality report for a dataset"); q.add_argument("dataset"); q.add_argument("--interval", default="1d")
     i = sub.add_parser("import-bhavcopy", help="import NSE bhavcopy files you are licensed to use")
     i.add_argument("dataset_id"); i.add_argument("files", nargs="+"); i.add_argument("--licence", required=True)
+    kl = sub.add_parser("kite-login", help="daily Kite login: prints the login URL, then exchanges the request_token for an access token")
+    kl.add_argument("--request-token", help="the request_token from the redirect URL after you log in")
+    ik = sub.add_parser("import-kite", help="import equity/index candles from Kite Connect into a dataset")
+    ik.add_argument("dataset_id"); ik.add_argument("--symbols", help="comma separated, e.g. RELIANCE,TCS,INFY")
+    ik.add_argument("--symbols-file", help="one symbol per line"); ik.add_argument("--start", required=True); ik.add_argument("--end")
+    ik.add_argument("--interval", default="1d"); ik.add_argument("--licence", required=True)
     v = sub.add_parser("serve", help="start the API server"); v.add_argument("--host", default="127.0.0.1"); v.add_argument("--port", type=int, default=8000)
     a = ap.parse_args(argv)
 
@@ -68,6 +74,39 @@ def main(argv: list[str] | None = None) -> int:
         from nseql.data.adapters.bhavcopy import import_bhavcopies
         d = import_bhavcopies([Path(f) for f in a.files], s.data_dir, a.dataset_id, licence=a.licence)
         print(f"imported {len(d.instruments)} instruments into {d.root}; content_hash={d.content_hash}")
+    elif a.cmd == "kite-login":
+        import os
+
+        from nseql.data.adapters.kite import exchange_request_token, login_url, save_session
+        key, secret = os.environ.get("KITE_API_KEY", ""), os.environ.get("KITE_API_SECRET", "")
+        if not key or not secret:
+            print("set KITE_API_KEY and KITE_API_SECRET in the environment first"); return 2
+        if not a.request_token:
+            print("1. Open this URL and log in:\n   " + login_url(key) + "\n2. After login you are redirected to your registered redirect URL;\n"
+                  "   copy the request_token=... value from that address, then run:\n   nseql kite-login --request-token <value>")
+            return 0
+        data = exchange_request_token(key, secret, a.request_token)
+        save_session(s.experiments_dir, key, data["access_token"])
+        print(f"logged in as {data.get('user_id')}; token saved to {s.experiments_dir}/kite_session.json (valid until about 06:00 IST tomorrow)")
+    elif a.cmd == "import-kite":
+        import os
+        from datetime import date as _d
+
+        from nseql.data.adapters.kite import KiteHistorical, load_session
+        from nseql.data.adapters.kite_import import import_kite
+        ses = load_session(s.experiments_dir) or {}
+        api = KiteHistorical(os.environ.get("KITE_API_KEY") or ses.get("api_key"), os.environ.get("KITE_ACCESS_TOKEN") or ses.get("access_token"))
+        syms = [x.strip() for x in (a.symbols or "").split(",") if x.strip()]
+        if a.symbols_file:
+            syms += [l.strip() for l in Path(a.symbols_file).read_text().splitlines() if l.strip() and not l.startswith("#")]
+        if not syms:
+            print("give --symbols or --symbols-file (I do not hard-code index constituents: they change)"); return 2
+        ds, missing = import_kite(api, syms, _d.fromisoformat(a.start), _d.fromisoformat(a.end) if a.end else _d.today(), s.data_dir, a.dataset_id,
+                                  licence=a.licence, interval=a.interval)
+        print(f"dataset {ds.id}: {len(ds.instruments)} instruments, content_hash={ds.content_hash}")
+        if missing:
+            print("not imported:", ", ".join(missing))
+        print("next: nseql quality", ds.id)
     elif a.cmd == "serve":
         import uvicorn
         uvicorn.run("nseql.api.main:app_factory", factory=True, host=a.host, port=a.port)

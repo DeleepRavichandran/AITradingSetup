@@ -55,6 +55,28 @@ docker compose -f infra/docker-compose.yml exec api nseql import-bhavcopy nse_eo
 
 Back up the volume; the registry is the lab's memory.
 
+## 3b. Kite Connect: login and 2026 data
+
+Needs a Kite Connect plan that includes historical data. In the Kite developer console create an
+app; set `KITE_API_KEY` and `KITE_API_SECRET` in `.env` (never in git). Then, each trading day:
+
+```bash
+docker compose -f infra/docker-compose.yml exec api nseql kite-login          # prints the login URL
+# log in, copy request_token=... from the redirect address, then:
+docker compose -f infra/docker-compose.yml exec api nseql kite-login --request-token <value>
+```
+
+Import candles (Kite lists current instruments only; supply your own symbol list, e.g. one symbol per line):
+
+```bash
+docker compose -f infra/docker-compose.yml exec api nseql import-kite kite_2026 --symbols-file /data/nifty50.txt \
+    --start 2026-01-01 --licence "Kite Connect subscription, personal research use"
+docker compose -f infra/docker-compose.yml exec api nseql quality kite_2026
+```
+
+Check the quality report for unexplained price jumps (splits, bonuses) before running anything.
+The token expires every morning; a stale token shows up as a clear error, not as bad data.
+
 ## 4. WhatsApp alerts
 
 Uses the WhatsApp Business Cloud API (Meta). You need a Meta developer app with the WhatsApp
