@@ -150,5 +150,29 @@ class DataPortal:
         return [s for s in self._a if self._pos[s] >= 0 and self.instruments[s].listed_on(d)]
 
 
+class GuardedPortal(DataPortal):
+    """Look-ahead trap. Every value that lies in the future of the cursor is replaced by noise and
+    the true value is revealed only when the cursor reaches it. A causal strategy cannot tell the
+    difference; a strategy that reads ahead — by any route, including engine internals — sees
+    garbage and behaves differently from its run on the clean portal."""
+
+    def __init__(self, source: DataPortal, seed: int = 7):
+        super().__init__(source.frames(), source.instruments, source.actions, source.interval)
+        rng = np.random.default_rng(seed)
+        self._real = {s: {f: a[f].copy() for f in FIELDS} for s, a in self._a.items()}
+        for a in self._a.values():
+            n = len(a["ts"])
+            for f in FIELDS:
+                a[f] = (a[f] * rng.uniform(0.4, 1.6, n)).astype(a[f].dtype)
+
+    def advance(self, ts: int) -> dict[str, Bar]:
+        for s, a in self._a.items():
+            i = self._pos[s] + 1
+            if i < len(a["ts"]) and a["ts"][i] == ts:
+                for f in FIELDS:
+                    a[f][i] = self._real[s][f][i]
+        return super().advance(ts)
+
+
 def derivative_symbols(ds: Dataset, underlying: str, kinds=("FUT", "OPT")) -> list[str]:
     return sorted(s for s, i in ds.instruments.items() if i.underlying == underlying and i.kind.value in kinds)
