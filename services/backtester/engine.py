@@ -7,8 +7,9 @@ Per timeline step, in this fixed order:
 
   1. session start (first bar of a date): corporate actions effective that date
   2. match orders that were submitted on EARLIER steps against this step's bars
-  3. mark positions to this step's closes; margin surveillance
-  4. intraday square-off of MIS positions at/after the square-off time
+  3. mark positions to this step's closes; margin surveillance (a breach queues liquidation
+     orders, which like all orders can first trade on the next bar)
+  4. from the intraday cut-off bar onward, queue square-off orders for MIS positions
   5. each strategy's on_bar (may submit orders -> pre-trade risk -> resting queue)
   6. session end (last bar of a date): expiry settlement, futures MTM, DAY-order expiry
 
@@ -26,7 +27,7 @@ import numpy as np
 import pandas as pd
 
 from nseql.backtester import margin as margin_mod
-from nseql.backtester.execution import ExecutionConfig, _slip_fraction, fillable_qty, is_stop_like, match_price
+from nseql.backtester.execution import ExecutionConfig, fillable_qty, is_stop_like, match_price
 from nseql.backtester.orders import Fill, Order, OrderStatus, OrderType
 from nseql.backtester.portfolio import Account
 from nseql.data.portal import Bar, DataPortal
@@ -191,6 +192,7 @@ class BacktestEngine:
         self._sod_equity: dict[str, int] = {}
         self._orders_today: dict[str, int] = defaultdict(int)
         self._halted_today: set[str] = set()
+        self._liquidating: set[str] = set()      # books being wound down after a margin call
         self._mis_closed_today = False
         self._dp_charged: set[tuple] = set()
         self._ctx = {a.book: _Ctx(self, a) for a in allocations}
@@ -260,7 +262,7 @@ class BacktestEngine:
         for s, b in bars.items():
             self.account.mark(s, b.close)
         self._margin_watch(bars, t)
-        if self.intraday and not self._mis_closed_today and t.time() >= MIS_SQUARE_OFF:
+        if self.intraday and t.time() >= MIS_SQUARE_OFF:
             self._square_off_mis(bars, t)
         for a in self.allocs:
             ctx = self._ctx[a.book]
@@ -330,6 +332,8 @@ class BacktestEngine:
             return f"KILL_SWITCH: {self.kill.reason}"
         if inst is None:
             return "UNKNOWN_INSTRUMENT"
+        if o.book in self._liquidating or any(x.forced for x in self._active(o.book, o.symbol)):
+            return "LIQUIDATION_PENDING (a forced exit is working; new orders are refused)"
         if not inst.tradable:
             return "NOT_TRADABLE (index)"
         if not inst.listed_on(d):
@@ -423,8 +427,8 @@ class BacktestEngine:
 
     def _cancel(self, order_id: int, reason: str, book: str | None = None, status=OrderStatus.CANCELLED) -> None:
         o = self.orders[order_id - 1]
-        if not o.active or (book is not None and o.book != book):
-            return
+        if not o.active or (book is not None and (o.book != book or o.forced)):
+            return                              # strategies cannot cancel other books' orders or a liquidation
         o.status = status
         o.reason = reason
         self._event("ORDER_EXPIRED" if status is OrderStatus.EXPIRED else "ORDER_CANCELLED",
@@ -432,70 +436,93 @@ class BacktestEngine:
 
     # =============================================================== matching
     def _match(self, k: int, bars: dict[str, Bar], t: pd.Timestamp) -> None:
+        """Match resting orders against this step's bars.
+
+        Three passes, so that liquidity is only ever consumed by orders that actually fill:
+          1. reachability — which orders could trade on this bar at all (price + some volume);
+          2. OCO — if several siblings are reachable, exactly one survives (the stop, under the
+             default worst-case policy), decided BEFORE any volume is handed out;
+          3. allocation — in submission order, each survivor takes volume, passes its margin check
+             and fills; an order that is rejected or cannot fill takes no volume. A multi-leg group
+             reserves volume for all of its legs or for none.
+        """
         self._open = [o for o in self._open if o.active]
-        tentative: dict[int, tuple[int, float]] = {}
-        used: dict[str, int] = defaultdict(int)
+        prev = self._prev_session_close
+        reach: list[Order] = []
         for o in self._open:
             bar = bars.get(o.symbol)
-            if bar is None or o.eligible_seq > k:
+            if bar is None or o.eligible_seq > k or bar.volume <= 0:
                 continue
+            if o.forced:                       # a liquidation order never exceeds what is still held
+                pos = self.account.books[o.book].positions.get(o.symbol)
+                need = -pos.qty if pos else 0
+                if need * o.side <= 0:
+                    self._cancel(o.id, "position already closed")
+                    continue
+                o.qty = o.filled_qty + min(o.remaining, abs(need))
             inst = self.instruments[o.symbol]
-            q = fillable_qty(o, inst, bar, self.cfg, used[o.symbol])
-            if q <= 0:
-                continue
-            px = match_price(o, inst, bar, self.cfg, q, self._prev_session_close.get(o.symbol))
-            if px is None:
-                continue
-            tentative[o.id] = (q, px)
-            used[o.symbol] += q
-        if not tentative:
+            probe = fillable_qty(o, inst, bar, self.cfg, 0)
+            if probe > 0 and match_price(o, inst, bar, self.cfg, probe, prev.get(o.symbol)) is not None:
+                reach.append(o)
+        if not reach:
             return
-        by_id = {o.id: o for o in self._open}
-        # one-cancels-other: resolve bars in which more than one sibling is reachable
+        skip: set[int] = set()
         oco: dict[tuple, list[Order]] = defaultdict(list)
-        for oid in tentative:
-            o = by_id[oid]
+        for o in reach:
             if o.oco_group:
                 oco[(o.book, o.oco_group)].append(o)
         for sibs in oco.values():
             if len(sibs) > 1:
                 sibs.sort(key=lambda o: (0 if (self.cfg.oco_policy == "worst" and is_stop_like(o)) else 1, o.id))
-                for loser in sibs[1:]:
-                    del tentative[loser.id]
-        # atomic multi-leg groups
+                skip.update(x.id for x in sibs[1:])
         groups: dict[tuple, list[Order]] = defaultdict(list)
         for o in self._open:
             if o.group_id is not None:
                 groups[(o.book, o.group_id)].append(o)
-        for legs in groups.values():
-            if not all(l.id in tentative and tentative[l.id][0] == l.remaining for l in legs):
-                for l in legs:
-                    tentative.pop(l.id, None)
+        reachable = {o.id for o in reach}
+        used: dict[str, int] = defaultdict(int)
         done_groups: set[tuple] = set()
-        for oid in sorted(tentative):
-            o = by_id[oid]
-            if not o.active:
+        for o in sorted(reach, key=lambda x: x.id):
+            if not o.active or o.id in skip:
                 continue
             if o.group_id is not None:
                 key = (o.book, o.group_id)
                 if key in done_groups:
                     continue
                 done_groups.add(key)
-                legs = groups[key]
-                deltas = [(l.symbol, l.side * l.qty, to_paise(tentative[l.id][1]), l.product) for l in legs]
-                if self._excess_after(o.book, deltas) < 0:
-                    for l in legs:
-                        self._reject(l, "INSUFFICIENT_MARGIN (at fill, combined legs)")
+                plan: list[tuple[Order, int, float]] | None = []
+                local: dict[str, int] = defaultdict(int)
+                for leg in groups[key]:
+                    q = (fillable_qty(leg, self.instruments[leg.symbol], bars[leg.symbol], self.cfg, used[leg.symbol] + local[leg.symbol])
+                         if leg.id in reachable else 0)
+                    px = (match_price(leg, self.instruments[leg.symbol], bars[leg.symbol], self.cfg, q, prev.get(leg.symbol))
+                          if q > 0 and q == leg.remaining else None)
+                    if px is None:
+                        plan = None
+                        break
+                    plan.append((leg, q, px))
+                    local[leg.symbol] += q
+                if plan is None:
+                    continue                    # nothing reserved: other orders may use the volume
+                if self._excess_after(o.book, [(leg.symbol, leg.side * q, to_paise(px), leg.product) for leg, q, px in plan]) < 0:
+                    for leg, _, _ in plan:
+                        self._reject(leg, "INSUFFICIENT_MARGIN (at fill, combined legs)")
                     continue
-                for l in legs:
-                    self._fill(l, *tentative[l.id], t, bar_volume=bars[l.symbol].volume)
+                for leg, q, px in plan:
+                    self._fill(leg, q, px, t, bar_volume=bars[leg.symbol].volume)
+                    used[leg.symbol] += q
                 continue
-            q, px = tentative[oid]
-            if not self._reduces(o.book, o.symbol, o.side * q):
+            inst, bar = self.instruments[o.symbol], bars[o.symbol]
+            q = fillable_qty(o, inst, bar, self.cfg, used[o.symbol])
+            px = match_price(o, inst, bar, self.cfg, q, prev.get(o.symbol)) if q > 0 else None
+            if px is None:
+                continue
+            if not o.forced and not self._reduces(o.book, o.symbol, o.side * q):
                 if self._excess_after(o.book, [(o.symbol, o.side * q, to_paise(px), o.product)]) < 0:
                     self._reject(o, "INSUFFICIENT_MARGIN (at fill)")
                     continue
-            self._fill(o, q, px, t, bar_volume=bars[o.symbol].volume)
+            self._fill(o, q, px, t, o.tag if o.forced else "order", bar_volume=bar.volume)
+            used[o.symbol] += q
             if o.oco_group:
                 for sib in self._active(o.book):
                     if sib.oco_group == o.oco_group and sib.id != o.id:
@@ -534,19 +561,20 @@ class BacktestEngine:
             strat.on_fill(self._ctx[o.book], f)
         return f
 
-    def _force_close(self, book: str, symbol: str, bar_close: float, bar: Bar | None, t, reason: str) -> None:
+    def _liquidate(self, book: str, symbol: str, reason: str) -> bool:
+        """Queue a forced market order that flattens a position. Like every other order it can first
+        trade on the NEXT bar, needs that bar to have volume, is subject to the participation cap and
+        pays spread and impact. It stays working until the position is flat. Returns True if a new
+        order was created."""
         pos = self.account.books[book].positions.get(symbol)
-        if not pos:
-            return
-        inst = self.instruments[symbol]
-        side = -1 if pos.qty > 0 else 1
-        qty = abs(pos.qty)
-        slip = _slip_fraction(self.cfg, inst, qty, bar, bar_close) if bar else self.cfg.spread_bps_eq / 2e4
-        px = max(round_to_tick(bar_close * (1 + side * slip), inst.tick_size, side), inst.tick_size)
-        o = Order(len(self.orders) + 1, book, symbol, side, qty, OrderType.MARKET, product=pos.product,
-                  tag=reason, submitted_ts=t, eligible_seq=self._k, forced=True)
+        if not pos or any(o.forced for o in self._active(book, symbol)):
+            return False
+        o = Order(len(self.orders) + 1, book, symbol, -1 if pos.qty > 0 else 1, abs(pos.qty), OrderType.MARKET,
+                  product=pos.product, tif="GTC", tag=reason, submitted_ts=self._t, eligible_seq=self._k + 1, forced=True)
         self.orders.append(o)
-        self._fill(o, qty, px, t, reason)
+        self._open.append(o)
+        self._event("LIQUIDATION_ORDER", order_id=o.id, book=book, symbol=symbol, side=o.side, qty=o.qty, reason=reason)
+        return True
 
     # =============================================================== session events
     def _session_start(self, prev: date | None, d: date, t) -> None:
@@ -577,34 +605,43 @@ class BacktestEngine:
                 self._halted_today.add(b.id)
                 self._event("DAILY_LOSS_HALT", book=b.id, equity=eq / 100, start_of_day=sod / 100)
             if not b.positions:
+                self._liquidating.discard(b.id)
                 continue
-            req = self._required(b.id)
-            if eq - req < 0 and any(self.instruments[s].is_derivative or p.product == "MIS" or p.qty < 0
-                                    for s, p in b.positions.items()):
-                self._event("MARGIN_CALL", book=b.id, equity=eq / 100, required=req / 100)
-                self.flags.add("margin call occurred")
-                if self.liquidate:
-                    for o in self._active(b.id):
+            if b.id not in self._liquidating:
+                req = self._required(b.id)
+                if eq - req < 0 and any(self.instruments[s].is_derivative or p.product == "MIS" or p.qty < 0
+                                        for s, p in b.positions.items()):
+                    self._event("MARGIN_CALL", book=b.id, equity=eq / 100, required=req / 100)
+                    self.flags.add("margin call occurred")
+                    if self.liquidate:
+                        self._liquidating.add(b.id)
+            if b.id in self._liquidating:       # the breach is known at this bar's close; exits start next bar
+                for o in self._active(b.id):
+                    if not o.forced:
                         self._cancel(o.id, "margin call")
-                    for s in sorted(b.positions):
-                        if s in bars and bars[s].volume > 0:
-                            self._force_close(b.id, s, bars[s].close, bars[s], t, "margin_call")
+                for s in sorted(b.positions):
+                    self._liquidate(b.id, s, "margin_call")
 
     def _square_off_mis(self, bars: dict[str, Bar], t) -> None:
+        """From the cut-off bar onward: cancel working intraday orders and queue liquidation orders."""
         self._mis_closed_today = True
         for o in self._active():
-            if o.product == "MIS":
+            if o.product == "MIS" and not o.forced:
                 self._cancel(o.id, "intraday square-off")
         for b in self.account.books.values():
             for s in sorted(b.positions):
-                if b.positions[s].product == "MIS":
-                    px = bars[s].close if s in bars else self.portal.last(s)
+                if b.positions[s].product == "MIS" and self._liquidate(b.id, s, "squareoff"):
                     self._event("SQUARE_OFF", book=b.id, symbol=s)
-                    self._force_close(b.id, s, px, bars.get(s), t, "squareoff")
 
     def _session_end(self, d: date, t, bars: dict[str, Bar], k: int) -> None:
         if self.intraday:
-            self._square_off_mis(bars, t)      # nothing intraday may survive the session
+            self._square_off_mis(bars, t)
+            for b in self.account.books.values():
+                for sym, pos in b.positions.items():
+                    if pos.product == "MIS":     # no bar with volume was left to trade on: do not invent a fill
+                        self.flags.add("an intraday (MIS) position could not be squared off before the close and was "
+                                       "carried to the next session (a real broker would auction/penalise it)")
+                        self._event("MIS_CARRIED_OVERNIGHT", book=b.id, symbol=sym, qty=pos.qty)
         for o in self._active():
             if o.tif == "DAY" and o.eligible_seq <= k:
                 self._cancel(o.id, "DAY order expired at session end", status=OrderStatus.EXPIRED)

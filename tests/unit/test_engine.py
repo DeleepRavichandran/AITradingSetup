@@ -146,7 +146,7 @@ def test_intraday_mis_positions_are_squared_off_and_shorts_allowed():
     res = run({"AAA": frame(rows, ts=ts)}, [EQ], {0: lambda c: c.order("AAA", -100, product="MIS"),
                                                   7: lambda c: c.order("AAA", 10, product="MIS")}, interval="1m")
     sq = [f for f in res.account.fills if f.reason == "squareoff"]
-    assert len(sq) == 1 and sq[0].ts == pd.Timestamp("2025-01-06 15:20") and sq[0].qty == 100
+    assert len(sq) == 1 and sq[0].ts == pd.Timestamp("2025-01-06 15:21") and sq[0].qty == 100   # bar after the cut-off
     late = [o for o in res.orders if not o.forced][1]
     assert late.reason == "MIS_AFTER_SQUARE_OFF" and not res.account.books["t"].positions
 
