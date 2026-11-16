@@ -185,6 +185,7 @@ class BacktestEngine:
         self._k = 0
         self._t = pd.Timestamp(0)
         self._last_of_session = False
+        self._cur_date = None
         self._group_seq = 0
         self._prev_session_close: dict[str, float] = {}
         self._sod_equity: dict[str, int] = {}
@@ -213,44 +214,15 @@ class BacktestEngine:
             return EngineResult(self.account, self.orders, self.events, tl, eq, beq, cash, gross, mused,
                                 ["no data in range"], "no data in range")
         dates = tl.astype("datetime64[ns]").astype("datetime64[D]")
-        t0 = pd.Timestamp(tl[0])
-        for a in self.allocs:
-            self.account.deposit(a.book, to_paise(a.capital), t0)
-        for a in self.allocs:
-            self._ctx[a.book].now = t0
-            a.strategy.on_start(self._ctx[a.book])
-        cur_date = None
-        prev_date = None
+        self.begin(pd.Timestamp(tl[0]))
         error = None
         try:
             for k in range(n):
-                self._k = k
-                t = self._t = pd.Timestamp(tl[k])
                 bars = self.portal.advance(int(tl[k]))
-                d = t.date()
-                if d != cur_date:
-                    prev_date, cur_date = cur_date, d
-                    self._session_start(prev_date, d, t)
-                self._last_of_session = k == n - 1 or dates[k + 1] != dates[k]
-                self._match(k, bars, t)
-                for s, b in bars.items():
-                    self.account.mark(s, b.close)
-                self._margin_watch(bars, t)
-                if self.intraday and not self._mis_closed_today and t.time() >= MIS_SQUARE_OFF:
-                    self._square_off_mis(bars, t)
-                for a in self.allocs:
-                    ctx = self._ctx[a.book]
-                    ctx.now = t
-                    a.strategy.on_bar(ctx)
-                if self._last_of_session:
-                    self._session_end(d, t, bars, k)
-                eq[k] = self.account.equity()
-                cash[k] = self.account.cash
+                self.step(k, pd.Timestamp(tl[k]), bars, k == n - 1 or dates[k + 1] != dates[k])
+                eq[k], cash[k], gross[k], mused[k] = self.snapshot()
                 for a in self.allocs:
                     beq[a.book][k] = self.account.book_equity(a.book)
-                gross[k] = sum(abs(p.qty) * self.account.marks.get(p.symbol, 0)
-                               for b in self.account.books.values() for p in b.positions.values())
-                mused[k] = sum(self._required(b.id) for b in self.account.books.values())
                 if len(self.events) > self._max_events:
                     raise RuntimeError("event budget exceeded")
         except Exception as ex:  # a failing strategy must fail the run loudly, never silently
@@ -264,6 +236,44 @@ class BacktestEngine:
             self.flags.add("charge schedule extrapolated before its coverage start")
         return EngineResult(self.account, self.orders, self.events, tl, eq, beq, cash, gross, mused,
                             sorted(self.flags), error)
+
+    # =============================================================== stepping (shared by backtest and paper trading)
+    def begin(self, t0: pd.Timestamp) -> None:
+        self._t = t0
+        self._cur_date = None
+        for a in self.allocs:
+            self.account.deposit(a.book, to_paise(a.capital), t0)
+        for a in self.allocs:
+            self._ctx[a.book].now = t0
+            a.strategy.on_start(self._ctx[a.book])
+
+    def step(self, k: int, t: pd.Timestamp, bars: dict[str, Bar], last_of_session: bool) -> None:
+        """Process one timeline step. The caller must already have advanced the portal to `t`."""
+        self._k = k
+        self._t = t
+        d = t.date()
+        if d != self._cur_date:
+            prev, self._cur_date = self._cur_date, d
+            self._session_start(prev, d, t)
+        self._last_of_session = last_of_session
+        self._match(k, bars, t)
+        for s, b in bars.items():
+            self.account.mark(s, b.close)
+        self._margin_watch(bars, t)
+        if self.intraday and not self._mis_closed_today and t.time() >= MIS_SQUARE_OFF:
+            self._square_off_mis(bars, t)
+        for a in self.allocs:
+            ctx = self._ctx[a.book]
+            ctx.now = t
+            a.strategy.on_bar(ctx)
+        if last_of_session:
+            self._session_end(d, t, bars, k)
+
+    def snapshot(self) -> tuple[int, int, int, int]:
+        gross = sum(abs(p.qty) * self.account.marks.get(p.symbol, 0)
+                    for b in self.account.books.values() for p in b.positions.values())
+        return (self.account.equity(), self.account.cash, gross,
+                sum(self._required(b.id) for b in self.account.books.values()))
 
     # =============================================================== helpers
     def _event(self, typ: str, **kw) -> None:
