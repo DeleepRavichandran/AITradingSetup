@@ -15,7 +15,7 @@ import pandas as pd
 from scipy import stats
 
 from nseql.analytics.metrics import TRADING_DAYS, drawdown_stats, sharpe
-from nseql.backtester.runner import BacktestConfig, StrategyRef, run_backtest
+from nseql.backtester.runner import BacktestConfig, run_backtest
 from nseql.data.store import Dataset
 from nseql.research import sandbox
 

@@ -168,7 +168,7 @@ def create_app() -> FastAPI:
             "llm": {"configured": llm_mod.credentials_present(), "model": llm_mod.MODEL},
             "sandbox": {"network_namespace": sandbox.network_isolation_available(), **sandbox.SandboxLimits().__dict__},
             "kill_switch": {"engaged": st.kill.engaged, "reason": st.kill.reason},
-            "counts": {"runs": len(reg.runs(limit=100000)), "hypotheses": len(reg.hypotheses(100000)), "lessons": len(reg.lessons(100000)),
+            "counts": {"runs": len(reg.runs(limit=100000)), "hypotheses": sum(h["origin"] != "system" for h in reg.hypotheses(100000)), "lessons": len(reg.lessons(100000)),
                        "experiments": len(reg.experiments(100000)), "paper_sessions": len(st.sessions), "trials_for_dsr": reg.trial_count(),
                        "jobs_running": sum(j["status"] == "running" for j in st.jobs.values())},
             "storage": {"experiments_dir": str(st.exp_dir), "data_dir": str(st.data_dir), "disk_free_gb": round(du.free / 1e9, 1),
@@ -292,7 +292,7 @@ def create_app() -> FastAPI:
                          "above_50d": bool(c[-1] > c[-50:].mean()), "traded_value": float((b["close"] * b["volume"]).tail(20).median()),
                          "listed_to": str(i.listed_to) if i.listed_to else None})
         eq = [r for r in rows if r["kind"] != "INDEX"]
-        corr = pd.DataFrame({k: v for k, v in rets.items() if d.instruments[k].is_cash}).tail(120).corr()
+        corr = pd.DataFrame({k: v for k, v in rets.items() if d.instruments[k].is_cash}).tail(120).dropna(axis=1, thresh=60).corr()
         return clean({"dataset_id": d.id, "synthetic": d.synthetic, "as_of": part.val_end,
                       "as_of_note": "statistics use development + validation data only; the sealed window is never shown here",
                       "brief": brief.model_dump(), "symbols": rows,

@@ -101,6 +101,8 @@ class Registry:
                    extra: dict | None = None) -> None:
         s0 = summary["strategies"][0] if summary.get("strategies") else {}
         names = "+".join(s["name"] for s in summary.get("strategies", []))
+        if hypothesis_id and names in ("generated", "g", "editor"):
+            names = f"gen:{hypothesis_id}"
         self._x("INSERT OR REPLACE INTO runs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (
             run_id, now(), kind, partition, experiment_id, hypothesis_id, summary.get("label", ""), names,
             s0.get("family", ""), J(s0.get("params", {})), summary["dataset"]["id"], summary["dataset"]["content_hash"],

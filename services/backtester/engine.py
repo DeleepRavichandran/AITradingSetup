@@ -31,7 +31,7 @@ from nseql.backtester.orders import Fill, Order, OrderStatus, OrderType
 from nseql.backtester.portfolio import Account
 from nseql.data.portal import Bar, DataPortal
 from nseql.instruments.calendar import MIS_SQUARE_OFF, is_intraday
-from nseql.instruments.models import Instrument, Kind
+from nseql.instruments.models import Instrument
 from nseql.instruments.rules import ChargeSchedule, MarginRules
 from nseql.money import round_to_tick, to_paise
 from nseql.risk.limits import KillSwitch, RiskLimits

@@ -1,0 +1,53 @@
+# NSE AI Quant Lab — single-host deployment.
+#
+#   Local:                docker compose -f infra/docker-compose.yml up --build      -> http://localhost:8080
+#   Internet-facing:      set NSEQL_DOMAIN and NSEQL_API_TOKEN in .env, then
+#                         docker compose -f infra/docker-compose.yml --profile public up -d --build
+#                         Caddy obtains a TLS certificate for NSEQL_DOMAIN automatically.
+#
+# The API refuses to start without NSEQL_API_TOKEN (NSEQL_REQUIRE_AUTH=true).
+# LIVE_TRADING_ENABLED is pinned to false here on purpose; see docs/LIVE_READINESS_CHECKLIST.md.
+# HUMAN_APPROVAL_SECRET is deliberately NOT passed to any container.
+services:
+  api:
+    build: { context: .., dockerfile: infra/Dockerfile.api }
+    environment:
+      NSEQL_API_TOKEN: ${NSEQL_API_TOKEN:?set NSEQL_API_TOKEN in .env}
+      NSEQL_REQUIRE_AUTH: "true"
+      LIVE_TRADING_ENABLED: "false"
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      KITE_API_KEY: ${KITE_API_KEY:-}
+      KITE_ACCESS_TOKEN: ${KITE_ACCESS_TOKEN:-}
+      WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN:-}
+      WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
+      WHATSAPP_TO: ${WHATSAPP_TO:-}
+      WHATSAPP_TEMPLATE: ${WHATSAPP_TEMPLATE:-}
+      WHATSAPP_API_VERSION: ${WHATSAPP_API_VERSION:-v21.0}
+    volumes:
+      - nseql-data:/data
+    # unshare --net (network isolation of the strategy sandbox) needs this capability
+    cap_add: [SYS_ADMIN]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+
+  web:
+    build: { context: .., dockerfile: infra/Dockerfile.web }
+    depends_on: [api]
+    ports: ["127.0.0.1:8080:3000"]
+    restart: unless-stopped
+
+  caddy:
+    profiles: [public]
+    image: caddy:2
+    depends_on: [web]
+    ports: ["80:80", "443:443"]
+    environment:
+      NSEQL_DOMAIN: ${NSEQL_DOMAIN:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    restart: unless-stopped
+
+volumes:
+  nseql-data:
+  caddy-data:
