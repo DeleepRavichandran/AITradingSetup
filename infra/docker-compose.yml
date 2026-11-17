@@ -16,6 +16,8 @@ services:
       NSEQL_API_TOKEN: ${NSEQL_API_TOKEN:?set NSEQL_API_TOKEN in .env}
       NSEQL_VIEWER_TOKEN: ${NSEQL_VIEWER_TOKEN:-}
       LIVE_TRADING_ENABLED: "false"
+      NSEQL_SCHEDULER: "true"          # background clock for paper sessions (never places real orders)
+      KITE_API_SECRET: ${KITE_API_SECRET:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       KITE_API_KEY: ${KITE_API_KEY:-}
       KITE_ACCESS_TOKEN: ${KITE_ACCESS_TOKEN:-}

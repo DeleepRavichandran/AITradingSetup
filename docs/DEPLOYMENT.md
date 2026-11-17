@@ -77,6 +77,25 @@ docker compose -f infra/docker-compose.yml exec api nseql quality kite_2026
 Check the quality report for unexplained price jumps (splits, bonuses) before running anything.
 The token expires every morning; a stale token shows up as a clear error, not as bad data.
 
+## 3c. An unattended paper-trading week
+
+1. Do the Kite login for the day (section 3b). It has to be repeated every trading day: the token
+   expires each morning and the login cannot be automated.
+2. On the Paper Trading page choose feed **Kite daily**, enter your symbols and a library strategy,
+   and start the session. It loads about 14 months of history as warm-up (no trading), then waits.
+3. The scheduler (on in the compose stack) checks every 15 minutes. After 15:45 IST it pulls the
+   day's completed candles, steps the session, and sends one summary notification. Orders created on
+   day D are simulated against day D+1's candle.
+4. If you miss a login, nothing breaks: you get one reminder per day and the session catches up, in
+   order, the next time a login is in place.
+5. Sessions and the kill switch are saved to disk; a restart or reboot resumes them exactly.
+
+Optional: put NSE's holiday list in `experiments/holidays.json` as
+`{"source": "...", "holidays": ["2026-01-26", ...]}`. Without it only weekends are treated as closed.
+
+What this is not: it is end-of-day only (no intraday strategies, no tick data), it simulates fills
+from daily candles, and it has been tested against a simulated Kite, not the real one.
+
 ## 4. WhatsApp alerts
 
 Uses the WhatsApp Business Cloud API (Meta). You need a Meta developer app with the WhatsApp

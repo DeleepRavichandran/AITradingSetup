@@ -105,15 +105,44 @@ class ManualBook(Strategy):
             self.results.append({"request": o, "order_id": oid})
 
 
+class _SessionGate:
+    """What the engine consults before accepting an order: the global kill switch, this session's own
+    halt (permanent), and the warm-up phase (history is being fed; nothing may trade yet)."""
+
+    def __init__(self, global_kill: KillSwitch):
+        self.global_kill = global_kill
+        self.halted = ""
+        self.warmup = False
+
+    @property
+    def engaged(self) -> bool:
+        return bool(self.halted) or self.warmup or self.global_kill.engaged
+
+    @property
+    def reason(self) -> str:
+        return self.halted or ("WARMUP: history is loading, trading has not started" if self.warmup else self.global_kill.reason)
+
+
+def bars_to_json(bars: dict[str, Bar]) -> dict:
+    return {s: [b.open, b.high, b.low, b.close, b.volume, b.oi] for s, b in bars.items()}
+
+
+def bars_from_json(t: pd.Timestamp, d: dict) -> dict[str, Bar]:
+    return {s: Bar(s, t, float(v[0]), float(v[1]), float(v[2]), float(v[3]), int(v[4]), int(v[5])) for s, v in d.items()}
+
+
 class PaperSession:
     def __init__(self, feed, allocations: list[Allocation], *, kill: KillSwitch | None = None,
                  exec_cfg: ExecutionConfig | None = None, risk: RiskLimits | None = None, max_session_loss_pct: float = 0.05,
-                 stale_after_seconds: float = 120.0, notify=None, label: str = ""):
+                 stale_after_seconds: float = 120.0, notify=None, label: str = "", journal=None):
         self.feed = feed
         self.kill = kill or KillSwitch()
+        self.gate = _SessionGate(self.kill)
+        self.journal = journal or (lambda record: None)   # write-ahead log of every input (see paper.store)
+        self.replaying = False                            # True while being rebuilt from the journal
         self.portal = StreamPortal(feed.instruments, getattr(feed, "actions", []), getattr(feed, "interval", "1d"))
         self.manual = next((a.strategy for a in allocations if isinstance(a.strategy, ManualBook)), None)
-        self.engine = BacktestEngine(self.portal, allocations, exec_cfg=exec_cfg, risk=risk, kill_switch=self.kill,
+        self.engine = BacktestEngine(self.portal, allocations, exec_cfg=exec_cfg, risk=risk, kill_switch=self.gate,
                                      charges=ChargeSchedule(allow_extrapolation=True))
         self.capital = sum(a.capital for a in allocations)
         self.max_session_loss_pct = max_session_loss_pct
@@ -128,7 +157,11 @@ class PaperSession:
         self.created = datetime.now().isoformat(timespec="seconds")
 
     # ---------------------------------------------------------------- data in
-    def on_bars(self, t: pd.Timestamp, bars: dict[str, Bar], session_end: bool, wallclock: datetime | None = None) -> None:
+    def on_bars(self, t: pd.Timestamp, bars: dict[str, Bar], session_end: bool, wallclock: datetime | None = None,
+                warmup: bool = False) -> None:
+        if not self.replaying:      # journal BEFORE processing: a crash mid-step replays the step on restart
+            self.journal({"t": "bar", "ts": str(t), "end": bool(session_end), "warm": bool(warmup), "bars": bars_to_json(bars)})
+        self.gate.warmup = warmup
         if not self.started:
             self.engine.begin(t)
             self.started = True
@@ -138,6 +171,9 @@ class PaperSession:
         self.last_bar_wallclock = wallclock or datetime.now()
         eq = self.engine.account.equity()
         self.curve.append((t, eq))
+        self.gate.warmup = False
+        if self.replaying:
+            return                   # halts are restored from their own journal records, in order
         if eq < self.capital * 100 * (1 - self.max_session_loss_pct):
             self.halt(f"session loss limit breached: equity {eq / 100:,.0f} vs capital {self.capital:,.0f}", t)
         elif not self.engine.account.reconcile()["ok"]:
@@ -163,11 +199,15 @@ class PaperSession:
         if self.halted_reason:
             return
         self.halted_reason = reason
-        self.kill.engage(reason, t or datetime.now())
+        self.gate.halted = reason                 # this session never trades again, even after a kill-switch reset
+        if not self.replaying:
+            self.journal({"t": "halt", "reason": reason})
+            self.kill.engage(reason, t or datetime.now())
         for o in self.engine._active():
             self.engine._cancel(o.id, f"halt: {reason}")
         self.engine._event("HALT", reason=reason)
-        self.notify("halt", f"Paper session {self.label or ''} HALTED: {reason}. Working orders cancelled; positions left as they are.")
+        if not self.replaying:
+            self.notify("halt", f"Paper session {self.label or ''} HALTED: {reason}. Working orders cancelled; positions left as they are.")
 
     def on_feed_error(self, exc: Exception) -> None:
         self.halt(f"market-data feed failure: {type(exc).__name__}: {exc}")
@@ -183,10 +223,22 @@ class PaperSession:
     def submit_manual(self, order: dict) -> dict:
         if self.manual is None:
             raise ValueError("session has no manual book")
-        if self.kill.engaged:
-            return {"status": "REJECTED", "reason": f"KILL_SWITCH: {self.kill.reason}"}
+        if self.gate.engaged:
+            return {"status": "REJECTED", "reason": f"KILL_SWITCH: {self.gate.reason}"}
+        if not self.replaying:
+            self.journal({"t": "order", "order": order})
         self.manual.queue.append(order)
         return {"status": "QUEUED", "note": "will be submitted at the next bar and can fill from the bar after that"}
+
+    def apply_record(self, rec: dict) -> None:
+        """Re-apply one journal record. Used only while rebuilding a session after a restart."""
+        if rec["t"] == "bar":
+            t = pd.Timestamp(rec["ts"])
+            self.on_bars(t, bars_from_json(t, rec["bars"]), rec["end"], warmup=rec.get("warm", False))
+        elif rec["t"] == "order" and self.manual is not None:
+            self.manual.queue.append(rec["order"])
+        elif rec["t"] == "halt":
+            self.halt(rec["reason"])
 
     def positions_from_fills(self) -> dict[tuple[str, str], int]:
         """Positions rebuilt independently from the fill tape (adjusted for splits by the ledger's own events)."""
@@ -219,7 +271,7 @@ class PaperSession:
             "synthetic": getattr(getattr(self.feed, "ds", None), "synthetic", None),
             "now": str(self.curve[-1][0]) if self.curve else None, "steps": self.k,
             "remaining": getattr(self.feed, "remaining", None), "halted": self.halted_reason,
-            "kill_switch": {"engaged": self.kill.engaged, "reason": self.kill.reason},
+            "kill_switch": {"engaged": self.gate.engaged, "reason": self.gate.reason},
             "equity": acct.equity() / 100 if self.started else self.capital, "cash": acct.cash / 100 if self.started else self.capital,
             "capital": self.capital, "metrics": m,
             "positions": [{"book": b.id, "symbol": p.symbol, "qty": p.qty, "avg_price": p.avg_price,

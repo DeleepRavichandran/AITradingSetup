@@ -72,8 +72,11 @@ without something only the operator can supply), **NOT IMPLEMENTED**.
 - DONE: shared-ledger multi-strategy simulation; equal / risk-parity / min-variance /
   vol-target weights estimated on development data; correlation, overlap, sector and
   delta-equivalent exposure; paper sessions; kill switch; router controls; live gate.
-- NOT IMPLEMENTED: paper trading of generated code; persistence of paper sessions across
-  restarts; Upstox and Angel One adapters; live feed; broker instrument sync; live position
+- DONE: paper sessions persist across restarts (journal + deterministic replay); the kill switch state
+  persists; a scheduler advances sessions and sends an end-of-day summary.
+- UNVERIFIED (mock-tested): end-of-day paper trading from Kite daily candles (`kite_daily` feed). Daily
+  cash-equity library strategies only; needs a Kite login each day; no intraday or tick feed.
+- NOT IMPLEMENTED: paper trading of generated code; Upstox and Angel One adapters; live feed; broker instrument sync; live position
   reconciliation against a broker.
 - UNVERIFIED: Zerodha order adapter, WhatsApp notifier.
 
@@ -91,5 +94,5 @@ without something only the operator can supply), **NOT IMPLEMENTED**.
    re-pin acceptance test 1 against it. Everything downstream is only as real as this.
 2. Verify the unverified charge-schedule entries against primary sources.
 3. Build the docker images in CI and run the compose stack end to end.
-4. Live feed adapter + persisted paper sessions, so paper trading runs unattended in market hours.
+4. Run a first real `kite_daily` paper week and verify it against Kite; then an intraday/tick feed.
 5. Supply a holiday calendar; wire it into quality checks and session awareness.

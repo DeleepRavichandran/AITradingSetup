@@ -47,7 +47,7 @@ Legend: ☐ open · ☑ done · ✗ blocked
 - ☐ Registry and experiments directory backed up; restore rehearsed
 - ☐ Kill-switch drill performed by the person who will be on call
 - ☐ Runbook for: feed loss, broker outage, rejected-order storm, runaway position, wrong fill
-- ☐ Paper sessions persisted across restarts (not implemented today)
+- ☑ Paper sessions and the kill switch persist across restarts (tested)
 
 ## F. Authorisation — human only
 1. Complete A–E and set every item in `experiments/compliance.json` to `true`.

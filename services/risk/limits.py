@@ -21,18 +21,34 @@ class RiskLimits:
 
 
 class KillSwitch:
-    """Process-wide trading halt. Once engaged, only a human reset (with a reason) clears it."""
+    """Process-wide trading halt. Once engaged, only a human reset (with a reason) clears it.
+    With `path` set the state is saved on every change and reloaded at start-up, so a restart or
+    crash can never silently clear an engaged switch."""
 
-    def __init__(self):
+    def __init__(self, path=None):
         self.engaged = False
         self.reason = ""
         self.history: list[dict] = []
+        self._path = path
+        if path is not None and path.exists():
+            import json
+            d = json.loads(path.read_text())
+            self.engaged, self.reason, self.history = bool(d["engaged"]), d.get("reason", ""), d.get("history", [])
+
+    def _save(self) -> None:
+        if self._path is not None:
+            import json
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self._path.with_suffix(".tmp")
+            tmp.write_text(json.dumps({"engaged": self.engaged, "reason": self.reason, "history": self.history[-200:]}))
+            tmp.replace(self._path)
 
     def engage(self, reason: str, ts=None) -> None:
         if not self.engaged:
             self.engaged = True
             self.reason = reason
             self.history.append({"event": "ENGAGED", "reason": reason, "ts": str(ts)})
+            self._save()
 
     def reset(self, operator: str, reason: str, ts=None) -> None:
         if not operator or operator.lower().startswith(("agent", "ai", "system")):
@@ -40,3 +56,4 @@ class KillSwitch:
         self.engaged = False
         self.reason = ""
         self.history.append({"event": "RESET", "operator": operator, "reason": reason, "ts": str(ts)})
+        self._save()

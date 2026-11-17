@@ -40,7 +40,9 @@ from nseql.execution.brokers.zerodha import ZerodhaKite
 from nseql.execution.gate import COMPLIANCE_ITEMS, LiveGate
 from nseql.instruments import structure
 from nseql.notify.whatsapp import WhatsAppNotifier
-from nseql.paper.feed import ReplayFeed
+from nseql.paper.feed import KiteDailyFeed, ReplayFeed
+from nseql.paper.scheduler import PaperScheduler
+from nseql.paper.store import SessionStore
 from nseql.paper.session import ManualBook, PaperSession
 from nseql.research import sandbox, validation as V
 from nseql.research.loop import ResearchBudget, ResearchLoop, get_partition
@@ -63,7 +65,8 @@ FEATURES = [
     ("LLM-backed inventor / analyst", "UNVERIFIED", "needs ANTHROPIC_API_KEY; stub-tested"),
     ("Walk-forward, bootstrap, DSR, sealed out-of-sample", "IMPLEMENTED", ""),
     ("Portfolio simulation on one shared ledger", "IMPLEMENTED", "library strategies only"),
-    ("Paper trading on replayed data", "IMPLEMENTED", "replay, not a live market"),
+    ("Paper trading on replayed data", "IMPLEMENTED", "replay, not a live market; sessions persist across restarts"),
+    ("Unattended end-of-day paper trading (Kite daily candles + scheduler)", "UNVERIFIED", "mock-tested; needs Kite credentials and a daily login"),
     ("Authorised real-time streaming feed", "BLOCKED", "needs broker credentials and a data entitlement; adapter not written"),
     ("Live order routing", "DISABLED", "gate closed by default; Kite adapter mock-tested only"),
     ("Upstox / Angel One adapters", "NOT IMPLEMENTED", "interface stubs"),
@@ -82,12 +85,15 @@ class State:
         self.exp_dir = self.settings.experiments_dir
         self.exp_dir.mkdir(parents=True, exist_ok=True)
         self.registry = Registry(self.settings.registry_path)
-        self.kill = KillSwitch()
+        self.kill = KillSwitch(self.exp_dir / "kill_switch.json")      # survives restarts
         self.notifier = WhatsAppNotifier.from_env()
         self.gate = LiveGate(self.exp_dir / "approvals", self.exp_dir / "compliance.json", self.kill, self.settings)
         self.events = EventStore(self.exp_dir / "events.sqlite")
         self.jobs: dict[str, dict] = {}
         self.sessions: dict[str, PaperSession] = {}
+        self.store = SessionStore(self.exp_dir / "paper")
+        self.session_meta: dict[str, dict] = {}
+        self.restore_errors: dict[str, str] = {}
         self.started = time.time()
         self.lock = threading.Lock()
         if os.environ.get("NSEQL_AUTO_FIXTURE", "true").lower() == "true":
@@ -740,42 +746,112 @@ def create_app() -> FastAPI:
         capital: float = Field(1_000_000, gt=0)
         manual_capital: float = Field(500_000, gt=0)
         dataset_id: str = FIXTURE_ID
-        window: str = "sealed"                # sealed | validation | all
+        window: str = "sealed"                # replay feed: sealed | validation | all
         label: str = ""
+        feed: str = "replay"                  # replay | kite_daily
+        symbols: list[str] = Field(default_factory=list, max_length=250)   # kite_daily only
+        auto_bars: int = Field(0, ge=0, le=50)   # replay only: bars the scheduler advances per tick
+
+    def _kite_api():
+        from nseql.data.adapters.kite import KiteHistorical, load_session
+        ses = load_session(st.exp_dir) or {}
+        return KiteHistorical(os.environ.get("KITE_API_KEY") or ses.get("api_key"), os.environ.get("KITE_ACCESS_TOKEN") or ses.get("access_token"))
+
+    def _build_session(sid: str, meta: dict) -> tuple[PaperSession, int]:
+        """Construct a session from its stored configuration. Used for new sessions and for restoring
+        after a restart, so both go through exactly the same code. Returns (session, warm-up steps to
+        run for a brand-new replay session)."""
+        allocs = [Allocation(ManualBook(), "manual", meta["manual_capital"])]
+        strat = None
+        if meta.get("strategy"):
+            strat = strategy_registry.create(meta["strategy"], meta.get("params") or {})
+            allocs.insert(0, Allocation(strat, "algo", meta["capital"]))
+        warm = 0
+        if meta["feed"] == "kite_daily":
+            feed = KiteDailyFeed(meta["kite"], meta["live_from"], api_factory=_kite_api)
+        else:
+            from nseql.backtester.runner import default_symbols
+            d = st.dataset(meta["dataset_id"])
+            part = get_partition(reg, d)
+            syms = default_symbols(d, [strat] if strat else [strategy_registry.create("buy_and_hold")], "1d")
+            start = {"sealed": part.dev_start, "validation": part.dev_start, "all": None}[meta["window"]]
+            end = {"sealed": part.sealed_end, "validation": part.val_end, "all": None}[meta["window"]]
+            feed = ReplayFeed(d, syms, "1d", start, end)
+            cut = {"sealed": part.sealed_start, "validation": part.val_start}.get(meta["window"])
+            if cut:
+                warm = int((feed._portal.timeline < pd.Timestamp(cut).value).sum())
+        ps = PaperSession(feed, allocs, kill=st.kill, notify=st.notify, label=meta.get("label") or meta.get("strategy") or "manual",
+                          journal=lambda rec, _sid=sid: st.store.append(_sid, rec))
+        return ps, warm
+
+    def _restore_sessions() -> None:
+        """Rebuild every open session by replaying its journal. Exact, because the engine is deterministic."""
+        for sid in st.store.sessions():
+            try:
+                meta = st.store.meta(sid)
+                ps, _ = _build_session(sid, meta)
+                recs = st.store.records(sid)
+                ps.replaying = True
+                for rec in recs:
+                    ps.apply_record(rec)
+                ps.replaying = False
+                bars = [r for r in recs if r["t"] == "bar"]
+                if meta["feed"] == "replay":
+                    ps.feed.skip(len(bars))
+                elif bars:
+                    ps.feed.last_date = pd.Timestamp(bars[-1]["ts"]).date()
+                st.sessions[sid], st.session_meta[sid] = ps, meta
+            except Exception as e:      # a session that cannot be restored is reported, never silently dropped
+                st.restore_errors[sid] = f"{type(e).__name__}: {e}"
+                reg.audit("system", "PAPER_SESSION_RESTORE_FAILED", session=sid, error=st.restore_errors[sid])
+        if st.sessions or st.restore_errors:
+            reg.audit("system", "PAPER_SESSIONS_RESTORED", restored=sorted(st.sessions), failed=sorted(st.restore_errors))
 
     @api.post("/paper/sessions")
     def paper_start(body: PaperIn):
-        d = st.dataset(body.dataset_id)
-        part = get_partition(reg, d)
-        allocs = [Allocation(ManualBook(), "manual", body.manual_capital)]
-        strat = None
-        if body.strategy:
-            if body.strategy.startswith("generated:"):
-                raise HTTPException(400, "paper trading of generated code is NOT IMPLEMENTED: it would have to run inside the sandbox "
-                                         "process per bar. Promote it by adding a reviewed copy to the strategy library.")
-            try:
-                strat = strategy_registry.create(body.strategy, body.params)
-            except (KeyError, ValueError) as e:
-                raise HTTPException(400, str(e)) from None
-            allocs.insert(0, Allocation(strat, "algo", body.capital))
-        from nseql.backtester.runner import default_symbols
-        syms = default_symbols(d, [strat] if strat else [strategy_registry.create("buy_and_hold")], "1d")
-        start = {"sealed": part.dev_start, "validation": part.dev_start, "all": None}[body.window]
-        end = {"sealed": part.sealed_end, "validation": part.val_end, "all": None}[body.window]
-        ps = PaperSession(ReplayFeed(d, syms, "1d", start, end), allocs, kill=st.kill, notify=st.notify, label=body.label or (body.strategy or "manual"))
-        warm = {"sealed": part.sealed_start, "validation": part.val_start}.get(body.window)
-        if warm:   # fast-forward through history so indicators are warm; trading in the warm-up is part of the record
-            while ps.feed.remaining and pd.Timestamp(ps.feed._portal.timeline[ps.feed._k]) < pd.Timestamp(warm):
-                if not ps.advance(1):
-                    break
+        if body.strategy and body.strategy.startswith("generated:"):
+            raise HTTPException(400, "paper trading of generated code is NOT IMPLEMENTED: it would have to run inside the sandbox "
+                                     "process per bar. Promote it by adding a reviewed copy to the strategy library.")
+        if body.feed not in ("replay", "kite_daily"):
+            raise HTTPException(400, "feed must be 'replay' or 'kite_daily'")
         sid = f"paper_{uuid.uuid4().hex[:8]}"
-        st.sessions[sid] = ps
-        reg.audit("user", "PAPER_SESSION_STARTED", session=sid, strategy=body.strategy, window=body.window)
-        return {"session_id": sid, **clean(ps.state())}
+        meta = {**body.model_dump(), "session_id": sid, "created": datetime.now().isoformat(timespec="seconds"), "closed": False}
+        try:
+            if body.strategy:
+                cls = strategy_registry.get(body.strategy)
+                cls(**body.params)
+                if body.feed == "kite_daily" and (cls.requires != "EQ" or "1d" not in cls.intervals):
+                    raise ValueError("the kite_daily feed supports daily cash-equity strategies only")
+            if body.feed == "kite_daily":
+                if not body.symbols:
+                    raise ValueError("kite_daily needs a list of NSE symbols")
+                from nseql.data.adapters.kite_import import resolve
+                nse = _kite_api().instruments("NSE")
+                found, missing = resolve(nse, nse[nse["segment"] == "INDICES"], [*body.symbols, "NIFTY 50"])
+                if missing:
+                    raise ValueError(f"not found in Kite's NSE instrument list: {missing}")
+                meta["kite"] = found
+                meta["live_from"] = datetime.now().date().isoformat()
+            else:
+                st.dataset(body.dataset_id)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(400, f"{type(e).__name__}: {e}") from None
+        st.store.create(sid, meta)
+        ps, warm = _build_session(sid, meta)
+        with st.lock:
+            if warm:       # fast-forward through history so indicators are warm; trading in the warm-up is part of the record
+                ps.advance(warm)
+            st.sessions[sid], st.session_meta[sid] = ps, meta
+        reg.audit("user", "PAPER_SESSION_STARTED", session=sid, strategy=body.strategy, feed=body.feed, window=body.window)
+        if body.feed == "kite_daily":
+            scheduler.tick()      # load the warm-up history now rather than at the next timer tick
+        return {"session_id": sid, "persisted": True, **clean(ps.state())}
 
     def _session(sid: str) -> PaperSession:
         if sid not in st.sessions:
-            raise HTTPException(404, "unknown paper session (sessions are in-memory and end when the API restarts)")
+            raise HTTPException(404, "unknown paper session" + (f" (it could not be restored: {st.restore_errors[sid]})" if sid in st.restore_errors else ""))
         return st.sessions[sid]
 
     @api.get("/paper/sessions")
@@ -786,7 +862,30 @@ def create_app() -> FastAPI:
 
     @api.get("/paper/sessions/{sid}")
     def paper_state(sid: str):
-        return {"session_id": sid, **clean(_session(sid).state())}
+        s_ = _session(sid)
+        return {"session_id": sid, "persisted": True, "config": {k: v for k, v in st.session_meta[sid].items() if k != "kite"},
+                "feed_status": getattr(s_.feed, "status", None), **clean(s_.state())}
+
+    @api.post("/paper/sessions/{sid}/close")
+    def paper_close(sid: str):
+        """Stop tracking a session. Its journal is kept on disk; it is no longer restored or scheduled."""
+        _session(sid)
+        with st.lock:
+            st.store.close(sid)
+            st.sessions.pop(sid, None)
+            st.session_meta.pop(sid, None)
+        reg.audit("user", "PAPER_SESSION_CLOSED", session=sid)
+        return {"closed": sid}
+
+    @api.get("/paper/scheduler")
+    def scheduler_status():
+        return clean({**scheduler.status(), "restore_errors": st.restore_errors, "sessions": len(st.sessions),
+                      "holiday_calendar": "supplied" if (st.exp_dir / "holidays.json").exists() else "NOT SUPPLIED (weekends only)"})
+
+    @api.post("/paper/scheduler/tick")
+    def scheduler_tick():
+        """Run one scheduler pass now (the timer does this every minute when the scheduler is enabled)."""
+        return clean({"done": scheduler.tick(), **scheduler.status()})
 
     class AdvanceIn(BaseModel):
         steps: int = Field(1, ge=1, le=500)
@@ -874,6 +973,14 @@ def create_app() -> FastAPI:
         ok = st.notifier.send("test", "NSE AI Quant Lab test notification")
         return {"delivered": ok, **st.notifier.status()}
 
+    from nseql.instruments.calendar import TradingCalendar
+    hol = st.exp_dir / "holidays.json"
+    scheduler = PaperScheduler(lambda: st.sessions, notify=st.notify, lock=st.lock, meta=lambda sid: st.session_meta.get(sid, {}),
+                               calendar=TradingCalendar.from_file(hol) if hol.exists() else None)
+    app.state.scheduler = scheduler
+    _restore_sessions()
+    if os.environ.get("NSEQL_SCHEDULER", "").lower() == "true":
+        scheduler.start(float(os.environ.get("NSEQL_SCHEDULER_TICK_SECONDS", "60")))
     app.mount("/api", api)
     return app
 
