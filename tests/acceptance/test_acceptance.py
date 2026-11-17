@@ -12,20 +12,21 @@ from fastapi.testclient import TestClient
 from nseql.research import sandbox
 
 BLOCKED = pytest.mark.blocked
+TOKEN = "acceptance-test-operator-token-0001"
 
 
 @pytest.fixture(scope="module")
 def client(data_dir, tmp_path_factory):
     from nseql import config
     exp = tmp_path_factory.mktemp("experiments")
-    env = {"NSEQL_DATA_DIR": str(data_dir), "NSEQL_EXPERIMENTS_DIR": str(exp), "NSEQL_AUTO_FIXTURE": "false", "NSEQL_API_TOKEN": "t0ken"}
+    env = {"NSEQL_DATA_DIR": str(data_dir), "NSEQL_EXPERIMENTS_DIR": str(exp), "NSEQL_AUTO_FIXTURE": "false", "NSEQL_API_TOKEN": TOKEN}
     old = {k: os.environ.get(k) for k in env}
     os.environ.update(env)
-    for k in ("LIVE_TRADING_ENABLED", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):
+    for k in ("LIVE_TRADING_ENABLED", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "NSEQL_ALLOW_INSECURE_LOCAL", "NSEQL_VIEWER_TOKEN"):
         os.environ.pop(k, None)
     config.get_settings.cache_clear()
     from nseql.api.main import create_app
-    c = TestClient(create_app(), headers={"Authorization": "Bearer t0ken"})
+    c = TestClient(create_app(), headers={"Authorization": f"Bearer {TOKEN}"})
     yield c
     for k, v in old.items():
         os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)

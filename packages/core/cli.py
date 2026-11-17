@@ -108,7 +108,13 @@ def main(argv: list[str] | None = None) -> int:
             print("not imported:", ", ".join(missing))
         print("next: nseql quality", ds.id)
     elif a.cmd == "serve":
+        import os
+
         import uvicorn
+        if not os.environ.get("NSEQL_API_TOKEN") and os.environ.get("NSEQL_ALLOW_INSECURE_LOCAL", "").lower() != "true":
+            print("NSEQL_API_TOKEN is not set. Generate one with:\n  python -c \"import secrets; print(secrets.token_urlsafe(32))\"\n"
+                  "and export it, or — on a single-user machine only — set NSEQL_ALLOW_INSECURE_LOCAL=true (loopback clients only).")
+            return 2
         uvicorn.run("nseql.api.main:app_factory", factory=True, host=a.host, port=a.port)
     return 0
 

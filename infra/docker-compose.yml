@@ -5,7 +5,8 @@
 #                         docker compose -f infra/docker-compose.yml --profile public up -d --build
 #                         Caddy obtains a TLS certificate for NSEQL_DOMAIN automatically.
 #
-# The API refuses to start without NSEQL_API_TOKEN (NSEQL_REQUIRE_AUTH=true).
+# The API refuses to start without NSEQL_API_TOKEN (at least 24 characters). NSEQL_VIEWER_TOKEN is an
+# optional read-only token for people who should look but not act.
 # LIVE_TRADING_ENABLED is pinned to false here on purpose; see docs/LIVE_READINESS_CHECKLIST.md.
 # HUMAN_APPROVAL_SECRET is deliberately NOT passed to any container.
 services:
@@ -13,7 +14,7 @@ services:
     build: { context: .., dockerfile: infra/Dockerfile.api }
     environment:
       NSEQL_API_TOKEN: ${NSEQL_API_TOKEN:?set NSEQL_API_TOKEN in .env}
-      NSEQL_REQUIRE_AUTH: "true"
+      NSEQL_VIEWER_TOKEN: ${NSEQL_VIEWER_TOKEN:-}
       LIVE_TRADING_ENABLED: "false"
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       KITE_API_KEY: ${KITE_API_KEY:-}
@@ -25,9 +26,14 @@ services:
       WHATSAPP_API_VERSION: ${WHATSAPP_API_VERSION:-v21.0}
     volumes:
       - nseql-data:/data
-    # unshare --net (network isolation of the strategy sandbox) needs this capability
+    # The strategy sandbox builds private mount/network/PID namespaces for generated code. That needs
+    # CAP_SYS_ADMIN and permission to mount, which Docker's default AppArmor profile denies. The API
+    # process therefore runs as root inside the container; generated code itself runs as uid 65534
+    # with every capability dropped, no network and a read-only private filesystem. Without these
+    # two settings the sandbox refuses to run anything (it fails closed) — research is disabled,
+    # the rest of the application still works. See docs/RISK_POLICY.md section 6.
     cap_add: [SYS_ADMIN]
-    security_opt: ["no-new-privileges:true"]
+    security_opt: ["apparmor:unconfined"]
     restart: unless-stopped
 
   web:

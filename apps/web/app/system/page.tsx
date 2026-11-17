@@ -15,11 +15,11 @@ export default function System() {
       {d && <>
         <div className="stats" style={{ marginBottom: 14 }}>
           <Stat k="Uptime" v={`${Math.floor(d.uptime_seconds / 60)} min`} /><Stat k="Version" v={d.version} h={d.code_version} /><Stat k="Jobs running" v={d.counts.jobs_running} />
-          <Stat k="Registry size" v={`${d.storage.registry_mb} MB`} /><Stat k="Disk free" v={`${d.storage.disk_free_gb} GB`} /><Stat k="API auth" v={d.auth_required ? "token required" : "OFF"} tone={d.auth_required ? "up" : "down"} />
+          <Stat k="Registry size" v={`${d.storage.registry_mb} MB`} /><Stat k="Disk free" v={`${d.storage.disk_free_gb} GB`} /><Stat k="API auth" v={d.auth_required ? "token required" : "local only"} h={d.auth ? `role: ${d.auth.role}` : ""} tone={d.auth_required ? "up" : "down"} />
         </div>
         <div className="grid g2">
           <Card title="Sandbox for generated code">
-            <KV items={[["network namespace", <Badge key="n" s={d.sandbox.network_namespace ? "isolated" : "NOT isolated on this host"} tone={d.sandbox.network_namespace ? "good" : "warn"} />], ["CPU limit", `${d.sandbox.cpu_seconds}s`], ["memory limit", `${d.sandbox.memory_mb} MB`],
+            <KV items={[["isolation", <Badge key="n" s={d.sandbox.network_namespace ? "network + filesystem + PID isolated" : "UNAVAILABLE — generated code will not run"} tone={d.sandbox.network_namespace ? "good" : "crit"} />], ["detail", d.sandbox.detail], ["CPU limit", `${d.sandbox.cpu_seconds}s`], ["memory limit", `${d.sandbox.memory_mb} MB`],
               ["wall-clock limit", `${d.sandbox.wall_seconds}s`], ["environment", "scrubbed: no API keys, broker tokens or approval secret"], ["execution package", "refuses to import inside the sandbox"]]} />
           </Card>
           <Card title="WhatsApp notifications" right={<button onClick={test}>Send test</button>}>

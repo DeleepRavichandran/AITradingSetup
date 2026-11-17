@@ -13,6 +13,8 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.13", cache: pip }
       - run: pip install -e ".[dev]"
+      # the strategy sandbox needs user namespaces; Ubuntu runners restrict them by default
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: ruff check services packages agents scripts --select E9,F63,F7,F82
       - run: pytest -q
   web:

@@ -26,7 +26,8 @@ export default function CommandCenter() {
       right={<button className="primary" onClick={start} disabled={!!active || running}>{active || running ? "Research running…" : "Run research (3 hypotheses)"}</button>}>
       <Err e={sys.error || err} /><Loading on={sys.loading} />
       {s && <>
-        {!s.auth_required && <Banner>API authentication is off. Set NSEQL_API_TOKEN before exposing this dashboard beyond your own machine.</Banner>}
+        {!s.auth_required && <Banner>Insecure local mode: the API answers this machine only, without a token. Set NSEQL_API_TOKEN to use the dashboard from anywhere else.</Banner>}
+        {s.auth?.role === "viewer" && <Banner tone="info">Signed in with a read-only token: you can look at everything, but actions (runs, orders, kill switch) need the operator token.</Banner>}
         {s.kill_switch.engaged && <Banner tone="crit"><b>Kill switch engaged:</b> {s.kill_switch.reason}. <Link href="/risk">Risk Control Center</Link></Banner>}
         <div className="stats" style={{ marginBottom: 14 }}>
           <Stat k="Backtests recorded" v={s.counts.runs} h={`${s.counts.trials_for_dsr} count as trials`} />

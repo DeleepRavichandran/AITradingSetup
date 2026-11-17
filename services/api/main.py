@@ -1,9 +1,12 @@
 """HTTP API for the dashboard. Every page of the web app reads from these endpoints; there is
 no static demo data anywhere in the UI.
 
-Auth: if NSEQL_API_TOKEN is set every /api route except /api/health requires
-`Authorization: Bearer <token>`. If NSEQL_REQUIRE_AUTH=true and no token is configured the
-service refuses to start (used by the internet-facing deployment).
+Auth is mandatory. The service refuses to start without NSEQL_API_TOKEN (>= 24 characters); every
+/api route except the bare liveness probe requires `Authorization: Bearer <token>`.
+  operator  NSEQL_API_TOKEN      everything
+  viewer    NSEQL_VIEWER_TOKEN   optional, read-only (GET); writes are refused and audited
+The only unauthenticated mode is NSEQL_ALLOW_INSECURE_LOCAL=true, which answers loopback
+clients only (and refuses requests forwarded from elsewhere) — for one person on one machine.
 """
 
 import hmac
@@ -45,6 +48,9 @@ from nseql.research.registry import Registry
 from nseql.risk import portfolio as pf
 from nseql.risk.limits import KillSwitch, RiskLimits
 from nseql.strategies import registry as strategy_registry
+
+MIN_TOKEN_LENGTH = 24
+LOOPBACK = {"127.0.0.1", "::1", "localhost"}
 
 FEATURES = [
     ("Event-driven backtester (equities, futures, options, multi-leg)", "IMPLEMENTED", "tested on synthetic fixtures"),
@@ -116,22 +122,46 @@ class State:
 
 def create_app() -> FastAPI:
     st = State()
-    if os.environ.get("NSEQL_REQUIRE_AUTH", "").lower() == "true" and not st.settings.api_token:
-        raise RuntimeError("NSEQL_REQUIRE_AUTH=true but NSEQL_API_TOKEN is not set")
-    app = FastAPI(title="NSE AI Quant Lab", version=__version__)
+    token = st.settings.api_token
+    viewer_token = os.environ.get("NSEQL_VIEWER_TOKEN") or None
+    insecure_local = os.environ.get("NSEQL_ALLOW_INSECURE_LOCAL", "").lower() == "true"
+    if token and insecure_local:
+        raise RuntimeError("set NSEQL_API_TOKEN or NSEQL_ALLOW_INSECURE_LOCAL=true, not both")
+    if not token and not insecure_local:
+        raise RuntimeError("NSEQL_API_TOKEN is required. The API does not start unauthenticated. For a single-user machine "
+                           "only, NSEQL_ALLOW_INSECURE_LOCAL=true serves loopback clients without a token.")
+    for name, value in (("NSEQL_API_TOKEN", token), ("NSEQL_VIEWER_TOKEN", viewer_token)):
+        if value and len(value) < MIN_TOKEN_LENGTH:
+            raise RuntimeError(f"{name} must be at least {MIN_TOKEN_LENGTH} characters")
+    if token and viewer_token and hmac.compare_digest(token, viewer_token):
+        raise RuntimeError("NSEQL_VIEWER_TOKEN must differ from NSEQL_API_TOKEN")
+    app = FastAPI(title="NSE AI Quant Lab", version=__version__, docs_url=None, redoc_url=None, openapi_url=None)
     app.state.st = st
     origins = [o for o in os.environ.get("NSEQL_CORS_ORIGINS", "http://localhost:3000").split(",") if o]
     app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["*"], allow_headers=["*"])
 
     def auth(request: Request):
-        tok = st.settings.api_token
-        if not tok:
+        """Two roles. operator: everything. viewer: read-only (GET). Anything else: refused."""
+        if insecure_local:
+            hops = [request.client.host if request.client else "", *(h.strip() for h in request.headers.get("x-forwarded-for", "").split(",") if h.strip())]
+            if not all(h in LOOPBACK for h in hops):
+                raise HTTPException(403, "this server runs in insecure local mode and only answers loopback clients; "
+                                         "set NSEQL_API_TOKEN to use it from another machine")
+            request.state.role = "operator"
             return
         got = request.headers.get("authorization", "").removeprefix("Bearer ").strip() or request.headers.get("x-api-key", "")
-        if not hmac.compare_digest(got, tok):
+        if hmac.compare_digest(got.encode(), token.encode()):
+            request.state.role = "operator"
+        elif viewer_token and hmac.compare_digest(got.encode(), viewer_token.encode()):
+            request.state.role = "viewer"
+            if request.method not in ("GET", "HEAD", "OPTIONS"):
+                st.registry.audit("viewer", "FORBIDDEN_WRITE", method=request.method, path=request.url.path)
+                raise HTTPException(403, "this is a read-only token; the action needs the operator token")
+        else:
             raise HTTPException(401, "invalid or missing API token")
 
-    api = FastAPI(dependencies=[Depends(auth)])
+    # interactive docs and the schema are disabled: they would be served without the auth dependency
+    api = FastAPI(dependencies=[Depends(auth)], docs_url=None, redoc_url=None, openapi_url=None)
     reg = st.registry
 
     def clean(o):
@@ -157,16 +187,18 @@ def create_app() -> FastAPI:
     # ------------------------------------------------------------------ system
     @app.get("/api/health")
     def health():
-        return {"status": "ok", "version": __version__, "auth_required": bool(st.settings.api_token)}
+        return {"status": "ok", "auth_required": not insecure_local}
 
     @api.get("/system")
-    def system():
+    def system(request: Request):
         du = shutil.disk_usage(st.exp_dir)
         return clean({
+            "auth": {"mode": "insecure-local" if insecure_local else "token", "role": request.state.role,
+                     "viewer_token_configured": bool(viewer_token)},
             "version": __version__, "code_version": code_version(), "uptime_seconds": round(time.time() - st.started),
-            "live_trading_enabled": st.settings.live_trading_enabled, "auth_required": bool(st.settings.api_token),
+            "live_trading_enabled": st.settings.live_trading_enabled, "auth_required": not insecure_local,
             "llm": {"configured": llm_mod.credentials_present(), "model": llm_mod.MODEL},
-            "sandbox": {"network_namespace": sandbox.network_isolation_available(), **sandbox.SandboxLimits().__dict__},
+            "sandbox": {"network_namespace": sandbox.isolation_status()[0], "detail": sandbox.isolation_status()[1], **sandbox.SandboxLimits().__dict__},
             "kill_switch": {"engaged": st.kill.engaged, "reason": st.kill.reason},
             "counts": {"runs": len(reg.runs(limit=100000)), "hypotheses": sum(h["origin"] != "system" for h in reg.hypotheses(100000)), "lessons": len(reg.lessons(100000)),
                        "experiments": len(reg.experiments(100000)), "paper_sessions": len(st.sessions), "trials_for_dsr": reg.trial_count(),
@@ -186,7 +218,7 @@ def create_app() -> FastAPI:
     def settings():
         return {"live_trading_enabled": st.settings.live_trading_enabled,
                 "live_trading_note": "read from the environment at start-up; cannot be changed through this API or by any agent",
-                "data_dir": str(st.data_dir), "experiments_dir": str(st.exp_dir), "auth_required": bool(st.settings.api_token),
+                "data_dir": str(st.data_dir), "experiments_dir": str(st.exp_dir), "auth_required": not insecure_local,
                 "credentials": {"anthropic": llm_mod.credentials_present(), "kite": st.settings.kite_credentials_present,
                                 "whatsapp": st.notifier.configured,
                                 "human_approval_secret_visible_to_api": bool(os.environ.get("HUMAN_APPROVAL_SECRET"))},

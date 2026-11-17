@@ -1,7 +1,6 @@
 FROM python:3.13-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
-RUN apt-get update && apt-get install -y --no-install-recommends util-linux git && rm -rf /var/lib/apt/lists/* \
-    && useradd --create-home --uid 10001 quant
+RUN apt-get update && apt-get install -y --no-install-recommends util-linux git && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY pyproject.toml ./
 COPY packages ./packages
@@ -9,8 +8,9 @@ COPY services ./services
 COPY agents ./agents
 COPY scripts ./scripts
 RUN pip install --no-cache-dir ".[llm]"
-RUN mkdir -p /data/datasets /data/experiments && chown -R quant:quant /data
-USER quant
+# Runs as root so it can build the namespaces that confine generated strategy code (which then
+# runs as uid 65534 with no capabilities). Datasets must stay world-readable for that user.
+RUN mkdir -p /data/datasets /data/experiments && chmod 755 /data /data/datasets
 ENV NSEQL_DATA_DIR=/data/datasets NSEQL_EXPERIMENTS_DIR=/data/experiments LIVE_TRADING_ENABLED=false
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s CMD python -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/api/health')"
