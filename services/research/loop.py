@@ -60,7 +60,7 @@ class ResearchLoop:
     def __init__(self, data_dir: Path, experiments_dir: Path, registry: Registry, *, dataset_id: str = "synthetic_v1",
                  seed: int = 0, llm: LLMClient | None = None, budget: ResearchBudget | None = None,
                  policy: team.AuditPolicy | None = None, notify: Callable[[str, str], None] | None = None,
-                 live_enabled: bool = False):
+                 live_enabled: bool = False, memory=None):
         self.data_dir, self.exp_dir, self.reg = Path(data_dir), Path(experiments_dir), registry
         self.ds = Dataset(self.data_dir / dataset_id)
         self.budget = budget or ResearchBudget()
@@ -74,6 +74,7 @@ class ResearchLoop:
         self.readiness = team.ExecutionReadinessAgent()
         self.notify = notify or (lambda event, text: None)
         self.live_enabled = live_enabled
+        self.episodic = memory          # optional nseql.brain.memory.EpisodicMemory: every hypothesis is recorded there too
         self.backtests = 0
         self.sealed_used = 0
         self.t0 = 0.0
@@ -291,6 +292,13 @@ class ResearchLoop:
             self.reg.put(f"candidate_params:{hid}", ev.chosen_params)
             self.notify("candidate", f"Research: {hid} ({spec.family}) passed audit and the sealed check; now a PAPER candidate. "
                                      + ("SYNTHETIC data. " if self.ds.synthetic else "") + "Not approved for live trading.")
+        if self.episodic is not None:
+            self.episodic.append("research_loop", "hypothesis", {
+                "experiment": self.eid, "hypothesis_id": hid, "family": spec.family, "statement": spec.hypothesis, "origin": spec.origin,
+                "parent_id": spec.parent_id, "decision": decision, "reasons": reasons, "dataset": self.ds.id, "dataset_hash": self.ds.content_hash,
+                "dev_sharpe": ev.dev.get("metrics", {}).get("sharpe"), "validation_sharpe": ev.validation.get("sharpe"),
+                "sealed_opened": sealed is not None, "lookahead_passed": (ev.lookahead or {}).get("passed")},
+                available_at=self.part.val_end, decided_at=self.part.val_end)
         return {"hypothesis_id": hid, "family": spec.family, "origin": spec.origin, "parent_id": spec.parent_id,
                 "hypothesis": spec.hypothesis, "decision": decision, "reasons": reasons, "explanation": d.explanation,
                 "dev_sharpe": ev.dev.get("metrics", {}).get("sharpe"), "validation_sharpe": ev.validation.get("sharpe"),

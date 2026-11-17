@@ -43,7 +43,8 @@ To reach the dashboard from anywhere (phone included), deploy the Docker stack b
 | Walk-forward, bootstrap, Monte Carlo, deflated Sharpe, FDR control, cost / parameter / stress sensitivity | Implemented, tested |
 | Portfolio simulation on one shared ledger | Implemented (library strategies) |
 | Paper trading on replayed bars, kill switch, safety halts, reconciliation | Implemented, tested |
-| 18-page dashboard on live API data | Implemented |
+| Learning Brain: memory, procedural and meta-learning, self-criticism, versioned self-modification with human promotion and rollback; 49,728-configuration screening | Implemented — **has not yet shown an out-of-sample improvement** (see docs/LEARNING_BRAIN.md) |
+| 19-page dashboard on live API data | Implemented |
 | Import of real NSE data | **Blocked** — needs files/credentials you are licensed to use |
 | Live market-data stream | **Blocked / not implemented** |
 | Kite adapter, WhatsApp alerts, LLM-backed agents | **Unverified** — mock-tested, need your credentials |
@@ -79,4 +80,4 @@ All Python is one import namespace, `nseql`, mapped onto those folders in `pypro
 [Architecture](docs/ARCHITECTURE.md) · [Implementation status](docs/IMPLEMENTATION_STATUS.md) ·
 [Test report](docs/TEST_REPORT.md) · [Data provenance](docs/DATA_PROVENANCE.md) ·
 [Risk policy](docs/RISK_POLICY.md) · [Live readiness checklist](docs/LIVE_READINESS_CHECKLIST.md) ·
-[Research journal](docs/RESEARCH_JOURNAL.md) · [Audit, Nov 2026](docs/AUDIT_2026-11.md) · [Deployment](docs/DEPLOYMENT.md) · [Contributing](CONTRIBUTING.md)
+[Research journal](docs/RESEARCH_JOURNAL.md) · [Learning Brain](docs/LEARNING_BRAIN.md) · [Audit, Nov 2026](docs/AUDIT_2026-11.md) · [Deployment](docs/DEPLOYMENT.md) · [Contributing](CONTRIBUTING.md)

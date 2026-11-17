@@ -132,7 +132,15 @@ re-tuned: the learning agent may request one *structural* variant per lineage, o
 | Browser ↔ API | mandatory bearer token (operator / read-only viewer); the API refuses to start without one; HTTPS via Caddy |
 | Secrets | environment only; never logged, never passed to containers that do not need them |
 
-## 8. Deliberate simplifications and the production path
+## 8. Learning Brain and screening tier
+
+`services/evaluation/` screens 49,728 configurations with stateless worker processes over a shared,
+memory-mapped indicator cache. `services/brain/` learns from point-in-time episodic memory, decides
+what to screen and how to rank, criticises every batch, and manages research-policy versions with
+human-only promotion and automatic rollback. Neither package can import execution, risk limits,
+configuration, the API or the LLM agents. Details and results: [LEARNING_BRAIN.md](LEARNING_BRAIN.md).
+
+## 9. Deliberate simplifications and the production path
 
 | Now | Production path |
 |---|---|

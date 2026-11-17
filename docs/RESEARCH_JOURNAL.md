@@ -73,3 +73,28 @@ run once with parameters frozen; the sealed window was opened once each for the 
 
 **Next experiment.** Not another iteration on this fixture. Import real NSE data, tighten the
 audit thresholds, and re-run from a clean registry so the trial count starts at zero.
+
+## 2026-11-17 — Entry 4: does memory help? (Learning Brain benchmark)
+
+**Question.** Do memory-informed research decisions beat memory-free ones on windows no arm had seen?
+
+**Protocol.** Decide every 10 sessions from information available at the decision; score the next 10
+sessions; same screening budget (2,000 of 49,728 configurations) for every arm; primary comparison
+pre-declared. Full detail and all numbers: docs/LEARNING_BRAIN.md.
+
+**What happened.** v1 showed no difference, but the critic left almost nothing to select. v2 appeared
+to show learned screening working — until the negative control (a pure random walk) showed the same
+"learning", even stronger. The cause was my label: ties at zero counted as failures. Fixed in v3.
+Under v3, structured data showed no lift; both negative controls showed no false positives; the
+one-shot sealed window showed no lift on the primary comparison (+0.03% per window, CI −0.26% … +0.29%)
+and nothing significant after Holm adjustment.
+
+**Mistake worth remembering.** An internal z-score of 12 for "learned screening" looked decisive. It
+was an artefact. Only the negative control caught it. Every learning claim needs a control where
+learning is impossible.
+
+**Why it may be unreliable.** Synthetic data, one path, 52 decision windows; I changed the protocol
+twice after seeing development results (recorded); the sealed window is now spent for this dataset.
+
+**Next experiment.** Real NSE history via Kite; pre-declare the comparison; consider a longer or
+risk-adjusted forward target; keep both negative controls.

@@ -282,3 +282,38 @@ def ensure_fixture(data_dir: Path) -> Dataset:
     if (root / "manifest.json").exists():
         return Dataset(root)
     return generate_fixture(Path(data_dir))
+
+
+def generate_null_fixture(data_dir: Path, *, seed: int = 99, dataset_id: str = "null_v1", start: date = date(2021, 1, 1),
+                          end: date = date(2023, 12, 29), overwrite: bool = False) -> Dataset:
+    """NEGATIVE-CONTROL dataset: 12 equities whose daily returns are independent draws with zero
+    drift — no trends, no mean reversion, no regimes, no cross-sectional structure. Nothing in it can
+    be learned, so any research method that 'beats' a baseline here is fooling itself."""
+    rng = np.random.default_rng(seed)
+    cal = _calendar(start, end)
+    n = len(cal)
+    ts = pd.to_datetime([f"{d.isoformat()} 15:30:00" for d in cal])
+    w = DatasetWriter(data_dir, dataset_id, synthetic=True, overwrite=overwrite, created_at="1970-01-01T00:00:00",
+                      description="SYNTHETIC NEGATIVE CONTROL: independent zero-drift random walks (nothing to learn)",
+                      source="nseql.data.fixtures.generate_null_fixture", licence="generated; no third-party rights",
+                      redistribution_allowed=True, generator={"seed": seed, "start": start.isoformat(), "end": end.isoformat()})
+    closes = []
+    for j in range(12):
+        sym = f"NUL{j:02d}"
+        r = rng.normal(0.0, 0.015, n)
+        c = 500.0 * np.exp(np.cumsum(r))
+        o = np.concatenate([[500.0], c[:-1]]) * np.exp(rng.normal(0, 0.002, n))
+        hi = np.maximum(o, c) * np.exp(np.abs(rng.normal(0, 0.004, n)))
+        lo = np.minimum(o, c) * np.exp(-np.abs(rng.normal(0, 0.004, n)))
+        df = pd.DataFrame({"ts": ts, "open": _tick(o), "high": _tick(hi), "low": _tick(lo), "close": _tick(c),
+                           "volume": (2e6 * np.exp(rng.normal(0, 0.3, n))).astype("int64"), "oi": 0})
+        df["high"] = df[["open", "high", "close"]].max(axis=1)
+        df["low"] = df[["open", "low", "close"]].min(axis=1)
+        w.write_bars(sym, "1d", df)
+        w.add_instrument(Instrument(sym, Kind.EQ, segment="CM", sector="Null", listed_from=cal[0]))
+        closes.append(c)
+    idx = 10000.0 * np.exp(np.cumsum(np.mean(np.diff(np.log(np.vstack(closes)), axis=1, prepend=np.log(500.0)), axis=0)))
+    w.write_bars("NULIDX", "1d", pd.DataFrame({"ts": ts, "open": _tick(idx), "high": _tick(idx), "low": _tick(idx), "close": _tick(idx),
+                                                "volume": 0, "oi": 0}))
+    w.add_instrument(Instrument("NULIDX", Kind.INDEX, segment="IDX", listed_from=cal[0]))
+    return w.finish()

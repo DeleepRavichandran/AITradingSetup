@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 
 from nseql import __version__
 from nseql.agents import analyst, llm as llm_mod
+from nseql.brain.service import BrainService
 from nseql.backtester.engine import Allocation
 from nseql.backtester.runner import BacktestConfig, StrategyRef, code_version, run_backtest
 from nseql.config import get_settings
@@ -65,6 +66,10 @@ FEATURES = [
     ("LLM-backed inventor / analyst", "UNVERIFIED", "needs ANTHROPIC_API_KEY; stub-tested"),
     ("Walk-forward, bootstrap, DSR, sealed out-of-sample", "IMPLEMENTED", ""),
     ("Portfolio simulation on one shared ledger", "IMPLEMENTED", "library strategies only"),
+    ("Learning Brain: episodic/semantic memory, procedural and meta-learning, regime eligibility", "IMPLEMENTED",
+     "benchmarked; memory has NOT yet shown a reliable out-of-sample improvement — see docs/LEARNING_BRAIN.md"),
+    ("High-throughput screening of 49,728 configurations", "IMPLEMENTED", "local process pool; a distributed queue backend is not implemented"),
+    ("Controlled self-modification with human promotion and automatic rollback", "IMPLEMENTED", "policy-level changes only; no code self-modification"),
     ("Paper trading on replayed data", "IMPLEMENTED", "replay, not a live market; sessions persist across restarts"),
     ("Unattended end-of-day paper trading (Kite daily candles + scheduler)", "UNVERIFIED", "mock-tested; needs Kite credentials and a daily login"),
     ("Authorised real-time streaming feed", "BLOCKED", "needs broker credentials and a data entitlement; adapter not written"),
@@ -92,6 +97,7 @@ class State:
         self.jobs: dict[str, dict] = {}
         self.sessions: dict[str, PaperSession] = {}
         self.store = SessionStore(self.exp_dir / "paper")
+        self.brain = BrainService(self.exp_dir, self.data_dir)
         self.session_meta: dict[str, dict] = {}
         self.restore_errors: dict[str, str] = {}
         self.started = time.time()
@@ -650,7 +656,7 @@ def create_app() -> FastAPI:
         def work(job):
             loop = ResearchLoop(st.data_dir, st.exp_dir, reg, dataset_id=body.dataset_id, seed=body.seed,
                                 llm=llm_mod.default_client() if body.use_llm else None, notify=st.notify,
-                                live_enabled=st.settings.live_trading_enabled,
+                                live_enabled=st.settings.live_trading_enabled, memory=st.brain.memory,
                                 budget=ResearchBudget(body.max_iterations, body.max_backtests, body.max_wall_seconds,
                                                       body.max_sealed_evaluations, walk_forward=body.walk_forward))
             loop.progress = lambda m: job["progress"].append({**m, "t": round(time.time() - st.started)}) or job["progress"].__delitem__(slice(0, -60))
@@ -912,6 +918,87 @@ def create_app() -> FastAPI:
             raise HTTPException(400, "unknown symbol or zero quantity")
         out = s.submit_manual(body.model_dump())
         reg.audit("user", "PAPER_ORDER", session=sid, **body.model_dump(), result=out["status"])
+        return out
+
+    # ------------------------------------------------------------------ learning brain
+    brain = st.brain
+
+    @api.get("/brain/summary")
+    def brain_summary():
+        return clean(brain.summary())
+
+    @api.get("/brain/reports/{run_id}")
+    def brain_report(run_id: str, curves: bool = True):
+        try:
+            r = brain.report(run_id)
+        except KeyError:
+            raise HTTPException(404, "unknown report") from None
+        if not curves:
+            for a in r["arms"].values():
+                a.pop("curve", None)
+        return clean(r)
+
+    @api.get("/brain/verify")
+    def brain_verify():
+        return {"memory": brain.memory.verify(), "probes": brain.probes()}
+
+    class BrainBenchIn(BaseModel):
+        dataset_id: str = FIXTURE_ID
+        negative_control: bool = False      # also run the zero-drift random-walk control
+        label: str = ""
+
+    @api.post("/brain/benchmark")
+    def brain_benchmark(body: BrainBenchIn):
+        d = st.dataset(body.dataset_id)
+        part = get_partition(reg, d)
+        if any(j["kind"] == "brain_benchmark" and j["status"] == "running" for j in st.jobs.values()):
+            raise HTTPException(409, "a learning benchmark is already running")
+
+        def work(job):
+            out = {"main": brain.run_benchmark(d.id, end_date=part.val_end, label=body.label or f"{d.id} development+validation",
+                                               progress=lambda i, n: job["progress"].append({"epoch": i, "of": n}))["run_id"]}
+            if body.negative_control:
+                from nseql.data.fixtures import generate_null_fixture
+                if not (st.data_dir / "null_v1").exists():
+                    generate_null_fixture(st.data_dir)
+                out["negative_control"] = brain.run_benchmark("null_v1", end_date=part.val_end, label="negative control (random walk)")["run_id"]
+            reg.audit("user", "BRAIN_BENCHMARK", **out)
+            return out
+        return st.job("brain_benchmark", work, dataset=d.id)
+
+    class ProposeIn(BaseModel):
+        changes: dict | None = None        # None = let the meta-optimiser propose a variation
+        rationale: str = ""
+
+    @api.post("/brain/versions/propose")
+    def brain_propose(body: ProposeIn):
+        out = brain.propose(body.changes, body.rationale)
+        reg.audit("user", "BRAIN_VERSION_PROPOSED", **{k: v for k, v in out.items() if k != "changes"}, changes=out["changes"])
+        return out
+
+    class FrozenIn(BaseModel):
+        dataset_id: str = FIXTURE_ID
+
+    @api.post("/brain/versions/{vid}/frozen-benchmark")
+    def brain_frozen(vid: str, body: FrozenIn):
+        st.dataset(body.dataset_id)
+        return st.job("brain_frozen_benchmark", lambda job: brain.frozen_benchmark(vid, body.dataset_id), version=vid)
+
+    class ApproveIn(BaseModel):
+        approver: str = Field(min_length=2, max_length=80)
+        reason: str = Field(min_length=5, max_length=500)
+
+    @api.post("/brain/versions/{vid}/promote")      # human-only promotion of a RESEARCH policy; unrelated to live trading
+    def brain_approve(vid: str, body: ApproveIn):
+        from nseql.brain.versions import LifecycleError
+        try:
+            out = brain.approve(vid, body.approver, body.reason)
+        except PermissionError as e:
+            reg.audit(body.approver, "BRAIN_APPROVAL_DENIED", version=vid, reason=str(e))
+            raise HTTPException(403, str(e)) from None
+        except LifecycleError as e:
+            raise HTTPException(409, str(e)) from None
+        reg.audit(body.approver, "BRAIN_VERSION_PROMOTED", version=vid, reason=body.reason)
         return out
 
     # ------------------------------------------------------------------ brokers, risk, notifications

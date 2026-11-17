@@ -30,6 +30,10 @@ def main(argv: list[str] | None = None) -> int:
     ik.add_argument("dataset_id"); ik.add_argument("--symbols", help="comma separated, e.g. RELIANCE,TCS,INFY")
     ik.add_argument("--symbols-file", help="one symbol per line"); ik.add_argument("--start", required=True); ik.add_argument("--end")
     ik.add_argument("--interval", default="1d"); ik.add_argument("--licence", required=True)
+    bb = sub.add_parser("brain-benchmark", help="learning benchmark: memory-informed vs memory-free research on unseen windows")
+    bb.add_argument("--dataset", default="synthetic_v1"); bb.add_argument("--negative-control", action="store_true")
+    bb.add_argument("--final-sealed", action="store_true", help="ONE-SHOT: score on the sealed window (recorded; refused the second time)")
+    sub.add_parser("brain-verify", help="verify the episodic memory hash chain and the correctness probes")
     v = sub.add_parser("serve", help="start the API server"); v.add_argument("--host", default="127.0.0.1"); v.add_argument("--port", type=int, default=8000)
     a = ap.parse_args(argv)
 
@@ -107,6 +111,33 @@ def main(argv: list[str] | None = None) -> int:
         if missing:
             print("not imported:", ", ".join(missing))
         print("next: nseql quality", ds.id)
+    elif a.cmd == "brain-benchmark":
+        from nseql.brain.service import BrainService
+        from nseql.data.store import Dataset
+        from nseql.research.loop import get_partition
+        from nseql.research.registry import Registry
+        reg = Registry(s.registry_path)
+        ds = Dataset(s.data_dir / a.dataset)
+        part = get_partition(reg, ds)
+        svc = BrainService(s.experiments_dir, s.data_dir)
+        prog = lambda i, n: print(f"  decision {i}/{n}", flush=True) if i % 10 == 0 or i == n else None
+        if a.final_sealed:
+            reg.claim_sealed(f"brain_benchmark_v{__import__('nseql.brain.policy', fromlist=['x']).PROTOCOL_VERSION}:{ds.content_hash[:12]}", "research_director")
+            svc.memory.append("system", "sealed_access", {"dataset": ds.id, "content_hash": ds.content_hash, "sealed_from": part.sealed_start},
+                              available_at=part.sealed_start)
+            rep = svc.run_benchmark(ds.id, end_date=None, sealed_from=part.sealed_start, label=f"{ds.id}: final sealed confirmation", progress=prog)
+        else:
+            rep = svc.run_benchmark(ds.id, end_date=part.val_end, label=f"{ds.id}: development+validation", progress=prog)
+        print(f"report {rep['run_id']}: {rep['verdict']} (basis: {rep['verdict_basis']})")
+        if a.negative_control:
+            from nseql.data.fixtures import generate_null_fixture
+            if not (s.data_dir / "null_v1").exists():
+                generate_null_fixture(s.data_dir)
+            nrep = svc.run_benchmark("null_v1", end_date=part.val_end, label="negative control (random walk)", progress=prog)
+            print(f"negative control {nrep['run_id']}: {nrep['verdict']}")
+    elif a.cmd == "brain-verify":
+        from nseql.brain.service import BrainService
+        print(json.dumps(BrainService(s.experiments_dir, s.data_dir).memory.verify(), indent=1))
     elif a.cmd == "serve":
         import os
 

@@ -88,10 +88,24 @@ without something only the operator can supply), **NOT IMPLEMENTED**.
 - NOT IMPLEMENTED: PostgreSQL / TimescaleDB / Redis / MLflow, OpenTelemetry / Prometheus /
   Grafana, multi-user accounts and roles.
 
+### Learning Brain (see LEARNING_BRAIN.md)
+- DONE: episodic memory (append-only, hash-chained, point-in-time), semantic findings with FDR control,
+  procedural screening (Thompson sampling), meta-learning (calibrated model + approach bandit) with
+  self-validation gates, point-in-time regime eligibility (research only), self-critic (FDR, cost stress,
+  de-duplication, PBO), policy versions with frozen benchmark, forward shadow evaluation, human-only
+  promotion and automatic rollback, learning dashboard, CLI and API.
+- DONE: screening tier for 49,728 configurations (process pool, shared memory-mapped indicators,
+  budgets); agreement with the event engine measured.
+- RESULT: memory-informed research has NOT shown a reliable out-of-sample improvement on the synthetic
+  fixture (sealed window, Holm-adjusted). Negative controls show no false positives.
+- NOT IMPLEMENTED: multi-machine evaluation queue; forward paper trading of screened configurations;
+  code-level self-modification.
+
 ## Next highest-priority tasks
 
 1. Import real NSE data (your bhavcopies or Kite credentials), run the quality report, and
-   re-pin acceptance test 1 against it. Everything downstream is only as real as this.
+   re-pin acceptance test 1 against it. Everything downstream is only as real as this — including
+   the Learning Brain, which needs several years of real history for a meaningful test.
 2. Verify the unverified charge-schedule entries against primary sources.
 3. Build the docker images in CI and run the compose stack end to end.
 4. Run a first real `kite_daily` paper week and verify it against Kite; then an intraday/tick feed.

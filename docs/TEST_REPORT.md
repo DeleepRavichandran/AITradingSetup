@@ -4,14 +4,16 @@ Run on 2026-11-17, Python 3.13.18, numpy 2.5.5, pandas 3.1.1, Linux. Command: `p
 
 | Suite | Tests | Result | Time |
 |---|---:|---|---:|
-| `tests/unit` | 95 | all passed | 9.6 s |
-| `tests/integration` | 59 | all passed | 25.4 s |
-| `tests/regression` | 5 | all passed | 3.5 s |
-| `tests/acceptance` | 17 | all passed | 24.9 s |
-| `tests/audit` | 31 | all passed | 5.0 s |
-| **Total** | **207** | **207 passed, 0 failed, 0 skipped** | 53.6 s |
+| `tests/unit` | 95 | all passed | 13.7 s |
+| `tests/integration` | 69 | all passed | 43.3 s |
+| `tests/regression` | 5 | all passed | 5.3 s |
+| `tests/acceptance` | 17 | all passed | 38.9 s |
+| `tests/audit` | 31 | all passed | 7.8 s |
+| `tests/brain` | 37 | all passed | 18.1 s |
+| **Total, as root** | **254** | **254 passed** | 107 s |
+| **Total, as an unprivileged user (as on CI)** | 254 | 251 passed, 3 skipped (root-only sandbox fallback) | 103 s |
 
-Figures from the run of 2026-11-17 after the audit corrections ([AUDIT_2026-11.md](AUDIT_2026-11.md)).
+Figures from 2026-11-17, after the audit corrections and the Learning Brain ([AUDIT_2026-11.md](AUDIT_2026-11.md)).
 Both Docker images were built and the API container was smoke-tested; the web container and the
 compose stack were not run.
 
