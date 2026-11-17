@@ -12,6 +12,9 @@ from nseql.research import sandbox
 STRAT = "from nseql.strategies.api import Strategy\nclass X(Strategy):\n    def on_bar(self, ctx):\n        pass\n"
 JOB = [{"id": 0, "config": {"strategies": [{"name": "g"}], "end": "2022-03-31"}}]
 
+ROOT_ONLY_FALLBACK = ("the chroot fallback is only needed, and only possible, when the launcher is root inside a container; "
+                      "an unprivileged launcher uses pivot_root in its own user namespace")
+
 PROBE = r'''
 import json, os, socket, sys
 out = {"uid": os.getuid(), "secret": None, "repo_env": None, "net": None, "write_data": None, "write_root": None, "ps": None}
@@ -45,9 +48,13 @@ def run_probe(tmp_path, data_dir, no_pivot=False):
     secret = tmp_path / "host_secret.txt"
     secret.write_text("TOP-SECRET-BROKER-TOKEN")
     repo_env = Path(sandbox.__file__).resolve().parents[2] / ".env"
-    created = not repo_env.exists()
-    if created:
-        repo_env.write_text("KITE_API_SECRET=leak-me\n")
+    created = False
+    try:
+        if not repo_env.exists():
+            repo_env.write_text("KITE_API_SECRET=leak-me\n")
+            created = True
+    except PermissionError:          # repository not writable by this user: probe an equivalent host file instead
+        repo_env = secret
     work = tmp_path / "work"
     work.mkdir()
     (work / "probe.py").write_text(PROBE)
@@ -66,6 +73,8 @@ def run_probe(tmp_path, data_dir, no_pivot=False):
 
 @pytest.mark.parametrize("no_pivot", [False, True], ids=["pivot_root", "chroot-fallback (containers)"])
 def test_untrusted_code_cannot_read_host_files_reach_the_network_or_write_outside_its_workdir(tmp_path, data_dir, no_pivot):
+    if no_pivot and os.getuid() != 0:
+        pytest.skip(ROOT_ONLY_FALLBACK)
     out = run_probe(tmp_path, data_dir, no_pivot)
     assert out["secret"].startswith("DENIED"), "a file elsewhere on the host was readable from the sandbox"
     assert out["repo_env"].startswith("DENIED"), "the repository's .env was readable from the sandbox"
@@ -99,6 +108,8 @@ def test_isolated_run_still_works_and_reports_its_isolation(data_dir, tmp_path):
 
 def test_chroot_fallback_cannot_be_escaped_by_the_unprivileged_child(tmp_path, data_dir):
     """The classic chroot escape (chroot into a subdirectory, then walk up) needs CAP_SYS_CHROOT."""
+    if os.getuid() != 0:
+        pytest.skip(ROOT_ONLY_FALLBACK)
     work = tmp_path / "work"
     work.mkdir()
     (work / "esc.py").write_text(

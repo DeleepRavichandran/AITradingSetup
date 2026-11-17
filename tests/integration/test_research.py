@@ -92,19 +92,17 @@ def test_sandbox_child_has_no_secrets_and_cannot_load_the_execution_service(data
              "try:\n    import socket; socket.create_connection(('1.1.1.1', 53), timeout=2); out['net'] = 'open'\n"
              "except Exception as e:\n    out['net'] = 'blocked'\n"
              "open('results.json', 'w').write(json.dumps({'ok': True, 'results': [out], 'error': None}))\n")
-    real = sandbox.sys.executable
-    import subprocess, tempfile, json, shutil
-    with tempfile.TemporaryDirectory() as tmp:
-        cmd = [real, "-I", "-c", probe]
-        if sandbox.network_isolation_available():
-            cmd = [shutil.which("unshare"), "--net", *cmd]
-        env = {"PATH": os.environ["PATH"], "HOME": tmp, "NSEQL_SANDBOX": "1", "LIVE_TRADING_ENABLED": "false"}
-        subprocess.run(cmd, cwd=tmp, env=env, check=True, preexec_fn=sandbox._preexec(sandbox.SandboxLimits()))
-        out = json.loads(Path(tmp, "results.json").read_text())["results"][0]
+    work = Path(__import__("tempfile").mkdtemp(prefix="sbx_probe_")) / "w"
+    work.mkdir()
+    (work / "probe.py").write_text(probe)
+    sandbox.prepare_workdir(work)
+    cmd = sandbox.isolated_command([sandbox.sys.executable, "-I", "probe.py"], work)
+    import json, subprocess
+    subprocess.run(cmd, cwd=work, env=sandbox.child_env(work), check=True, preexec_fn=sandbox._preexec(sandbox.SandboxLimits()))
+    out = json.loads((work / "results.json").read_text())["results"][0]
     assert "KITE_ACCESS_TOKEN" not in out["env"] and "HUMAN_APPROVAL_SECRET" not in out["env"]
-    assert out["live"] == "false" and out["execution"] == "ImportError"
-    if sandbox.network_isolation_available():
-        assert out["net"] == "blocked"
+    assert out["live"] == "false" and out["execution"] in ("ImportError", "ModuleNotFoundError")   # not even mounted
+    assert out["net"] == "blocked"
 
 
 def test_sandbox_enforces_cpu_limit(data_dir):

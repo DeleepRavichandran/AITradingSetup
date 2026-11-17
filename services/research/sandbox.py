@@ -163,7 +163,7 @@ cd "$R"; mkdir -p .old
 DROP="setpriv $NSEQL_SBX_SETPRIV --no-new-privs --bounding-set=-all --inh-caps=-all --"
 if [ -z "${NSEQL_SBX_NO_PIVOT:-}" ] && pivot_root . .old 2>/dev/null; then
   umount -l /.old; rmdir /.old
-  mount -o remount,ro,nosuid,nodev /
+  mount -o remount,bind,ro,nosuid,nodev /
   cd "$W"
   exec $DROP "$@"
 fi
@@ -171,7 +171,8 @@ fi
 # to moving the private root over "/" and chroot-ing into it. The old tree is then unreachable by path,
 # and the process that follows has no capabilities (so no CAP_SYS_CHROOT) and cannot gain any.
 rmdir .old
-mount -o remount,ro,nosuid,nodev "$R"
+# (per-mount read-only flag: remounting the tmpfs superblock itself is refused inside a user namespace)
+mount -o remount,bind,ro,nosuid,nodev "$R"
 mount --move "$R" /
 exec chroot . $DROP sh -c 'cd "$0" && exec "$@"' "$W" "$@"
 """
