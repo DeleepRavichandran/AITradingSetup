@@ -672,7 +672,7 @@ class BacktestEngine:
                 qty = abs(pos.qty)
                 ch = {}
                 if inst.is_option and pos.qty > 0 and price > 0:
-                    ch = self.charges.exercise_stt(inst, qty, price, d).as_dict()
+                    ch = self.charges.exercise_stt(inst, qty, price, d, settlement_price_paise=to_paise(und_px if und_px is not None else settle)).as_dict()
                 f = self.account.apply_fill(b.id, s, side, qty, price, t, charges=ch, reason="expiry", product=pos.product)
                 self._event("EXPIRY_SETTLEMENT", fill_id=f.id, book=b.id, symbol=s, qty=qty, side=side,
                             settlement_price=settle, underlying_price=und_px)

@@ -59,3 +59,20 @@ def required(positions: dict[str, tuple[int, str]], instruments: dict[str, Instr
                 req = min(naive, max(value_now - worst, 0.0))
         total += req
     return int(round(total))
+
+
+def reconcile(examples: list[dict], instruments: dict[str, Instrument], rules: MarginRules) -> list[dict]:
+    """Compare the model with margin figures the operator has obtained from the exchange or broker.
+
+    Each example: {"name", "positions": [{"symbol", "qty", "product"?}], "marks": {symbol: rupees},
+    "exchange_margin": rupees}. Returns model margin and the relative deviation for each. The project
+    ships no exchange figures (SPAN parameter files are licensed data), so until an operator supplies
+    examples the margin model is an unreconciled approximation."""
+    out = []
+    for ex in examples:
+        pos = {p["symbol"]: (int(p["qty"]), p.get("product", "NRML")) for p in ex["positions"]}
+        model = required(pos, instruments, {k: int(round(v * 100)) for k, v in ex["marks"].items()}, rules) / 100
+        ref = float(ex["exchange_margin"])
+        out.append({"name": ex["name"], "model_margin": model, "exchange_margin": ref,
+                    "deviation_pct": (model - ref) / ref if ref else None})
+    return out

@@ -153,9 +153,19 @@ class ChargeSchedule:
         c.gst = _r((c.brokerage + c.exchange_txn + c.sebi) * gst["rate"])
         return c.scaled(self.multiplier) if self.multiplier != 1.0 else c
 
-    def exercise_stt(self, inst: Instrument, qty: int, intrinsic_paise: int, d: date) -> Charges:
-        """STT payable by the holder of a long option that expires in the money."""
-        c = Charges(stt=_r(qty * intrinsic_paise * self._at(self._stt, d)["opt_exercise"]))
+    def exercise_stt(self, inst: Instrument, qty: int, intrinsic_paise: int, d: date, *,
+                     settlement_price_paise: int | None = None) -> Charges:
+        """STT payable by the holder of a long option that expires in the money.
+
+        From 2019-09-01 the tax base is intrinsic value. Before that it was the full settlement value
+        (settlement price x quantity), which made exercising barely-in-the-money options very costly."""
+        row = self._at(self._stt, d)
+        base = intrinsic_paise
+        if row.get("opt_exercise_base", "intrinsic") == "settlement_value":
+            if settlement_price_paise is None:
+                raise ValueError("exercise before 2019-09-01 is taxed on settlement value: settlement_price_paise is required")
+            base = settlement_price_paise
+        c = Charges(stt=_r(qty * base * row["opt_exercise"]))
         return c.scaled(self.multiplier) if self.multiplier != 1.0 else c
 
 

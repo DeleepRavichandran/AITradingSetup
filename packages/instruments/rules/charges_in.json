@@ -12,7 +12,8 @@
   "stt": {
     "_note": "Securities Transaction Tax. delivery: both sides. intraday/futures/options: sell side only. exercise: buyer of an ITM option, on intrinsic value.",
     "schedule": [
-      {"from": "2017-07-01", "eq_delivery": 0.001, "eq_intraday_sell": 0.00025, "fut_sell": 0.0001,   "opt_sell": 0.0005,   "opt_exercise": 0.00125, "verified": false, "source": "Finance Act 2016 rates in force; exercise STT levied on intrinsic value from 2019-09-01 (earlier on settlement value — not modelled)"},
+      {"from": "2017-07-01", "eq_delivery": 0.001, "eq_intraday_sell": 0.00025, "fut_sell": 0.0001,   "opt_sell": 0.0005,   "opt_exercise": 0.00125, "opt_exercise_base": "settlement_value", "verified": false, "source": "Finance Act 2016 rates in force (rates unverified). Exercise STT was levied on the full settlement value until 2019-08-31"},
+      {"from": "2019-09-01", "eq_delivery": 0.001, "eq_intraday_sell": 0.00025, "fut_sell": 0.0001,   "opt_sell": 0.0005,   "opt_exercise": 0.00125, "opt_exercise_base": "intrinsic", "verified": true, "source": "Finance (No.2) Act 2019: exercise STT on intrinsic value from 2019-09-01 (base verified via NSE STT page and broker bulletins; the unchanged rates carried from the previous row are unverified)"},
       {"from": "2023-04-01", "eq_delivery": 0.001, "eq_intraday_sell": 0.00025, "fut_sell": 0.000125, "opt_sell": 0.000625, "opt_exercise": 0.00125, "verified": true,  "source": "Finance Act 2023"},
       {"from": "2024-10-01", "eq_delivery": 0.001, "eq_intraday_sell": 0.00025, "fut_sell": 0.0002,   "opt_sell": 0.001,    "opt_exercise": 0.00125, "verified": true,  "source": "Finance (No.2) Act 2024"},
       {"from": "2026-04-01", "eq_delivery": 0.001, "eq_intraday_sell": 0.00025, "fut_sell": 0.0005,   "opt_sell": 0.0015,   "opt_exercise": 0.0015,  "verified": true,  "source": "Finance Act 2026 (Union Budget 2026-27); press coverage checked 2026-11"}
