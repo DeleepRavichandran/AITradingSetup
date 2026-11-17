@@ -4,8 +4,8 @@ The dashboard is a web app. To open it from your phone or another computer it ha
 machine that is always on and reachable: a small cloud VM is the usual choice. If you later trade
 live, that VM's static IP is also what you register with the broker.
 
-> Not verified in the build environment: the Docker images below were written but not built or
-> run there. Expect to fix small things on first deploy.
+> Verified so far: both images build and the API container starts, enforces the token and runs the
+> strategy sandbox. Not yet run: the web container and the full compose stack with Caddy/TLS.
 
 ## 1. One-time setup on the server
 
@@ -101,6 +101,8 @@ candidate. This integration is mock-tested only until you run that test.
 - Keep the token long and private; rotate it by changing `.env` and restarting.
 - Restrict SSH; keep the host patched; consider putting the site behind a VPN or an identity-aware
   proxy as well — a single shared token is a minimum, not a multi-user access system.
-- The API container has `SYS_ADMIN` so the strategy sandbox can create a network namespace. If you
-  remove it, the sandbox still runs with a scrubbed environment and resource limits but without
-  network isolation; the System page shows which mode is active.
+- The API container runs as root with `SYS_ADMIN` and AppArmor unconfined so it can build the private
+  namespaces that confine generated strategy code (which itself runs unprivileged). If you remove
+  either setting the sandbox refuses to run anything: research and the code editor stop working,
+  everything else continues. The System page shows the sandbox state.
+- `NSEQL_VIEWER_TOKEN` (optional) gives read-only access; use it on devices that only need to look.

@@ -1,6 +1,8 @@
 FROM python:3.13-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
-RUN apt-get update && apt-get install -y --no-install-recommends util-linux git && rm -rf /var/lib/apt/lists/*
+# The strategy sandbox needs unshare, mount, pivot_root and setpriv: all part of util-linux, which the
+# Debian base image already contains. The build fails here if a future base image drops them.
+RUN command -v unshare mount pivot_root setpriv sh >/dev/null
 WORKDIR /app
 COPY pyproject.toml ./
 COPY packages ./packages

@@ -27,8 +27,9 @@ API endpoint and no agent tool. Real-money trading is out of scope until every i
 | Exchange session hours | enforced on the router | `TradingCalendar` |
 
 A margin breach on a book holding derivatives, intraday or short positions cancels its working
-orders and liquidates it at the bar's close with slippage; the loss is real and can exceed the
-margin posted.
+orders and queues forced market orders. Those trade from the next bar, subject to volume and the
+participation cap, until the book is flat; meanwhile the book can place no new orders. The loss is
+real and can exceed the margin posted.
 
 ## 3. Capital segregation
 
@@ -68,7 +69,8 @@ closing into a broken feed is its own risk, so that decision is the operator's.
 
 ## 6. Generated code
 
-Runs only in the sandbox. May import only `math`, `numpy`, `nseql.indicators` and
+Runs only in the sandbox, and only if the sandbox's network, filesystem and process isolation is
+active — otherwise it is not run at all. May import only `math`, `numpy`, `nseql.indicators` and
 `nseql.strategies.api`. No file, network, process, reflection or private-attribute access. No
 secrets are present in its process. It is never imported by the API or execution service.
 
@@ -76,7 +78,8 @@ secrets are present in its process. It is never imported by the API or execution
 
 Secrets live in environment variables or a secret manager — never in the repository, logs, the
 registry or a prompt. `HUMAN_APPROVAL_SECRET` is held by a person and is not given to the API
-container. The dashboard requires a token whenever it is reachable from another machine.
+container. The API does not start without an operator token of at least 24 characters. A separate read-only
+viewer token can be issued to people who should look but not act.
 
 ## 8. Statements the platform will not make
 

@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated 2026-11-16. Statuses: **DONE** (implemented and tested), **UNVERIFIED** (written,
+Last updated 2026-11-17 (after the audit corrections in [AUDIT_2026-11.md](AUDIT_2026-11.md)). Statuses: **DONE** (implemented and tested), **UNVERIFIED** (written,
 tested only against mocks — never run against the real service), **BLOCKED** (cannot be done
 without something only the operator can supply), **NOT IMPLEMENTED**.
 
@@ -44,7 +44,8 @@ without something only the operator can supply), **NOT IMPLEMENTED**.
   cancellations, spread, impact, participation cap, tick and lot sizes, price bands, position and
   order limits, cash and margin, short-selling rules, MIS square-off, overnight carry, futures and
   option lifecycle, FIFO P&L, full ledger, dated charges, deterministic replay.
-- Approximations: margin is not exchange SPAN; final settlement uses the underlying's close rather
+- Approximations: margin is not exchange SPAN and has NOT been reconciled against exchange figures (use
+  `scripts/reconcile_margin.py` with your own); forced exits trade from the next bar with normal liquidity limits; final settlement uses the underlying's close rather
   than the exchange's last-half-hour average; no bid/ask data, spread is a parameter.
 - NOT IMPLEMENTED: tick or sub-minute simulation, currency / commodity / interest-rate
   derivatives (instrument kinds exist, nothing else), stock-lending, market-wide circuit halts.
@@ -78,8 +79,9 @@ without something only the operator can supply), **NOT IMPLEMENTED**.
 
 ### Platform
 - DONE: FastAPI backend, token auth, CLI, Docker images, compose with HTTPS proxy, CI workflow.
-- NOT VERIFIED HERE: the Docker images were not built in this environment; CI has not run on
-  GitHub yet.
+- Docker: both images build; the API container was smoke-tested (auth, sandbox). NOT VERIFIED: the web
+  container, the compose stack with Caddy/TLS, and CI on GitHub.
+- Auth is mandatory (operator token, optional read-only viewer token). Shared tokens, not user accounts.
 - NOT IMPLEMENTED: PostgreSQL / TimescaleDB / Redis / MLflow, OpenTelemetry / Prometheus /
   Grafana, multi-user accounts and roles.
 

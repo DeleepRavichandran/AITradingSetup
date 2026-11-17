@@ -160,11 +160,20 @@ mount --bind "$W" "$R$W"; mount -o remount,bind,nosuid,nodev "$R$W"
 mount -t proc -o nosuid,nodev,noexec proc "$R/proc"
 for d in null zero urandom random; do : > "$R/dev/$d"; mount --bind "/dev/$d" "$R/dev/$d"; done
 cd "$R"; mkdir -p .old
-pivot_root . .old
-umount -l /.old; rmdir /.old
-mount -o remount,ro,nosuid,nodev /
-cd "$W"
-exec setpriv $NSEQL_SBX_SETPRIV --no-new-privs --bounding-set=-all --inh-caps=-all -- "$@"
+DROP="setpriv $NSEQL_SBX_SETPRIV --no-new-privs --bounding-set=-all --inh-caps=-all --"
+if [ -z "${NSEQL_SBX_NO_PIVOT:-}" ] && pivot_root . .old 2>/dev/null; then
+  umount -l /.old; rmdir /.old
+  mount -o remount,ro,nosuid,nodev /
+  cd "$W"
+  exec $DROP "$@"
+fi
+# pivot_root is refused when the current root is not a mount point (inside most containers). Fall back
+# to moving the private root over "/" and chroot-ing into it. The old tree is then unreachable by path,
+# and the process that follows has no capabilities (so no CAP_SYS_CHROOT) and cannot gain any.
+rmdir .old
+mount -o remount,ro,nosuid,nodev "$R"
+mount --move "$R" /
+exec chroot . $DROP sh -c 'cd "$0" && exec "$@"' "$W" "$@"
 """
 
 _ISOLATION: tuple[bool, str] | None = None
@@ -185,11 +194,11 @@ def child_env(work: Path) -> dict:
 
 
 def isolated_command(argv: list[str], work: Path, *, read_only: list[Path] | None = None,
-                     limits: SandboxLimits | None = None) -> list[str]:
+                     limits: SandboxLimits | None = None, no_pivot: bool = False) -> list[str]:
     """Wrap `argv` so that it runs with no network, a private read-only filesystem view, no view of
     host processes and no privileges. `work` is the only writable location. Requires util-linux
     (unshare, mount, pivot_root, setpriv) and either root or unprivileged user namespaces."""
-    tools = {t: shutil.which(t) for t in ("unshare", "sh", "mount", "pivot_root", "setpriv")}
+    tools = {t: shutil.which(t) for t in ("unshare", "sh", "mount", "pivot_root", "chroot", "setpriv")}
     missing = [t for t, path in tools.items() if not path]
     if missing:
         raise OSError(f"sandbox tools not found: {', '.join(missing)}")
@@ -205,7 +214,7 @@ def isolated_command(argv: list[str], work: Path, *, read_only: list[Path] | Non
     ns = ["--net", "--mount", "--pid", "--fork", "--kill-child", "--ipc", "--uts"]
     if not root:
         ns = ["--user", "--map-root-user", *ns]
-    return [tools["unshare"], *ns, "--", "env", "-i", f"NSEQL_SBX_RO={':'.join(kept)}", f"NSEQL_SBX_SETPRIV={setpriv}",
+    return [tools["unshare"], *ns, "--", "env", "-i", f"NSEQL_SBX_RO={':'.join(kept)}", f"NSEQL_SBX_SETPRIV={setpriv}", *(["NSEQL_SBX_NO_PIVOT=1"] if no_pivot else []),
             "PATH=/usr/sbin:/usr/bin:/sbin:/bin", *(f"{k}={v}" for k, v in child_env(Path(work).resolve()).items() if k != "PATH"),
             tools["sh"], "-c", _LAUNCHER, "nseql-sandbox", str(newroot), str(Path(work).resolve()), *argv]
 

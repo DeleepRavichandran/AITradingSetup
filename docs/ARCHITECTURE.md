@@ -38,7 +38,7 @@ For each timestamp on the timeline (`services/backtester/engine.py::step`):
 1. session start → corporate actions effective that date
 2. **match** orders submitted on *earlier* steps against this step's bars
 3. mark positions; margin and daily-loss surveillance
-4. intraday square-off of MIS positions (15:20)
+4. from 15:20, queue square-off orders for MIS positions (they trade from the next bar)
 5. each strategy's `on_bar` → orders → pre-trade risk → resting queue
 6. session end → expiry settlement, futures MTM, DAY-order expiry
 
@@ -86,7 +86,7 @@ equalities:
 
 Margin (`margin.py`) is an **approximation** of SPAN + exposure: flat rates for futures and naked
 short options, and maximum-loss margining for defined-risk option structures. Real SPAN needs
-NSE's daily risk-parameter files. A breach force-liquidates the book.
+NSE's daily risk-parameter files. A breach queues forced exit orders for the whole book, tradable from the next bar.
 
 ## 5. Data
 
@@ -125,11 +125,11 @@ re-tuned: the learning agent may request one *structural* variant per lineage, o
 
 | Boundary | Mechanism |
 |---|---|
-| Generated code ↔ host | AST allow-list; subprocess; scrubbed env; rlimits; `unshare --net` |
+| Generated code ↔ host | AST allow-list; mandatory private mount/network/PID namespaces with a read-only root, dropped privileges, scrubbed env, rlimits; fails closed |
 | Generated code ↔ orders | `nseql.execution` raises ImportError in the sandbox; strategies get only `ctx` |
 | Agents ↔ sealed data | registry grants once per hypothesis, to the director only; all else clamped to validation end |
 | Anything ↔ live orders | `LiveGate`: env flag (frozen at start) + kill switch + compliance file + HMAC-signed human approval for the exact source hash |
-| Browser ↔ API | bearer token; compose deployment refuses to start without one; HTTPS via Caddy |
+| Browser ↔ API | mandatory bearer token (operator / read-only viewer); the API refuses to start without one; HTTPS via Caddy |
 | Secrets | environment only; never logged, never passed to containers that do not need them |
 
 ## 8. Deliberate simplifications and the production path

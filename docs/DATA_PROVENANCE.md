@@ -50,6 +50,7 @@ derived). Assumption to confirm on your first real file: UDiFF `TtlTradgVol` is 
 | NSE transaction charges from 2024-04-01 and 2024-10-01 | equity, futures, options | Yes — broker bulletins quoting the NSE circulars |
 | GST 18% | from 2017-07-01 | Yes |
 | STT 2017-07 → 2023-03 | | **No — from memory** |
+| Exercise-STT tax base: settlement value until 2019-08-31, intrinsic value after | | Yes — NSE STT page and broker bulletins |
 | NSE transaction charges before 2024-04 | slab-based in reality; lowest slab used | **No** |
 | Stamp duty from 2020-07-01 | | **No — from memory** |
 | Stamp duty before 2020-07-01 | state-specific, modelled as **zero** (understates cost) | Not modelled |

@@ -1,14 +1,19 @@
 # Test report
 
-Run on 2026-11-16, Python 3.13.18, numpy 2.5.5, pandas 3.1.1, Linux. Command: `pytest`.
+Run on 2026-11-17, Python 3.13.18, numpy 2.5.5, pandas 3.1.1, Linux. Command: `pytest`.
 
 | Suite | Tests | Result | Time |
 |---|---:|---|---:|
-| `tests/unit` | 88 | all passed | 10.6 s |
-| `tests/integration` | 59 | all passed | 29.8 s |
-| `tests/regression` | 5 | all passed | 4.0 s |
-| `tests/acceptance` | 17 | all passed | 29.7 s |
-| **Total** | **169** | **169 passed, 0 failed, 0 skipped** | |
+| `tests/unit` | 95 | all passed | 9.6 s |
+| `tests/integration` | 59 | all passed | 25.4 s |
+| `tests/regression` | 5 | all passed | 3.5 s |
+| `tests/acceptance` | 17 | all passed | 24.9 s |
+| `tests/audit` | 31 | all passed | 5.0 s |
+| **Total** | **207** | **207 passed, 0 failed, 0 skipped** | 53.6 s |
+
+Figures from the run of 2026-11-17 after the audit corrections ([AUDIT_2026-11.md](AUDIT_2026-11.md)).
+Both Docker images were built and the API container was smoke-tested; the web container and the
+compose stack were not run.
 
 Web: `tsc --noEmit` clean; `next build` succeeds (18 routes). All 18 pages were loaded in
 headless Chromium against the live API with zero console errors or failed requests. Driven end
@@ -16,7 +21,7 @@ to end in the browser: token login (wrong token rejected), phone viewport (no ho
 overflow), run a backtest, simulate a portfolio, start a paper session and place an order,
 sandbox-test code from the editor, ask the analyst.
 
-Not run: Docker image builds, the GitHub Actions workflow, anything against a real broker, data
+Not run: the web container, the compose stack, the GitHub Actions workflow, anything against a real broker, data
 vendor, WhatsApp or the Anthropic API.
 
 ## What the tests establish

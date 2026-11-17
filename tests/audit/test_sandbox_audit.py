@@ -41,7 +41,7 @@ open("results.json", "w").write(json.dumps(out))
 '''
 
 
-def run_probe(tmp_path, data_dir):
+def run_probe(tmp_path, data_dir, no_pivot=False):
     secret = tmp_path / "host_secret.txt"
     secret.write_text("TOP-SECRET-BROKER-TOKEN")
     repo_env = Path(sandbox.__file__).resolve().parents[2] / ".env"
@@ -54,7 +54,7 @@ def run_probe(tmp_path, data_dir):
     sandbox.prepare_workdir(work)
     try:
         cmd = sandbox.isolated_command([sys.executable, "-I", "probe.py", str(secret), str(repo_env), str(data_dir)], work,
-                                       read_only=[Path(data_dir)], limits=sandbox.SandboxLimits())
+                                       read_only=[Path(data_dir)], limits=sandbox.SandboxLimits(), no_pivot=no_pivot)
         p = subprocess.run(cmd, cwd=work, env=sandbox.child_env(work), capture_output=True, text=True, timeout=120,
                            preexec_fn=sandbox._preexec(sandbox.SandboxLimits()))
         assert p.returncode == 0, p.stderr[-2000:]
@@ -64,8 +64,9 @@ def run_probe(tmp_path, data_dir):
             repo_env.unlink()
 
 
-def test_untrusted_code_cannot_read_host_files_reach_the_network_or_write_outside_its_workdir(tmp_path, data_dir):
-    out = run_probe(tmp_path, data_dir)
+@pytest.mark.parametrize("no_pivot", [False, True], ids=["pivot_root", "chroot-fallback (containers)"])
+def test_untrusted_code_cannot_read_host_files_reach_the_network_or_write_outside_its_workdir(tmp_path, data_dir, no_pivot):
+    out = run_probe(tmp_path, data_dir, no_pivot)
     assert out["secret"].startswith("DENIED"), "a file elsewhere on the host was readable from the sandbox"
     assert out["repo_env"].startswith("DENIED"), "the repository's .env was readable from the sandbox"
     assert out["net"] == "blocked"
@@ -94,3 +95,24 @@ def test_isolated_run_still_works_and_reports_its_isolation(data_dir, tmp_path):
     iso = out["isolation"]
     assert iso["network_namespace"] and iso["filesystem"] and iso["pid_namespace"] and iso["env_scrubbed"]
     assert Path(out["results"][0]["path"], "summary.json").exists()      # the one writable output location works
+
+
+def test_chroot_fallback_cannot_be_escaped_by_the_unprivileged_child(tmp_path, data_dir):
+    """The classic chroot escape (chroot into a subdirectory, then walk up) needs CAP_SYS_CHROOT."""
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "esc.py").write_text(
+        "import os, json\nout = {}\n"
+        "try:\n    os.mkdir('j'); os.chroot('j'); out['chroot'] = 'allowed'\nexcept Exception as e:\n    out['chroot'] = type(e).__name__\n"
+        "try:\n    os.setuid(0); out['setuid0'] = 'allowed'\nexcept Exception as e:\n    out['setuid0'] = type(e).__name__\n"
+        "out['caps'] = [l.split()[1] for l in open('/proc/self/status') if l.startswith(('CapEff', 'CapPrm', 'CapBnd'))]\n"
+        "out['nnp'] = [l.split()[1] for l in open('/proc/self/status') if l.startswith('NoNewPrivs')]\n"
+        "open('results.json', 'w').write(json.dumps(out))\n")
+    sandbox.prepare_workdir(work)
+    cmd = sandbox.isolated_command([sys.executable, "-I", "esc.py"], work, no_pivot=True)
+    p = subprocess.run(cmd, cwd=work, env=sandbox.child_env(work), capture_output=True, text=True, timeout=60)
+    assert p.returncode == 0, p.stderr[-800:]
+    out = json.loads((work / "results.json").read_text())
+    assert out["chroot"] == "PermissionError" and out["caps"] == ["0000000000000000"] * 3 and out["nnp"] == ["1"]
+    if os.getuid() == 0:
+        assert out["setuid0"] == "PermissionError"

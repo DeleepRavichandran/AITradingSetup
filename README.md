@@ -19,12 +19,13 @@ pip install -e ".[dev]"
 nseql fixtures                                   # generate the synthetic dataset
 nseql backtest sma_cross --end 2023-05-24 --trades
 nseql research --iterations 3                    # hypothesis -> code -> sandbox -> audit -> decision
-pytest -q                                        # 169 tests
+pytest -q                                        # 207 tests (the sandbox tests need Linux)
 ```
 
 Dashboard (two terminals):
 
 ```bash
+export NSEQL_ALLOW_INSECURE_LOCAL=true           # this machine only; servers need NSEQL_API_TOKEN
 nseql serve                                      # API on http://127.0.0.1:8000
 cd apps/web && npm install && npm run dev        # UI on http://localhost:3000
 ```
@@ -78,4 +79,4 @@ All Python is one import namespace, `nseql`, mapped onto those folders in `pypro
 [Architecture](docs/ARCHITECTURE.md) · [Implementation status](docs/IMPLEMENTATION_STATUS.md) ·
 [Test report](docs/TEST_REPORT.md) · [Data provenance](docs/DATA_PROVENANCE.md) ·
 [Risk policy](docs/RISK_POLICY.md) · [Live readiness checklist](docs/LIVE_READINESS_CHECKLIST.md) ·
-[Research journal](docs/RESEARCH_JOURNAL.md) · [Deployment](docs/DEPLOYMENT.md) · [Contributing](CONTRIBUTING.md)
+[Research journal](docs/RESEARCH_JOURNAL.md) · [Audit, Nov 2026](docs/AUDIT_2026-11.md) · [Deployment](docs/DEPLOYMENT.md) · [Contributing](CONTRIBUTING.md)
