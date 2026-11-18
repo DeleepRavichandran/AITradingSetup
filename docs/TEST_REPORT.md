@@ -14,8 +14,17 @@ Run on 2026-11-17, Python 3.13.18, numpy 2.5.5, pandas 3.1.1, Linux. Command: `p
 | **Total, as an unprivileged user (as on CI)** | 254 | 251 passed, 3 skipped (root-only sandbox fallback) | 103 s |
 
 Figures from 2026-11-17, after the audit corrections and the Learning Brain ([AUDIT_2026-11.md](AUDIT_2026-11.md)).
-Both Docker images were built and the API container was smoke-tested; the web container and the
-compose stack were not run.
+Docker, rebuilt 2026-11-18 from commit `35fd653` with `--no-cache` (API 82 s, web 63 s; built through an
+HTTPS-only proxy using a temporary copy of each Dockerfile with two lines trusting the proxy certificate).
+API container (`--cap-add SYS_ADMIN --security-opt apparmor=unconfined`, as in the compose file):
+refuses to start without `NSEQL_API_TOKEN`; anonymous and wrong-token requests get 401; `/docs`,
+`/redoc`, `/openapi.json` and their `/api/` forms get 404; viewer token can read but gets 403 on a
+write; `live_trading_enabled` is false; sandbox reports network, filesystem and PID namespaces
+active; Docker health check healthy; `/api/brain/summary` 200, `/api/brain/verify` memory chain
+intact; a proposed policy change to `max_daily_loss_pct` is rejected as a protected setting. A probe
+run through the sandbox inside the container ran as uid 65534, had no network, and could not see
+the dataset directory. Web container: all 19 page routes return 200 (page render only; it was not
+connected to the API container).
 
 Web: `tsc --noEmit` clean; `next build` succeeds (18 routes). All 18 pages were loaded in
 headless Chromium against the live API with zero console errors or failed requests. Driven end
@@ -23,7 +32,9 @@ to end in the browser: token login (wrong token rejected), phone viewport (no ho
 overflow), run a backtest, simulate a portfolio, start a paper session and place an order,
 sandbox-test code from the editor, ask the analyst.
 
-Not run: the web container, the compose stack, the GitHub Actions workflow, anything against a real broker, data
+GitHub Actions (`python` and `web` jobs) pass on `35fd653`.
+
+Not run: the compose stack (Caddy/TLS, containers wired together), anything against a real broker, data
 vendor, WhatsApp or the Anthropic API.
 
 ## What the tests establish
