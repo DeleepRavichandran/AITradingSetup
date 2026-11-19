@@ -19,7 +19,7 @@ pip install -e ".[dev]"
 nseql fixtures                                   # generate the synthetic dataset
 nseql backtest sma_cross --end 2023-05-24 --trades
 nseql research --iterations 3                    # hypothesis -> code -> sandbox -> audit -> decision
-pytest -q                                        # 207 tests (the sandbox tests need Linux)
+pytest -q                                        # 294 tests (the sandbox tests need Linux)
 ```
 
 Dashboard (two terminals):
@@ -31,7 +31,21 @@ cd apps/web && npm install && npm run dev        # UI on http://localhost:3000
 ```
 
 To reach the dashboard from anywhere (phone included), deploy the Docker stack behind HTTPS:
-[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). On a Windows laptop: [docs/WINDOWS.md](docs/WINDOWS.md).
+
+Getting ready for real data (each step needs your Kite Connect subscription or files you hold):
+
+```bash
+nseql kite-login                                   # once a day
+nseql import-kite kite_2026 --symbols RELIANCE,TCS,INFY --start 2024-01-01 --licence "Kite Connect, personal research"
+nseql corporate-actions kite_2026                  # unlisted splits/bonuses; attach confirmed ones with --file
+nseql holidays nse_holidays_2026.csv --source "NSE circular ..."
+nseql events --file results_and_macro.csv --source "exchange filings; RBI/Fed calendars" --expiries 2024-01-01 2026-12-31
+nseql import-context --start 2023-01-01 --licence "Kite Connect, personal research"   # VIX, sectors, rupee, crude, gold
+nseql context-test --dataset kite_2026             # does any context filter beat a placebo?
+```
+
+Paper-trade a screener pick: start a session with strategy `screened_config` and params `{"key": "<16-char key>"}`.
 
 ## What works today
 
@@ -43,10 +57,12 @@ To reach the dashboard from anywhere (phone included), deploy the Docker stack b
 | Walk-forward, bootstrap, Monte Carlo, deflated Sharpe, FDR control, cost / parameter / stress sensitivity | Implemented, tested |
 | Portfolio simulation on one shared ledger | Implemented (library strategies) |
 | Paper trading on replayed bars, kill switch, safety halts, reconciliation | Implemented, tested |
-| Learning Brain: memory, procedural and meta-learning, self-criticism, versioned self-modification with human promotion and rollback; 49,728-configuration screening | Implemented — **has not yet shown an out-of-sample improvement** (see docs/LEARNING_BRAIN.md) |
+| Learning Brain: memory, procedural and meta-learning, self-criticism, versioned self-modification with human promotion and rollback; 49,728-configuration screening (82,880 with context filters) | Implemented — **has not yet shown an out-of-sample improvement** (see docs/LEARNING_BRAIN.md) |
 | 19-page dashboard on live API data | Implemented |
 | Import of real NSE data | **Blocked** — needs files/credentials you are licensed to use |
 | Live market-data stream | **Blocked / not implemented** |
+| Market context (India VIX, sectors, rupee, crude, gold), scheduled events (results, RBI, Budget, Fed, expiry), placebo test for context filters | Implemented, tested on synthetic data — **not yet run on real data** |
+| NSE holiday list, split/bonus detection, paper trading of screener picks | Implemented, tested |
 | Kite adapter, WhatsApp alerts, LLM-backed agents | **Unverified** — mock-tested, need your credentials |
 | Upstox, Angel One, currency / commodity / rate derivatives, tick data | **Not implemented** |
 

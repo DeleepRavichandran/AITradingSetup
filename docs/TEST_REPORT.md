@@ -1,19 +1,32 @@
 # Test report
 
-Run on 2026-11-17, Python 3.13.18, numpy 2.5.5, pandas 3.1.1, Linux. Command: `pytest`.
+Run on 2026-11-19, Python 3.13.18, numpy 2.5.5, pandas 3.1.1, Linux. Command: `pytest`.
 
-| Suite | Tests | Result | Time |
-|---|---:|---|---:|
-| `tests/unit` | 95 | all passed | 13.7 s |
-| `tests/integration` | 69 | all passed | 43.3 s |
-| `tests/regression` | 5 | all passed | 5.3 s |
-| `tests/acceptance` | 17 | all passed | 38.9 s |
-| `tests/audit` | 31 | all passed | 7.8 s |
-| `tests/brain` | 37 | all passed | 18.1 s |
-| **Total, as root** | **254** | **254 passed** | 107 s |
-| **Total, as an unprivileged user (as on CI)** | 254 | 251 passed, 3 skipped (root-only sandbox fallback) | 103 s |
+| Suite | Tests |
+|---|---:|
+| `tests/unit` | 112 |
+| `tests/integration` | 78 |
+| `tests/regression` | 5 |
+| `tests/acceptance` | 17 |
+| `tests/audit` | 31 |
+| `tests/brain` | 51 |
+| **Total, as root** | **294 passed** (159 s) |
+| **Total, as an unprivileged user (as on CI)** | 291 passed, 3 skipped (root-only sandbox fallback) (149 s) |
 
-Figures from 2026-11-17, after the audit corrections and the Learning Brain ([AUDIT_2026-11.md](AUDIT_2026-11.md)).
+New on 2026-11-19 (40 tests): holiday list and closed-day scheduling, incomplete daily candles, split/bonus
+detection and attachment, market-context alignment and Kite import (mocked), the context placebo test
+(negative and positive control), scheduled-event blackouts, screened configurations as a strategy and a
+paper session, Windows guards.
+
+Compose stack, 2026-11-19 (API image rebuilt from the working tree of this change; web image from `35fd653`,
+web code unchanged): `docker compose --env-file .env -f infra/docker-compose.yml up` with the API and web
+services (Caddy/TLS profile not run). Through the web container's proxy: no token 401; operator token
+200 with live trading false and the sandbox active; the scheduler running; a `screened_config` paper
+session created and reconciled; the session restored with the same step count after an API restart.
+Found and fixed: without `--env-file .env` Compose does not read the repository-root `.env` and refuses
+to start ("NSEQL_API_TOKEN is missing").
+
+Earlier Docker figures (2026-11-18, commit `35fd653`):
 Docker, rebuilt 2026-11-18 from commit `35fd653` with `--no-cache` (API 82 s, web 63 s; built through an
 HTTPS-only proxy using a temporary copy of each Dockerfile with two lines trusting the proxy certificate).
 API container (`--cap-add SYS_ADMIN --security-opt apparmor=unconfined`, as in the compose file):
@@ -34,7 +47,7 @@ sandbox-test code from the editor, ask the analyst.
 
 GitHub Actions (`python` and `web` jobs) pass on `35fd653`.
 
-Not run: the compose stack (Caddy/TLS, containers wired together), anything against a real broker, data
+Not run: the Caddy/TLS profile of the compose stack, anything against a real broker, data
 vendor, WhatsApp or the Anthropic API.
 
 ## What the tests establish

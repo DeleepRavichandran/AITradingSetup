@@ -67,7 +67,18 @@ real engine with integer shares, dated charges and the ledger):
 | momentum + all overlays | 0.941 | +0.3% |
 
 The screener is slightly optimistic, mainly because it rebalances to fixed weights for free as
-prices drift. It is a screening tier; finalists should be confirmed in the event engine.
+prices drift. It is a screening tier; finalists should be confirmed in the event engine, and any
+configuration can now be backtested or paper-traded there as `screened_config` (identical fills to the
+screener's weights, tested).
+
+**Context extension (added 2026-11-19).** With a market-context dataset and/or scheduled events, the
+universe grows by 518 × 8 filters × 2 volatility caps × 2 universes × 2 sizings = 33,152 to **82,880**.
+The filters: India VIX calm, no VIX spike, broad market (sector breadth), stable rupee, calm crude, and
+flat over results / macro events / expiry. Base indices are unchanged. `nseql context-test` compares
+every filtered configuration with its identical unfiltered twin and against the same filter shifted in
+time (a placebo with the same on/off pattern). On the synthetic fixture with random context, no filter
+passed in 30 runs; a deliberately leaked filter was detected (z ≈ 9.7). The Learning Brain's decision
+loop does not use the context extension yet, and nothing has been run on real context data.
 
 ## 3. Learning KPIs
 

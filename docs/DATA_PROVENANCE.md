@@ -33,7 +33,11 @@ No unauthorised scraping, and no redistribution. Two supported routes:
    `import_csv` for vendor exports. Credentials come from environment variables only.
 
 After importing: open *Data Quality & Coverage*, resolve errors, then supply corporate actions
-(bhavcopies are unadjusted) and a holiday calendar. Check your licence before sharing any report
+(bhavcopies are unadjusted) and a holiday calendar. `nseql corporate-actions <dataset>` lists price
+drops that look like unlisted splits or bonuses; confirm each against the exchange's corporate
+announcements and attach the real ones with `--file` (a new dataset version; the parent's hash is
+recorded). An action is refused when the prices do not drop on its date, which is what already-adjusted
+data looks like. `nseql holidays` stores the NSE holiday list with its source and the years it covers. Check your licence before sharing any report
 that embeds prices.
 
 Derivative symbols are built as `<UNDERLYING><YY><MON><DD>FUT` / `…<STRIKE><CE|PE>`. Index levels
@@ -74,6 +78,21 @@ framework, expiry rules). **It is a curated reference list, not a history of the
 not a news archive.** Only the three STT entries from 2023 onward are marked verified; the rest
 were written from memory and are flagged `verified: false` in the file and in the dashboard.
 Real-data backtests list the structural breaks inside their window as warnings.
+
+### Market context
+
+`nseql import-context` builds a separate context dataset from Kite (India VIX, NIFTY 50 and 8 sector
+indices, USDINR futures, MCX crude and gold; futures use Kite's continuous series). It is never mixed
+into a trading dataset. Currency and commodity closes come after the stock market closes, so they are
+used from the next trading day. Raw responses are kept byte-for-byte like any other import. Global
+markets (S&P 500, US yields) are not included: no licensed source has been chosen.
+
+### Scheduled events
+
+`nseql events` stores results dates, RBI policy, the Union Budget and US Fed decisions from a CSV you
+compile from exchange filings and the official calendars. Each needs `known_from` (when it became
+public); an event is only used from the trading day after that. Monthly F&O expiry dates are generated
+from the exchange rule (switch to Tuesday dated 2025-09-01, unverified). None of this ships with the code.
 
 ### News and events
 
