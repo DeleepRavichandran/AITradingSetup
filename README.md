@@ -19,7 +19,7 @@ pip install -e ".[dev]"
 nseql fixtures                                   # generate the synthetic dataset
 nseql backtest sma_cross --end 2023-05-24 --trades
 nseql research --iterations 3                    # hypothesis -> code -> sandbox -> audit -> decision
-pytest -q                                        # 294 tests (the sandbox tests need Linux)
+pytest -q                                        # 307 tests (the sandbox tests need Linux)
 ```
 
 Dashboard (two terminals):
@@ -63,6 +63,7 @@ Paper-trade a screener pick: start a session with strategy `screened_config` and
 | Live market-data stream | **Blocked / not implemented** |
 | Market context (India VIX, sectors, rupee, crude, gold), scheduled events (results, RBI, Budget, Fed, expiry), placebo test for context filters | Implemented, tested on synthetic data — **not yet run on real data** |
 | NSE holiday list, split/bonus detection, paper trading of screener picks | Implemented, tested |
+| One-minute screening loop: intraday + swing, up to 50,000 configurations, idempotent, crash recovery, Strategy Monitor page | Implemented, tested on a **replayed / synthetic** feed (docs/SCREENING.md); live 1-minute feed **not implemented** |
 | Kite adapter, WhatsApp alerts, LLM-backed agents | **Unverified** — mock-tested, need your credentials |
 | Upstox, Angel One, currency / commodity / rate derivatives, tick data | **Not implemented** |
 
@@ -96,4 +97,4 @@ All Python is one import namespace, `nseql`, mapped onto those folders in `pypro
 [Architecture](docs/ARCHITECTURE.md) · [Implementation status](docs/IMPLEMENTATION_STATUS.md) ·
 [Test report](docs/TEST_REPORT.md) · [Data provenance](docs/DATA_PROVENANCE.md) ·
 [Risk policy](docs/RISK_POLICY.md) · [Live readiness checklist](docs/LIVE_READINESS_CHECKLIST.md) ·
-[Research journal](docs/RESEARCH_JOURNAL.md) · [Learning Brain](docs/LEARNING_BRAIN.md) · [Audit, Nov 2026](docs/AUDIT_2026-11.md) · [Deployment](docs/DEPLOYMENT.md) · [Contributing](CONTRIBUTING.md)
+[Research journal](docs/RESEARCH_JOURNAL.md) · [Learning Brain](docs/LEARNING_BRAIN.md) · [One-minute screening](docs/SCREENING.md) · [V5 status](docs/PLATFORM_V5_STATUS.md) · [Windows](docs/WINDOWS.md) · [Audit, Nov 2026](docs/AUDIT_2026-11.md) · [Deployment](docs/DEPLOYMENT.md) · [Contributing](CONTRIBUTING.md)

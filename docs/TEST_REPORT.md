@@ -10,8 +10,17 @@ Run on 2026-11-19, Python 3.13.18, numpy 2.5.5, pandas 3.1.1, Linux. Command: `p
 | `tests/acceptance` | 17 |
 | `tests/audit` | 31 |
 | `tests/brain` | 51 |
-| **Total, as root** | **294 passed** (159 s) |
-| **Total, as an unprivileged user (as on CI)** | 291 passed, 3 skipped (root-only sandbox fallback) (149 s) |
+| `tests/screening` | 13 |
+| **Total, as root** | **307 passed** (262 s) |
+| **Total, as an unprivileged user (as on CI)** | 304 passed, 3 skipped (root-only sandbox fallback) (254 s) |
+
+One-minute screening slice (13 tests): incremental features equal a pandas reference; ~17,000
+streaming decisions equal an independent per-configuration reference; duplicate events, repeated
+cycles and old minutes change nothing; crash + restart reproduce the uninterrupted ledger; gaps, late
+and conflicting bars; kill switch; the wall-clock thread; the API (replay job, pagination, filters,
+viewer role, restart). Frontend: `tsc --noEmit` clean, `next build` succeeds (21 routes), and the
+Strategy Monitor page was loaded in headless Chromium against the live API with zero console errors.
+Benchmarks: [SCREENING.md](SCREENING.md).
 
 New on 2026-11-19 (40 tests): holiday list and closed-day scheduling, incomplete daily candles, split/bonus
 detection and attachment, market-context alignment and Kite import (mocked), the context placebo test

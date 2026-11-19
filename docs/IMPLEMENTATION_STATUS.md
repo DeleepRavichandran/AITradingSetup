@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated 2026-11-19 (trading-readiness additions: holidays, corporate actions, market context, scheduled events, paper trading of screened configurations, Windows). Earlier: the audit corrections in [AUDIT_2026-11.md](AUDIT_2026-11.md). Statuses: **DONE** (implemented and tested), **UNVERIFIED** (written,
+Last updated 2026-11-19 (one-minute screening slice — see [SCREENING.md](SCREENING.md) and [PLATFORM_V5_STATUS.md](PLATFORM_V5_STATUS.md); trading-readiness additions: holidays, corporate actions, market context, scheduled events, paper trading of screened configurations, Windows). Earlier: the audit corrections in [AUDIT_2026-11.md](AUDIT_2026-11.md). Statuses: **DONE** (implemented and tested), **UNVERIFIED** (written,
 tested only against mocks — never run against the real service), **BLOCKED** (cannot be done
 without something only the operator can supply), **NOT IMPLEMENTED**.
 
@@ -112,6 +112,15 @@ without something only the operator can supply), **NOT IMPLEMENTED**.
 - Auth is mandatory (operator token, optional read-only viewer token). Shared tokens, not user accounts.
 - NOT IMPLEMENTED: PostgreSQL / TimescaleDB / Redis / MLflow, OpenTelemetry / Prometheus /
   Grafana, multi-user accounts and roles.
+
+### One-minute screening (see SCREENING.md)
+- DONE (on a replayed feed): central minute scheduler, shared incremental features (1m/5m/15m/1d),
+  intraday and swing configurations up to 50,000 with deterministic ids, decisions, forward paper ledger,
+  idempotent processing, checkpoint and crash recovery, gap/late/conflict handling, API and dashboard page.
+  Streaming decisions equal an independent batch reference. Benchmarked at 1k/5k/10k/50k (synthetic
+  stream): p99 cycle 211 ms at 50k, no missed evaluations, ledger identical after SIGKILL + restart.
+- NOT IMPLEMENTED: a live 1-minute feed (needs a licensed real-time entitlement); positional, long-term,
+  F&O, ETF, mutual-fund and SIP engines; shared capital and volume caps in the paper loop.
 
 ### Learning Brain (see LEARNING_BRAIN.md)
 - DONE: episodic memory (append-only, hash-chained, point-in-time), semantic findings with FDR control,
