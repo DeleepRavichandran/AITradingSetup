@@ -37,7 +37,7 @@ packages = [
   "nseql.strategies", "nseql.strategies.library", "nseql.analytics",
   "nseql.data", "nseql.data.adapters", "nseql.backtester", "nseql.research",
   "nseql.risk", "nseql.paper", "nseql.execution", "nseql.execution.brokers",
-  "nseql.api", "nseql.agents", "nseql.notify", "nseql.evaluation", "nseql.brain",
+  "nseql.api", "nseql.agents", "nseql.notify", "nseql.evaluation", "nseql.brain", "nseql.screening",
 ]
 
 [tool.setuptools.package-dir]
@@ -61,6 +61,7 @@ packages = [
 "nseql.notify" = "services/notify"
 "nseql.evaluation" = "services/evaluation"
 "nseql.brain" = "services/brain"
+"nseql.screening" = "services/screening"
 
 [tool.setuptools.package-data]
 "nseql.instruments" = ["rules/*.json"]
