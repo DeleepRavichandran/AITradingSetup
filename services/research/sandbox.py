@@ -229,6 +229,10 @@ def prepare_workdir(work: Path) -> None:
 def isolation_status(refresh: bool = False) -> tuple[bool, str]:
     """(available, detail). Probes once by actually running a no-op inside the full sandbox."""
     global _ISOLATION
+    if not sys.platform.startswith("linux"):
+        _ISOLATION = (False, f"Linux namespaces are not available on {sys.platform}; generated code cannot be run here. "
+                             "Run the platform in Docker Desktop (WSL2) to enable it.")
+        return _ISOLATION
     if _ISOLATION is None or refresh:
         try:
             with tempfile.TemporaryDirectory(prefix="nseql_sbx_probe_") as tmp:

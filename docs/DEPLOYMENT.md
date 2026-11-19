@@ -34,7 +34,7 @@ Open ports 80 and 443 on the server's firewall. Nothing else needs to be public.
 ## 2. Start
 
 ```bash
-docker compose -f infra/docker-compose.yml --profile public up -d --build
+docker compose --env-file .env -f infra/docker-compose.yml --profile public up -d --build
 ```
 
 Caddy obtains and renews a TLS certificate for `NSEQL_DOMAIN`. Open `https://<your domain>`,
@@ -50,7 +50,7 @@ Everything persistent lives in the `nseql-data` volume (`/data/datasets`, `/data
 On first start the synthetic fixture is generated. Import your own data inside the API container:
 
 ```bash
-docker compose -f infra/docker-compose.yml exec api nseql import-bhavcopy nse_eod_2024 /data/incoming/*.csv --licence "<your entitlement>"
+docker compose --env-file .env -f infra/docker-compose.yml exec api nseql import-bhavcopy nse_eod_2024 /data/incoming/*.csv --licence "<your entitlement>"
 ```
 
 Back up the volume; the registry is the lab's memory.
@@ -61,17 +61,17 @@ Needs a Kite Connect plan that includes historical data. In the Kite developer c
 app; set `KITE_API_KEY` and `KITE_API_SECRET` in `.env` (never in git). Then, each trading day:
 
 ```bash
-docker compose -f infra/docker-compose.yml exec api nseql kite-login          # prints the login URL
+docker compose --env-file .env -f infra/docker-compose.yml exec api nseql kite-login          # prints the login URL
 # log in, copy request_token=... from the redirect address, then:
-docker compose -f infra/docker-compose.yml exec api nseql kite-login --request-token <value>
+docker compose --env-file .env -f infra/docker-compose.yml exec api nseql kite-login --request-token <value>
 ```
 
 Import candles (Kite lists current instruments only; supply your own symbol list, e.g. one symbol per line):
 
 ```bash
-docker compose -f infra/docker-compose.yml exec api nseql import-kite kite_2026 --symbols-file /data/nifty50.txt \
+docker compose --env-file .env -f infra/docker-compose.yml exec api nseql import-kite kite_2026 --symbols-file /data/nifty50.txt \
     --start 2026-01-01 --licence "Kite Connect subscription, personal research use"
-docker compose -f infra/docker-compose.yml exec api nseql quality kite_2026
+docker compose --env-file .env -f infra/docker-compose.yml exec api nseql quality kite_2026
 ```
 
 Check the quality report for unexplained price jumps (splits, bonuses) before running anything.

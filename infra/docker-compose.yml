@@ -1,8 +1,8 @@
 # NSE AI Quant Lab — single-host deployment.
 #
-#   Local:                docker compose -f infra/docker-compose.yml up --build      -> http://localhost:8080
+#   Local:                docker compose --env-file .env -f infra/docker-compose.yml up --build      -> http://localhost:8080
 #   Internet-facing:      set NSEQL_DOMAIN and NSEQL_API_TOKEN in .env, then
-#                         docker compose -f infra/docker-compose.yml --profile public up -d --build
+#                         docker compose --env-file .env -f infra/docker-compose.yml --profile public up -d --build
 #                         Caddy obtains a TLS certificate for NSEQL_DOMAIN automatically.
 #
 # The API refuses to start without NSEQL_API_TOKEN (at least 24 characters). NSEQL_VIEWER_TOKEN is an
