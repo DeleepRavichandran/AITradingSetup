@@ -40,23 +40,25 @@ class BudgetExceeded(RuntimeError):
 
 _P = None
 _OUT = None
+_CTX = False
 
 
 def _init(cache_path: str, out_path: str, rows: int, n_cfg: int, mem_mb: int):
-    global _P, _OUT
-    import resource
+    global _P, _OUT, _CTX
     lim = mem_mb * 1024 * 1024
     try:
+        import resource                       # POSIX only; on Windows the memory cap is not enforced
         resource.setrlimit(resource.RLIMIT_AS, (lim, lim))
-    except (ValueError, OSError):
+    except (ImportError, ValueError, OSError):
         pass
     _P = cache_mod.load(Path(cache_path))
+    _CTX = bool(_P.meta.get("context"))
     _OUT = {k: np.load(Path(out_path) / f"{k}.npy", mmap_mode="r+") for k in ("G", "R", "E")}
 
 
 def _work(args):
     idx, cost = args
-    cfgs = universe()
+    cfgs = universe(_CTX)
     t0 = time.perf_counter()
     for i in idx:
         g, r, e = evaluate(cfgs[i], _P, cost)
@@ -75,7 +77,7 @@ def evaluate_universe(cache_path: Path, out_dir: Path, cost: float, indices: lis
     budget = budget or EvalBudget()
     P = cache_mod.load(cache_path)
     T = int(P["ts"].shape[0])
-    n_all = len(universe())
+    n_all = len(universe(bool(P.meta.get("context"))))      # a context cache also covers the context extension
     idx = list(range(n_all)) if indices is None else list(indices)
     if len(idx) > budget.max_configs:
         raise BudgetExceeded(f"{len(idx)} configurations requested, budget is {budget.max_configs}")

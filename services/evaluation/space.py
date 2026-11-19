@@ -5,6 +5,7 @@ volatility filter, universe subset, position sizing). The enumeration is determi
 configuration's integer index and its `key` are stable across runs and machines.
 
     5 families, 518 parameter sets  x  3 regime x 4 vol x 4 universe x 2 sizing overlays  =  49,728
+    optional context extension:  518 x 8 context/event states x 2 vol x 2 universe x 2 sizing  =  33,152
 """
 from __future__ import annotations
 
@@ -26,6 +27,14 @@ VOLCAP = (None, 0.20, 0.30, 0.40)              # skip symbols whose 20-day reali
 UNIVERSE = ("all", "liquid", "lowvol", "highvol")
 SIZING = ("equal", "invvol")
 FACETS = ("family", "horizon", "regime", "vol", "universe", "sizing")
+
+# Optional market-context extension (needs a context dataset; see nseql.data.context). Each context
+# state is a regime filter; to keep the extension small it uses a reduced grid of the
+# other overlays (8 x 4,144 = 33,152). Its indices continue after the base universe, so base results are unaffected.
+CONTEXT = ("ctx_vix_calm", "ctx_no_vix_spike", "ctx_broad", "ctx_inr_stable", "ctx_crude_calm",
+           "ctx_no_results", "ctx_no_macro_event", "ctx_no_expiry")
+CTX_VOLCAP = (None, 0.30)
+CTX_UNIVERSE = ("all", "liquid")
 
 
 def horizon(family: str, p: dict) -> str:
@@ -67,8 +76,9 @@ class Config:
                 "vol_cap": self.vol, "universe": self.universe, "sizing": self.sizing, "facets": self.facets()}
 
 
-@lru_cache(maxsize=1)
-def universe() -> tuple[Config, ...]:
+@lru_cache(maxsize=2)
+def universe(context: bool = False) -> tuple[Config, ...]:
+    """The base universe (49,728), or base + the market-context extension (82,880) when context=True."""
     out = []
     for fam in sorted(BASE):
         for p in BASE[fam]:
@@ -77,11 +87,26 @@ def universe() -> tuple[Config, ...]:
                     for u in UNIVERSE:
                         for sz in SIZING:
                             out.append(Config(len(out), fam, tuple(sorted(p.items())), rg, v, u, sz))
+    if context:
+        for fam in sorted(BASE):
+            for p in BASE[fam]:
+                for rg in CONTEXT:
+                    for v in CTX_VOLCAP:
+                        for u in CTX_UNIVERSE:
+                            for sz in SIZING:
+                                out.append(Config(len(out), fam, tuple(sorted(p.items())), rg, v, u, sz))
     return tuple(out)
 
 
-def size() -> int:
-    return len(universe())
+def size(context: bool = False) -> int:
+    return len(universe(context))
+
+
+@lru_cache(maxsize=1)
+def twins() -> dict[int, int]:
+    """Context configuration index -> the identical base configuration without the context filter."""
+    base = {(c.family, c.params, c.vol, c.universe, c.sizing): c.index for c in universe() if c.regime == "none"}
+    return {c.index: base[(c.family, c.params, c.vol, c.universe, c.sizing)] for c in universe(True)[len(universe()):]}
 
 
 @lru_cache(maxsize=1)

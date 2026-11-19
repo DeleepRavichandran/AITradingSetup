@@ -87,7 +87,10 @@ def signals(cfg: Config, P) -> np.ndarray:
         else:
             raise ValueError(cfg.family)
         s = s * umask
-        if cfg.regime != "none":
+        if cfg.regime.startswith("ctx_"):
+            m = np.asarray(P[cfg.regime]) > 0                   # [T] market-wide state, or [T, N] per symbol (results)
+            s = s * (m[:, None] if m.ndim == 1 else m)
+        elif cfg.regime != "none":
             ic, sma = np.asarray(P["idx_close"]), np.asarray(P[f"idx_{cfg.regime.replace('sma', 'sma_')}"])
             s = s * (ic > sma)[:, None]
         if cfg.vol is not None:

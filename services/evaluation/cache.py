@@ -27,7 +27,8 @@ RSIN = (2, 3, 5, 7, 14)
 def raw_panel(ds: Dataset, interval: str = "1d", start=None, end=None) -> dict:
     """Split-adjusted price/volume panel [T, N] for the cash equities, plus the first index."""
     eq = sorted(s for s in ds.symbols(interval) if ds.instruments[s].is_cash)
-    idx = next((s for s in ds.symbols(interval) if ds.instruments[s].kind.value == "INDEX"), None)
+    idxs = [s for s in ds.symbols(interval) if ds.instruments[s].kind.value == "INDEX"]
+    idx = "NIFTY50" if "NIFTY50" in idxs else (idxs[0] if idxs else None)
     if not eq or idx is None:
         raise ValueError("dataset needs cash equities and one index")
     frames = {s: ds.bars(s, interval, start, end).set_index("ts") for s in [*eq, idx]}
@@ -92,24 +93,57 @@ def derive(raw: dict) -> dict:
     return out
 
 
-def cache_dir(root: Path, ds: Dataset, interval: str = "1d") -> Path:
-    tag = hashlib.sha256(f"{ds.content_hash}|{interval}|{CACHE_VERSION}".encode()).hexdigest()[:16]
+def _events_tag(events) -> str:
+    if events is None:
+        return ""
+    from nseql.data.scheduled import scheduled
+    rows = [(e["id"], e["event_time"], e["published_at"], e["symbols"]) for e in scheduled(events)]
+    return "|evt:" + hashlib.sha256(json.dumps(rows).encode()).hexdigest()[:16]
+
+
+def cache_dir(root: Path, ds: Dataset, interval: str = "1d", context: Dataset | None = None, events=None) -> Path:
+    ctx = (f"|ctx:{context.content_hash}" if context is not None else "") + _events_tag(events)
+    tag = hashlib.sha256(f"{ds.content_hash}|{interval}|{CACHE_VERSION}{ctx}".encode()).hexdigest()[:16]
     return Path(root) / f"{ds.id}_{interval}_{tag}"
 
 
-def build(ds: Dataset, root: Path, interval: str = "1d") -> Path:
-    d = cache_dir(root, ds, interval)
+def build(ds: Dataset, root: Path, interval: str = "1d", context: Dataset | None = None, events=None) -> Path:
+    """context: a market-context dataset; events: an EventStore with scheduled events. Either adds the
+    point-in-time ctx_* state arrays the context extension of the configuration universe filters on
+    (a state with no data is all-ones, i.e. it never blocks)."""
+    d = cache_dir(root, ds, interval, context, events)
     if (d / "meta.json").exists():
         return d
     raw = raw_panel(ds, interval)
     arr = derive(raw)
+    ctx_meta = None
+    if context is not None or events is not None:
+        from nseql.data.context import STATES, coverage, features
+        from nseql.data.scheduled import blackout
+        T = len(raw["ts"])
+        ctx_meta = {"dataset": None, "content_hash": None, "synthetic": False, "coverage": {}, "on_fraction": {}}
+        if context is not None:
+            feat = features(context, pd.to_datetime(raw["ts"]))
+            for st in STATES:
+                arr[st] = feat[st].to_numpy(dtype=np.int8)
+            ctx_meta.update(dataset=context.id, content_hash=context.content_hash, synthetic=context.synthetic, coverage=coverage(feat),
+                            on_fraction={st: round(float(feat[st].mean()), 3) for st in STATES})
+        else:
+            for st in STATES:
+                arr[st] = np.ones(T, dtype=np.int8)
+                ctx_meta["coverage"][st] = 0.0
+        ev = blackout(events, raw["ts"], raw["symbols"])
+        for st in ("ctx_no_results", "ctx_no_macro_event", "ctx_no_expiry"):
+            arr[st] = ev[st]
+            ctx_meta["on_fraction"][st] = round(float(ev[st].mean()), 3)
+        ctx_meta["events"] = ev["counts"]
     tmp = d.with_suffix(".tmp")
     tmp.mkdir(parents=True, exist_ok=True)
     for k, v in arr.items():
         np.save(tmp / f"{k}.npy", np.ascontiguousarray(v))
     (tmp / "meta.json").write_text(json.dumps({"dataset": ds.id, "content_hash": ds.content_hash, "interval": interval,
                                                "symbols": raw["symbols"], "index": raw["index_symbol"], "rows": int(len(raw["ts"])),
-                                               "synthetic": ds.synthetic, "version": CACHE_VERSION}))
+                                               "synthetic": ds.synthetic, "version": CACHE_VERSION, "context": ctx_meta}))
     tmp.rename(d)
     return d
 

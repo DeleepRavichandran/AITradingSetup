@@ -763,6 +763,11 @@ def create_app() -> FastAPI:
         ses = load_session(st.exp_dir) or {}
         return KiteHistorical(os.environ.get("KITE_API_KEY") or ses.get("api_key"), os.environ.get("KITE_ACCESS_TOKEN") or ses.get("access_token"))
 
+    def _calendar():
+        from nseql.instruments.calendar import TradingCalendar
+        hol = st.exp_dir / "holidays.json"
+        return TradingCalendar.from_file(hol) if hol.exists() else TradingCalendar()
+
     def _build_session(sid: str, meta: dict) -> tuple[PaperSession, int]:
         """Construct a session from its stored configuration. Used for new sessions and for restoring
         after a restart, so both go through exactly the same code. Returns (session, warm-up steps to
@@ -774,7 +779,7 @@ def create_app() -> FastAPI:
             allocs.insert(0, Allocation(strat, "algo", meta["capital"]))
         warm = 0
         if meta["feed"] == "kite_daily":
-            feed = KiteDailyFeed(meta["kite"], meta["live_from"], api_factory=_kite_api)
+            feed = KiteDailyFeed(meta["kite"], meta["live_from"], api_factory=_kite_api, calendar=_calendar())
         else:
             from nseql.backtester.runner import default_symbols
             d = st.dataset(meta["dataset_id"])
@@ -870,7 +875,7 @@ def create_app() -> FastAPI:
     def paper_state(sid: str):
         s_ = _session(sid)
         return {"session_id": sid, "persisted": True, "config": {k: v for k, v in st.session_meta[sid].items() if k != "kite"},
-                "feed_status": getattr(s_.feed, "status", None), **clean(s_.state())}
+                "feed_status": getattr(s_.feed, "status", None), "feed_gaps": getattr(s_.feed, "gaps", [])[-20:], **clean(s_.state())}
 
     @api.post("/paper/sessions/{sid}/close")
     def paper_close(sid: str):
@@ -1060,10 +1065,8 @@ def create_app() -> FastAPI:
         ok = st.notifier.send("test", "NSE AI Quant Lab test notification")
         return {"delivered": ok, **st.notifier.status()}
 
-    from nseql.instruments.calendar import TradingCalendar
-    hol = st.exp_dir / "holidays.json"
     scheduler = PaperScheduler(lambda: st.sessions, notify=st.notify, lock=st.lock, meta=lambda sid: st.session_meta.get(sid, {}),
-                               calendar=TradingCalendar.from_file(hol) if hol.exists() else None)
+                               calendar=_calendar())
     app.state.scheduler = scheduler
     _restore_sessions()
     if os.environ.get("NSEQL_SCHEDULER", "").lower() == "true":

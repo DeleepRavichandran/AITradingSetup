@@ -33,6 +33,26 @@ def main(argv: list[str] | None = None) -> int:
     bb = sub.add_parser("brain-benchmark", help="learning benchmark: memory-informed vs memory-free research on unseen windows")
     bb.add_argument("--dataset", default="synthetic_v1"); bb.add_argument("--negative-control", action="store_true")
     bb.add_argument("--final-sealed", action="store_true", help="ONE-SHOT: score on the sealed window (recorded; refused the second time)")
+    ca = sub.add_parser("corporate-actions", help="find likely splits/bonuses in a dataset, or attach confirmed ones from a CSV")
+    ca.add_argument("dataset"); ca.add_argument("--file", help="CSV: symbol,ex_date,kind,ratio,amount")
+    ca.add_argument("--new-id", help="id of the new dataset version (datasets are immutable)")
+    ca.add_argument("--source", help="where the actions were confirmed, e.g. NSE corporate announcements")
+    ca.add_argument("--force", action="store_true", help="attach even if the prices do not show the drop (rarely right)")
+    ic = sub.add_parser("import-context", help="import market context from Kite: India VIX, sector indices, USDINR, MCX crude and gold")
+    ic.add_argument("dataset_id", nargs="?", default="context_v1"); ic.add_argument("--start", required=True); ic.add_argument("--end")
+    ic.add_argument("--licence", required=True); ic.add_argument("--only", help="comma separated subset, e.g. INDIAVIX,NIFTYBANK")
+    ct = sub.add_parser("context-test", help="test whether each market-context filter beats a placebo (development+validation data only)")
+    ct.add_argument("--dataset", required=True); ct.add_argument("--context", default="context_v1",
+                    help="context dataset; scheduled events from `nseql events` are included automatically")
+    ct.add_argument("--pairs", type=int, default=150); ct.add_argument("--placebos", type=int, default=20)
+    ev = sub.add_parser("events", help="load scheduled events (results dates, RBI, Budget, FOMC) or generate F&O expiries")
+    ev.add_argument("--file", help="CSV: event_date,kind,known_from,label,symbol")
+    ev.add_argument("--source", help="where the dates came from"); ev.add_argument("--licence", default="operator-supplied")
+    ev.add_argument("--expiries", nargs=2, metavar=("START", "END"), help="generate monthly F&O expiry dates for this range")
+    hd = sub.add_parser("holidays", help="load the NSE trading-holiday list (CSV copied from the exchange circular) for paper trading")
+    hd.add_argument("file", nargs="?", help="CSV with a Date column (e.g. 26-Jan-2026) and optionally a Description column")
+    hd.add_argument("--source", help="where the list came from, e.g. the NSE circular number and date")
+    hd.add_argument("--show", action="store_true", help="print the loaded list")
     sub.add_parser("brain-verify", help="verify the episodic memory hash chain and the correctness probes")
     v = sub.add_parser("serve", help="start the API server"); v.add_argument("--host", default="127.0.0.1"); v.add_argument("--port", type=int, default=8000)
     a = ap.parse_args(argv)
@@ -110,6 +130,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"dataset {ds.id}: {len(ds.instruments)} instruments, content_hash={ds.content_hash}")
         if missing:
             print("not imported:", ", ".join(missing))
+        from nseql.data.corporate import scan_dataset
+        sus = scan_dataset(ds)
+        if sus:
+            print(f"WARNING: {len(sus)} price drop(s) look like unlisted splits/bonuses; see `nseql corporate-actions {ds.id}`")
         print("next: nseql quality", ds.id)
     elif a.cmd == "brain-benchmark":
         from nseql.brain.service import BrainService
@@ -135,6 +159,116 @@ def main(argv: list[str] | None = None) -> int:
                 generate_null_fixture(s.data_dir)
             nrep = svc.run_benchmark("null_v1", end_date=part.val_end, label="negative control (random walk)", progress=prog)
             print(f"negative control {nrep['run_id']}: {nrep['verdict']}")
+    elif a.cmd == "corporate-actions":
+        from nseql.data.corporate import attach_actions, read_actions_csv, scan_dataset
+        from nseql.data.store import Dataset
+        ds = Dataset(s.data_dir / a.dataset)
+        if a.file:
+            if not a.new_id or not a.source:
+                print("give --new-id (a new dataset version) and --source"); return 2
+            try:
+                new = attach_actions(ds, read_actions_csv(a.file), s.data_dir, a.new_id, source=a.source, force=a.force)
+            except ValueError as e:
+                print(e); return 1
+            print(f"dataset {new.id}: {len(new.corporate_actions())} corporate action(s), content_hash={new.content_hash}")
+            ds = new
+        found = scan_dataset(ds)
+        if not found:
+            print(f"{ds.id}: no unexplained split/bonus-shaped drops")
+        else:
+            print(f"{ds.id}: {len(found)} drop(s) that look like a split or bonus and are not listed. Check each against the")
+            print("exchange's corporate announcements, then attach the real ones with --file. Do NOT add any the data is already adjusted for.")
+            for x in found:
+                print(f"  {x['symbol']:<14} {x['ex_date']}  ratio ~{x['ratio']:g} (open/prev close x{x['observed_drop']:g}, "
+                      f"volume x{x['volume_ratio']})  {x['evidence']}")
+    elif a.cmd == "import-context":
+        import os
+        from datetime import date as _d
+
+        from nseql.data.adapters.kite import KiteHistorical, load_session
+        from nseql.data.context import import_context
+        ses = load_session(s.experiments_dir) or {}
+        api = KiteHistorical(os.environ.get("KITE_API_KEY") or ses.get("api_key"), os.environ.get("KITE_ACCESS_TOKEN") or ses.get("access_token"))
+        names = [x.strip().upper() for x in a.only.split(",")] if a.only else None
+        ds, missing = import_context(api, _d.fromisoformat(a.start), _d.fromisoformat(a.end) if a.end else _d.today(), s.data_dir,
+                                     a.dataset_id, licence=a.licence, names=names)
+        print(f"context dataset {ds.id}: {', '.join(ds.symbols('1d'))}; content_hash={ds.content_hash}")
+        if missing:
+            print("not available on this account / not found:", ", ".join(missing),
+                  "(currency and MCX series need those segments enabled on your Kite account)")
+    elif a.cmd == "context-test":
+        import time as _t
+
+        from nseql.brain.service import BrainService
+        from nseql.data.store import Dataset
+        from nseql.evaluation import cache as cache_mod, context_test
+        from nseql.evaluation.vector import side_cost
+        from nseql.research.loop import get_partition
+        from nseql.research.registry import Registry
+        ds, cds = Dataset(s.data_dir / a.dataset), Dataset(s.data_dir / a.context)
+        part = get_partition(Registry(s.registry_path), ds)
+        from nseql.data.events import EventStore
+        evp = s.experiments_dir / "events.sqlite"
+        P = cache_mod.load(cache_mod.build(ds, s.experiments_dir / "brain" / "cache", context=cds,
+                                           events=EventStore(evp) if evp.exists() else None))
+        dates = [str(x) for x in P.dates()]
+        lo = next(i for i, x in enumerate(dates) if x >= part.dev_start) + 130
+        hi = max(i for i, x in enumerate(dates) if x <= part.val_end) + 1          # the sealed segment is never scored here
+        cost = side_cost(P.dates()[(lo + hi) // 2])
+        rep = context_test.run(P, cost, rows=(lo, hi), pairs=a.pairs, placebos=a.placebos,
+                               progress=lambda i, n: print(f"  state {i}/{n}", flush=True))
+        rep.update(dataset=ds.id, dataset_content_hash=ds.content_hash, window=[dates[lo], dates[hi - 1]], created_at=_t.strftime("%Y-%m-%dT%H:%M:%S"))
+        out = s.experiments_dir / "context" / f"context_test_{_t.strftime('%Y%m%d_%H%M%S')}.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(rep, indent=1))
+        BrainService(s.experiments_dir, s.data_dir).memory.append(
+            "context", "context_test", {k: rep[k] for k in ("states", "window", "dataset", "synthetic", "method")}, available_at=dates[hi - 1])
+        tag = "  [SYNTHETIC — says nothing about real markets]" if rep["synthetic"] else ""
+        print(f"window {dates[lo]} → {dates[hi - 1]} (sealed segment untouched){tag}")
+        for st, v in rep["states"].items():
+            print(f"  {st:<18} Sharpe change {v['median_sharpe_change']:+.2f} vs placebo {v['placebo_median_sharpe_change']:+.2f} "
+                  f"(z {v['z_vs_placebo']:+.1f}, Holm p {v['p_holm']:.3f})  -> {v['verdict']}")
+        print(f"report: {out}")
+    elif a.cmd == "events":
+        from datetime import date as _d
+
+        from nseql.data import scheduled as sch
+        from nseql.data.events import EventStore
+        from nseql.instruments.calendar import TradingCalendar
+        store = EventStore(s.experiments_dir / "events.sqlite")
+        if a.file:
+            if not a.source:
+                print("give --source (e.g. 'NSE board-meeting intimations; RBI MPC calendar 2026-27')"); return 2
+            print(f"loaded {sch.ingest_schedule_csv(store, a.file, source=a.source, licence=a.licence)} event(s)")
+        if a.expiries:
+            hol = s.experiments_dir / "holidays.json"
+            cal = TradingCalendar.from_file(hol) if hol.exists() else TradingCalendar()
+            n = sch.add_expiries(store, _d.fromisoformat(a.expiries[0]), _d.fromisoformat(a.expiries[1]), cal.is_session)
+            print(f"generated {n} monthly expiry date(s)" + ("" if hol.exists() else " (no holiday list: holidays not skipped)"))
+        rows = sch.scheduled(store)
+        by = {}
+        for r in rows:
+            by[r["kind"]] = by.get(r["kind"], 0) + 1
+        print(f"{len(rows)} scheduled event(s) stored: {by or 'none'}")
+    elif a.cmd == "holidays":
+        from nseql.instruments.calendar import TradingCalendar, holidays_from_csv
+        path = s.experiments_dir / "holidays.json"
+        cur = TradingCalendar.from_file(path) if path.exists() else TradingCalendar(source="")
+        if a.file:
+            if not a.source:
+                print("give --source (the NSE circular the list came from)"); return 2
+            new_cal = holidays_from_csv(a.file, source=a.source)
+            cur = cur.merged(new_cal) if cur.years else new_cal
+            s.experiments_dir.mkdir(parents=True, exist_ok=True)
+            cur.to_file(path)
+            print(f"loaded {len(new_cal.holidays)} weekday holidays for {sorted(new_cal.years)} from {a.file}; saved to {path}")
+            print("restart the API (or the container) so running paper sessions pick it up")
+        if a.show or not a.file:
+            if not cur.holidays:
+                print("no holiday list loaded: paper trading treats every weekday as a trading day"); return 0
+            print(f"source: {cur.source}\nyears: {sorted(cur.years)}")
+            for d in sorted(cur.holidays):
+                print(f"  {d}  {d:%a}  {cur.names.get(d, '')}")
     elif a.cmd == "brain-verify":
         from nseql.brain.service import BrainService
         print(json.dumps(BrainService(s.experiments_dir, s.data_dir).memory.verify(), indent=1))

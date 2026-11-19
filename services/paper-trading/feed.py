@@ -9,12 +9,15 @@ market-data entitlement are available (acceptance test #13).
 """
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Iterator, Protocol
 
 import pandas as pd
 
 from nseql.data.portal import Bar, DataPortal
 from nseql.data.store import Dataset
+
+_DAY = timedelta(days=1)
 
 
 class FeedError(ConnectionError):
@@ -77,7 +80,7 @@ class KiteDailyFeed:
     interval = "1d"
     CLOSE_READY = (15, 45)       # a day's candle is treated as final from 15:45 IST
 
-    def __init__(self, tokens: list[dict], live_from, *, api_factory=None, warmup_days: int = 420, last_date=None):
+    def __init__(self, tokens: list[dict], live_from, *, api_factory=None, warmup_days: int = 420, last_date=None, calendar=None):
         from nseql.instruments.models import Instrument, Kind
         self.tokens = tokens
         self.live_from = pd.Timestamp(live_from).date()
@@ -89,6 +92,8 @@ class KiteDailyFeed:
                             for t in tokens}
         self.actions: list = []
         self.status = "never polled"
+        self.calendar = calendar       # TradingCalendar; None = weekends only
+        self.gaps: list[dict] = []     # days delivered with some symbols missing, and sessions with no candles at all
 
     def poll(self, now) -> list[tuple[pd.Timestamp, dict[str, Bar], bool, bool]]:
         """-> [(bar time, bars, session_end=True, warmup)] for every completed day not yet delivered."""
@@ -112,14 +117,47 @@ class KiteDailyFeed:
             self.status = f"error: {type(e).__name__}: {e}"
             raise FeedError(str(e)) from e
         final_today = (now.hour, now.minute) >= self.CLOSE_READY
-        out = []
+        today, symbols = now.date(), {t["symbol"] for t in self.tokens}
+        prev = self.last_date
+        out, waiting = [], None
         for d in sorted(by_day):
-            if d > now.date() or (d == now.date() and not final_today) or (self.last_date and d <= self.last_date):
+            if d > today or (d == today and not final_today) or (self.last_date and d <= self.last_date):
                 continue
+            missing = sorted(symbols - set(by_day[d]))
+            if missing and d == today:
+                # Kite publishes candles symbol by symbol; wait for the rest rather than deliver half a day.
+                # From tomorrow the day is delivered with whatever exists and the gap is recorded.
+                waiting = f"waiting for {len(missing)} of today's candles ({', '.join(missing[:5])})"
+                break
+            if missing:
+                self.gaps.append({"date": str(d), "kind": "symbols_missing", "symbols": missing})
+            if self.calendar is not None and not self.calendar.is_session(d):
+                self.gaps.append({"date": str(d), "kind": "candles_on_listed_holiday",
+                                  "note": "Kite returned candles for a day the holiday list marks closed; check the list"})
             out.append((pd.Timestamp(f"{d} 15:30:00"), by_day[d], True, d < self.live_from))
             self.last_date = d
-        self.status = f"ok: last candle {self.last_date}"
+        if self.calendar is not None and prev is not None:
+            delivered = {pd.Timestamp(x[0]).date() for x in out}
+            upto = (self.last_date or prev) if waiting else today - _DAY
+            for d in self.calendar.sessions(prev + _DAY, upto):
+                if d not in delivered and d >= self.live_from and not any(g["date"] == str(d) for g in self.gaps):
+                    self.gaps.append({"date": str(d), "kind": "no_candles_for_session",
+                                      "note": "the holiday list says the market was open but Kite returned nothing"})
+        self.gaps = self.gaps[-200:]
+        self.status = waiting or f"ok: last candle {self.last_date}"
         return out
+
+    def caught_up(self, now) -> bool:
+        """True if every session before `now`'s date has been delivered (so there is nothing to fetch on a closed day)."""
+        if self.last_date is None:
+            return False
+        cal = self.calendar
+        d = pd.Timestamp(now).date() - _DAY
+        while d > self.last_date:
+            if cal.is_session(d) if cal is not None else d.weekday() < 5:
+                return False
+            d -= _DAY
+        return True
 
 
 class KiteTickerFeed:

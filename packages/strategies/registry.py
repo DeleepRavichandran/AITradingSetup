@@ -2,13 +2,13 @@
 from __future__ import annotations
 
 from nseql.strategies.api import Strategy
-from nseql.strategies.library import derivatives, meanrev, ml, priceaction, trend
+from nseql.strategies.library import derivatives, meanrev, ml, priceaction, screened, trend
 
 _ALL = [trend.SmaCross, trend.MomentumRank, trend.DonchianBreakout, trend.MultiTimeframeTrend, trend.BuyAndHold,
         trend.RandomEntry, meanrev.RsiReversion, meanrev.BollingerReversion, meanrev.ZScoreReversion,
         priceaction.OpeningRangeBreakout, priceaction.VwapReversion, priceaction.GapFade,
         priceaction.PrevDayBreakout, priceaction.VolumeBreakout, derivatives.FuturesTrend, derivatives.FuturesCarry,
-        derivatives.OptionStructure, derivatives.CalendarSpread, ml.MLDirection]
+        derivatives.OptionStructure, derivatives.CalendarSpread, ml.MLDirection, screened.ScreenedConfig]
 
 STRATEGIES: dict[str, type[Strategy]] = {c.name: c for c in _ALL}
 

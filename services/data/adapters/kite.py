@@ -104,15 +104,22 @@ class KiteHistorical:
                 df[c] = pd.to_datetime(df[c], errors="coerce").dt.date
         return df
 
-    def candles(self, instrument_token: int, interval: str, start: datetime, end: datetime, oi: bool = False) -> pd.DataFrame:
-        """Bars in the platform convention (exchange-local, tz-naive, stamped at bar END)."""
+    def candles(self, instrument_token: int, interval: str, start: datetime, end: datetime, oi: bool = False,
+                continuous: bool = False) -> pd.DataFrame:
+        """Bars in the platform convention (exchange-local, tz-naive, stamped at bar END).
+
+        continuous=True (daily futures only) asks Kite to stitch expired contracts behind the current one,
+        which is the only way to get futures history: the instrument master lists live contracts only."""
+        if continuous and interval != "1d":
+            raise ValueError("Kite serves continuous futures data for daily candles only")
         out = []
         step = timedelta(days=MAX_DAYS[interval])
         cur = start
         while cur <= end:
             to = min(cur + step, end)
             r = self._get(f"/instruments/historical/{instrument_token}/{KITE_INTERVAL[interval]}",
-                          **{"from": cur.strftime("%Y-%m-%d %H:%M:%S"), "to": to.strftime("%Y-%m-%d %H:%M:%S"), "oi": int(oi)})
+                          **{"from": cur.strftime("%Y-%m-%d %H:%M:%S"), "to": to.strftime("%Y-%m-%d %H:%M:%S"), "oi": int(oi),
+                             **({"continuous": 1} if continuous else {})})
             body = r.json()
             if body.get("status") != "success":
                 raise RuntimeError(f"kite error: {body.get('message', body)}")

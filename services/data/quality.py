@@ -76,6 +76,10 @@ def dataset_quality(ds: Dataset, interval: str = "1d", calendar: TradingCalendar
             coverage.append({"symbol": s, "kind": inst.kind.value if inst else "?", "first": str(df["ts"].iloc[0]),
                              "last": str(df["ts"].iloc[-1]), "bars": int(len(df)), "missing_sessions": len(gaps),
                              "zero_volume_bars": int((df["volume"] == 0).sum())})
+    from nseql.data.corporate import suspected_actions
+    known = {(s, str(d)) for s, ds_ in splits.items() for d in ds_}
+    suspects = [x for s, df in frames.items() if ds.instruments.get(s) and ds.instruments[s].is_cash
+                for x in suspected_actions(df, s) if (s, x["ex_date"]) not in known]
     counts = {"error": 0, "warning": 0, "info": 0}
     for i in issues:
         counts[i["severity"]] += 1
@@ -84,7 +88,7 @@ def dataset_quality(ds: Dataset, interval: str = "1d", calendar: TradingCalendar
             "first_session": str(sessions[0]) if sessions else None, "last_session": str(sessions[-1]) if sessions else None,
             "calendar_source": calendar.source if calendar else "derived from data (no external calendar supplied)",
             "sessions_missing_vs_calendar": cal_missing[:50], "issue_counts": counts, "issues": issues[:500],
-            "coverage": coverage, "integrity_failures": ds.verify(),
+            "coverage": coverage, "integrity_failures": ds.verify(), "suspected_corporate_actions": suspects,
             "generated_at": datetime.now().isoformat(timespec="seconds")}
 
 

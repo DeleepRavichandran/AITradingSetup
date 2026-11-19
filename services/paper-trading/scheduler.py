@@ -64,6 +64,12 @@ class PaperScheduler:
         return done
 
     def _daily(self, sid: str, s, now: datetime) -> list[dict]:
+        if not self.calendar.is_session(now.date()) and getattr(s.feed, "caught_up", lambda n: False)(now):
+            return []                     # weekend or listed holiday and nothing to catch up: no poll, no login nag
+        if self.calendar.years and not self.calendar.covers(now.date()) and self._warned.get(("calendar", now.year)) is None:
+            self._warned[("calendar", now.year)] = True
+            self.notify("calendar", f"No NSE holiday list loaded for {now.year}: the scheduler will treat holidays as trading days. "
+                                    "Load it with `nseql holidays <file.csv> --source ...`.")
         last = self._last_poll.get(sid)
         if last is not None and (now - last).total_seconds() < self.poll_minutes * 60:
             return []
@@ -116,5 +122,8 @@ class PaperScheduler:
     def status(self, now: datetime | None = None) -> dict:
         now = now or self.clock()
         return {"running": self._thread is not None and self._thread.is_alive(), "last_tick": str(self.last_tick) if self.last_tick else None,
-                "market_open_now": self.calendar.is_open(now), "calendar": self.calendar.source, "poll_minutes": self.poll_minutes,
+                "market_open_now": self.calendar.is_open(now), "calendar": self.calendar.source,
+                "today_is_session": self.calendar.is_session(now.date()),
+                "calendar_covers_this_year": self.calendar.covers(now.date()),
+                "holiday_name": self.calendar.names.get(now.date()), "poll_minutes": self.poll_minutes,
                 "errors": dict(self.last_error), "recent": self.log[-20:]}
