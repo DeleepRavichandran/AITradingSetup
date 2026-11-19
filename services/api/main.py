@@ -971,6 +971,116 @@ def create_app() -> FastAPI:
             return out
         return st.job("brain_benchmark", work, dataset=d.id)
 
+    # ------------------------------------------------------------------ one-minute screening (nseql.screening)
+    screening: dict = {"sch": None}
+
+    def _screening_open():
+        """Reopen the most recent screening run after an API restart (its checkpoint is recovered)."""
+        if screening["sch"] is not None:
+            return screening["sch"]
+        meta = st.exp_dir / "screening" / "current.json"
+        if not meta.exists():
+            return None
+        from nseql.screening.scheduler import MinuteScheduler
+        m = json.loads(meta.read_text())
+        screening["sch"] = MinuteScheduler(Path(m["root"]), m["symbols"], m["configs"], kill=st.kill, mode=m["mode"])
+        screening["meta"] = m
+        return screening["sch"]
+
+    class ScreenReplayIn(BaseModel):
+        dataset_id: str = FIXTURE_ID
+        sessions: int = Field(5, ge=1, le=60)
+        configs: int | None = Field(None, ge=1, le=50_000)
+
+    @api.post("/screening/replay")
+    def screening_replay(body: ScreenReplayIn):
+        """Run the one-minute scheduler over stored 1-minute bars (a REPLAY, not a live feed)."""
+        from nseql.screening.scheduler import MinuteScheduler, ReplayMinuteFeed
+        d = st.dataset(body.dataset_id)
+        syms = d.symbols("1m")
+        if not syms:
+            raise HTTPException(400, f"dataset {d.id} has no 1-minute bars")
+        if any(j["kind"] == "screening_replay" and j["status"] == "running" for j in st.jobs.values()):
+            raise HTTPException(409, "a screening replay is already running")
+        frames = {}
+        for s in syms:
+            df = d.bars(s, "1m")
+            days = sorted(df["ts"].dt.normalize().unique())[: body.sessions]
+            frames[s] = df[df["ts"].dt.normalize().isin(days)].reset_index(drop=True)
+        root = st.exp_dir / "screening" / f"replay_{datetime.now():%Y%m%d_%H%M%S}"
+
+        def work(job):
+            feed = ReplayMinuteFeed(frames, f"replay of {d.id}" + (" (SYNTHETIC)" if d.synthetic else ""))
+            sch = MinuteScheduler(root, syms, body.configs, feed=feed, kill=st.kill, mode="replay")
+            mins = feed.minutes()
+            for k, m in enumerate(mins):
+                sch.run_cycle(m + pd.Timedelta(seconds=6))
+                if k % 50 == 0 or k == len(mins) - 1:
+                    job["progress"].append({"minute": k + 1, "of": len(mins)})
+            sch.checkpoint()
+            meta = {"root": str(root), "symbols": syms, "configs": body.configs, "mode": "replay", "dataset": d.id, "synthetic": d.synthetic}
+            (st.exp_dir / "screening" / "current.json").write_text(json.dumps(meta))
+            screening["sch"], screening["meta"] = sch, meta
+            reg.audit("user", "SCREENING_REPLAY", dataset=d.id, registered=len(sch.reg), minutes=len(mins))
+            return {"registered": len(sch.reg), "minutes": len(mins), **sch.store.counts()}
+        return st.job("screening_replay", work, dataset=d.id)
+
+    def _need_screening():
+        sch = _screening_open()
+        if sch is None:
+            raise HTTPException(404, "no screening run yet: start a replay (POST /screening/replay); a live 1-minute feed is NOT IMPLEMENTED")
+        return sch
+
+    @api.get("/screening/status")
+    def screening_status():
+        sch = _screening_open()
+        if sch is None:
+            return {"started": False, "live_feed": "NOT IMPLEMENTED (needs a licensed real-time feed)", "live_trading": False}
+        return clean({"started": True, **sch.status(), "run": screening.get("meta")})
+
+    @api.get("/screening/summary")
+    def screening_summary():
+        sch = _need_screening()
+        db = sch.store.db
+        reg_ = sch.reg
+        by_h = {}
+        for h in ("intraday", "swing"):
+            mask = reg_.intraday if h == "intraday" else ~reg_.intraday
+            last = sch.engine.last_eval[mask]
+            by_h[h] = {"registered": int(mask.sum()), "evaluated_ever": int((last >= 0).sum()),
+                       "evaluated_last_minute": int((last == sch.engine.last_minute).sum()) if sch.engine.last_minute >= 0 else 0,
+                       "open_positions": int(((sch.engine.pos == 1) & mask).sum()), "pending_orders": int(((sch.engine.pend != 0) & mask).sum())}
+        pnl = {r[0]: {"filled": r[1], "realized_inr": (r[2] or 0) / 100, "charges_inr": (r[3] or 0) / 100}
+               for r in db.execute("SELECT horizon, COUNT(*), SUM(realized_paise), SUM(charges_paise) FROM paper_orders WHERE status='filled' GROUP BY horizon")}
+        lat = [r[0] for r in db.execute("SELECT latency_ms FROM cycles WHERE status='processed' ORDER BY minute DESC LIMIT 375")]
+        return clean({"horizons": by_h, "paper": pnl, "decisions": dict(db.execute("SELECT decision, COUNT(*) FROM signals GROUP BY decision").fetchall()),
+                      "latency_ms_recent": {"p50": float(np.percentile(lat, 50)), "p99": float(np.percentile(lat, 99)), "n": len(lat)} if lat else None,
+                      "run": screening.get("meta"), "watermark": sch.watermark,
+                      "note": "Forward PAPER ledger of the screening loop: simulated fills at the next minute's open, Rs 1,00,000 per configuration, "
+                              "dated charges. Not historical research results and not real orders."})
+
+    def _page(table: str, order: str, where: dict, limit: int, offset: int):
+        try:
+            return clean(_need_screening().store.page(table, where=where, order=order, limit=min(max(limit, 1), 500), offset=max(offset, 0)))
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+
+    @api.get("/screening/configs")
+    def screening_configs(horizon: str = "", family: str = "", timeframe: str = "", symbol: str = "", limit: int = 50, offset: int = 0):
+        return _page("configs", "idx", {"horizon": horizon, "family": family, "timeframe": timeframe, "symbol": symbol}, limit, offset)
+
+    @api.get("/screening/signals")
+    def screening_signals(horizon: str = "", symbol: str = "", decision: str = "", config_id: str = "", limit: int = 50, offset: int = 0):
+        return _page("signals", "bar_ts DESC, config_id", {"horizon": horizon, "symbol": symbol, "decision": decision, "config_id": config_id}, limit, offset)
+
+    @api.get("/screening/orders")
+    def screening_orders(horizon: str = "", status: str = "", symbol: str = "", config_id: str = "", limit: int = 50, offset: int = 0):
+        return _page("paper_orders", "decided_at DESC, order_key", {"horizon": horizon, "status": status, "symbol": symbol, "config_id": config_id}, limit, offset)
+
+    @api.get("/screening/cycles")
+    def screening_cycles(status: str = "", limit: int = 100, offset: int = 0):
+        return _page("cycles", "minute DESC", {"status": status}, limit, offset)
+
     class ProposeIn(BaseModel):
         changes: dict | None = None        # None = let the meta-optimiser propose a variation
         rationale: str = ""

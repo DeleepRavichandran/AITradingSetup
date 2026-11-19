@@ -7,7 +7,7 @@ import { Badge } from "./ui";
 
 const NAV: [string, [string, string][]][] = [
   ["Overview", [["/", "Command Center"], ["/market", "Market Explorer"], ["/data", "Data Quality & Coverage"]]],
-  ["Research", [["/learning", "Learning Brain"], ["/agents", "AI Research Agents"], ["/factory", "Strategy Factory"], ["/code", "Strategy Code"], ["/memory", "Experiment Memory"], ["/chat", "AI Analyst Chat"]]],
+  ["Research", [["/screening", "Strategy Monitor (1-minute)"], ["/learning", "Learning Brain"], ["/agents", "AI Research Agents"], ["/factory", "Strategy Factory"], ["/code", "Strategy Code"], ["/memory", "Experiment Memory"], ["/chat", "AI Analyst Chat"]]],
   ["Testing", [["/backtest", "Backtesting Studio"], ["/replay", "Trade Replay"], ["/walkforward", "Walk-Forward Testing"], ["/compare", "Strategy Comparison"], ["/portfolio", "Portfolio Simulation"]]],
   ["Trading", [["/paper", "Paper Trading Terminal"], ["/brokers", "Broker Connections"], ["/risk", "Risk Control Center"]]],
   ["Operations", [["/system", "System Monitoring"], ["/settings", "Settings & Audit Logs"]]],
