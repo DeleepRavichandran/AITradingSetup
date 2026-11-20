@@ -25,9 +25,30 @@ inserted with `OR IGNORE`.
 **Recovery.** On start, the checkpoint is loaded and every logged minute after it is replayed through the
 same deterministic engine.
 
-**Sizing.** Each configuration trades a fixed Rs 1,00,000 in its own sub-account. There is no shared
-capital and no volume cap in this loop yet; the event-driven backtester remains the reference for
-realistic execution.
+**Execution and money.** Two execution models exist (`services/screening/execution.py`); scheduled runs,
+the API replay and the benchmark use the realistic one by default.
+
+- *simple*: whole order at the next minute's open, Rs 1,00,000 per configuration in its own sub-account.
+  Kept because the parity proof below is defined on it.
+- *realistic*, with one shared portfolio:
+  - **Liquidity:** all our orders in a symbol together may take at most 10% of each 1-minute bar's
+    volume. Exits are served before entries, then earlier decisions, then registry order, so replays are
+    deterministic.
+  - **Price:** the open, worse by a 5 bps half-spread plus impact of 25 bps × √(qty / bar volume),
+    rounded to the 0.05 tick against us.
+  - **Partial fills:** an entry still incomplete after 5 minutes keeps what filled and cancels the rest.
+    An exit keeps working until flat, overnight if it must.
+  - **Charges:** per fill, with brokerage capped per order across its fills and the depository charge
+    once per sell order.
+  - **One capital pot** (default Rs 10,00,000):
+    - each BUY is sized at 2% of equity;
+    - it becomes an order only if cash minus reservations stays ≥ 0, the symbol stays ≤ 10% of equity
+      across all configurations, gross exposure stays ≤ 100% (no leverage), and open plus pending
+      positions stay < 50;
+    - if equity falls 2% below the day's open, no new entries for the rest of the day.
+  - **Refused BUYs:** counted per minute by reason in `refusals`; the signal itself stays in `signals`.
+  - **Ranking:** competing BUYs in the same minute are served in registry order. That is deterministic
+    but arbitrary; a ranking model (which signal deserves the capital) is not built yet.
 
 ## Registry
 
@@ -47,7 +68,55 @@ configuration has the same id everywhere.
 | Gaps, late data, conflicts, kill switch | Gaps become `no_data` minutes. Late and conflicting bars are quarantined. With the kill switch engaged, screening continues and no simulated orders are created. |
 | Clock | The background thread runs a cycle after the minute boundary, with no overruns. |
 
-## Benchmark (2026-11-19)
+## Realistic execution and shared portfolio: evidence (tests/screening/test_execution_portfolio.py)
+
+| Test | What it shows |
+|---|---|
+| Volume cap | Over 3 sessions, 40 symbols and 6,840 configurations, no symbol-minute had fills above 10% of that bar's volume. |
+| Prices | Every fill is worse than the open by exactly the half-spread plus impact, rounded against us to the tick. |
+| Cash | Final cash equals capital − buys − charges + sells, to the paisa. Free cash never went below zero (no rupee committed twice). Open plus pending positions never exceeded 50. Positions match the fill ledger. |
+| Refusals | Every BUY signal is either an order or a counted refusal. |
+| Partial fills | On a thin symbol (4 shares per minute) orders split over several bars; entries time out after 5 minutes keeping what filled; exits are never abandoned. |
+| Daily loss limit | A 6% afternoon slide trips the limit. No new entries follow that day, and entries resume the next day. |
+| Recovery | A crash and restart gives fills, orders, refusals, equity and cash identical to the uninterrupted run. A checkpoint from the other execution model is refused. |
+
+**What it showed on synthetic data.** With costs and a shared Rs 10 lakh pot, the 1-minute configurations
+churned enough to hit the 2% daily loss limit by about 11:00 on each of 3 sessions (equity −6.4% over the
+run, mostly spread, impact and charges). The portfolio refused about 99% of BUY signals: daily loss
+limit, then the 50-position cap. This is random-walk data, so it says nothing about real markets. It
+does show the old per-configuration view (every signal tradeable, Rs 1 lakh each, filled at the open)
+was far too generous.
+
+## Benchmark (2026-11-20, realistic execution + shared portfolio, the default)
+
+Same hardware, data and command as below; `--execution realistic`. Full results:
+[benchmarks/screening_realistic_2026-11-20.json](benchmarks/screening_realistic_2026-11-20.json).
+
+| Configurations | 1,000 | 5,000 | 10,000 | 50,000 |
+|---|---:|---:|---:|---:|
+| Cycle time p50 / p95 / p99 (ms) | 8 / 22 / 31 | 22 / 39 / 50 | 27 / 53 / 67 | 91 / 173 / 249 |
+| Cycle time max (ms) | 56 | 59 | 289 | 1,579 |
+| Engine only p99 (ms) | 6.2 | 7.8 | 8.4 | 19.2 |
+| Missed evaluations / cycles over 60 s | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
+| Peak memory (MB) | 276 | 277 | 278 | 293 |
+| BUY/EXIT signals | 40,894 | 261,794 | 528,899 | 2,764,540 |
+| Signals refused by the portfolio | 38,404 | 259,300 | 526,405 | 2,762,046 |
+| Orders / fills | 2,490 / 2,548 | 2,494 / 2,552 | 2,494 / 2,552 | 2,494 / 2,552 |
+| Ledger database after 3 sessions (MB) | 60 | 95 | 138 | 494 |
+| Ledger identical after SIGKILL + restart | yes | yes | yes | yes |
+
+### Two things the numbers expose
+
+- **Capital goes to whoever asks first.** From 5,000 configurations up, the portfolio placed exactly the
+  same orders: the first configurations in registry order take the 50 slots and the 2% daily loss limit
+  stops entries early. More configurations produce more refused signals, not different trades. A ranking
+  step that decides which signal deserves scarce capital is the next piece of work.
+- **Refused strategies keep asking.** A refused configuration stays flat and signals BUY again on every
+  bar while its condition holds. That is why there are 2.76 million signals at 50k, and why the database
+  reaches 494 MB per 3 sessions. Storing only the first signal of each refused streak is the obvious fix;
+  it is not done yet.
+
+## Benchmark (2026-11-19, simple execution)
 
 Hardware: Intel Xeon @ 2.10 GHz, 4 logical CPUs, 15.7 GB RAM; Python 3.13.18, NumPy 2.5.5, one process.
 
@@ -55,7 +124,7 @@ Data: **SYNTHETIC** random-walk 1-minute bars for 300 symbols (2% of symbol-minu
 sessions, i.e. 1,125 minutes and about 330,000 bars. Not market data.
 
 Command: `python scripts/bench_screening.py`. Full results:
-[benchmarks/screening_2026-11-19.json](benchmarks/screening_2026-11-19.json).
+[benchmarks/screening_simple_2026-11-19.json](benchmarks/screening_simple_2026-11-19.json).
 
 | Configurations | 1,000 | 5,000 | 10,000 | 50,000 |
 |---|---:|---:|---:|---:|

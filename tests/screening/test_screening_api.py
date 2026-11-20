@@ -58,6 +58,12 @@ def test_replay_lists_filters_and_restart(boot):
     assert cf["total"] == 2 * 3 * 9 * 2 and all(r["family"] == "rsi" and r["horizon"] == "intraday" for r in cf["rows"])
     assert c.get("/api/screening/orders?status=filled&limit=5").json()["total"] > 0
     assert c.get("/api/screening/cycles?limit=3").json()["total"] == 1875
+    pf = c.get("/api/screening/portfolio").json()
+    assert pf["shared_capital"] and pf["mode"] == "realistic" and pf["cash_inr"] - pf["reserved_inr"] >= 0
+    buys = c.get("/api/screening/signals?decision=BUY&limit=1").json()["total"]
+    assert sum(pf["refused_signals"].values()) + c.get("/api/screening/orders?side=BUY&limit=1").json()["total"] == buys
+    fl = c.get("/api/screening/fills?limit=5").json()
+    assert fl["total"] >= c.get("/api/screening/orders?status=filled").json()["total"]
     # read-only viewer can look but cannot start a replay
     v = boot(VIEWER)
     assert v.get("/api/screening/summary").status_code == 200 and v.post("/api/screening/replay", json={}).status_code == 403

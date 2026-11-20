@@ -36,6 +36,11 @@ CREATE TABLE IF NOT EXISTS signals (config_id TEXT NOT NULL, bar_ts TEXT NOT NUL
 CREATE INDEX IF NOT EXISTS ix_signals_ts ON signals(bar_ts);
 CREATE TABLE IF NOT EXISTS paper_orders (order_key TEXT PRIMARY KEY, config_id TEXT, symbol TEXT, side TEXT, horizon TEXT,
   decided_at TEXT, status TEXT, fill_ts TEXT, qty INTEGER, price REAL, product TEXT, charges_paise INTEGER, realized_paise INTEGER);
+CREATE TABLE IF NOT EXISTS paper_fills (fill_key TEXT PRIMARY KEY, order_key TEXT, config_id TEXT, symbol TEXT, side TEXT, ts TEXT,
+  qty INTEGER, price REAL, charges_paise INTEGER, realized_paise INTEGER);
+CREATE INDEX IF NOT EXISTS ix_fills_order ON paper_fills(order_key);
+CREATE TABLE IF NOT EXISTS refusals (minute TEXT, reason TEXT, n INTEGER, PRIMARY KEY (minute, reason));
+CREATE TABLE IF NOT EXISTS portfolio_events (ts TEXT, event TEXT, detail TEXT, PRIMARY KEY (ts, event));
 CREATE TABLE IF NOT EXISTS configs (id TEXT PRIMARY KEY, idx INTEGER, symbol TEXT, timeframe TEXT, horizon TEXT, family TEXT,
   params TEXT, stop_pct REAL, status TEXT NOT NULL DEFAULT 'active');
 CREATE INDEX IF NOT EXISTS ix_configs_h ON configs(horizon, family);
@@ -65,6 +70,11 @@ class ScreeningStore:
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA synchronous=NORMAL")
         self.db.executescript(SCHEMA)
+        for table, col, typ in (("paper_orders", "requested_qty", "INTEGER"), ("paper_orders", "reason", "TEXT"),
+                                ("cycles", "equity_inr", "REAL"), ("cycles", "cash_inr", "REAL"), ("cycles", "halted", "INTEGER")):
+            cols = {r[1] for r in self.db.execute(f"PRAGMA table_info({table})")}
+            if col not in cols:                                  # runs created before these columns existed
+                self.db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
 
     # ------------------------------------------------------------------ events
     @_locked
@@ -106,17 +116,27 @@ class ScreeningStore:
 
     # ------------------------------------------------------------------ results
     @_locked
-    def record(self, cycle: dict, signals: list[tuple], orders: list[tuple], fills: list[tuple]) -> None:
+    def record(self, cycle: dict, signals: list[tuple], orders: list[tuple], fills: list[tuple], done: list[tuple] = (),
+               events: list[tuple] = (), refusals: list[tuple] = ()) -> None:
+        """orders: (order_key, config_id, symbol, side, horizon, decided_at, status, requested_qty, reason)
+        fills: (fill_key, order_key, config_id, symbol, side, ts, qty, price, charges_paise, realized_paise)
+        done: (status, last_fill_ts, filled_qty, avg_price, product, charges_paise, realized_paise, reason, order_key)"""
+        cycle = {"equity_inr": None, "cash_inr": None, "halted": None, **cycle}
         cur = self.db.cursor()
         cur.execute("BEGIN")
         try:
-            cur.execute("INSERT OR IGNORE INTO cycles VALUES (:minute,:processed_at,:latency_ms,:lag_s,:mode,:status,:symbols_with_data,"
-                        ":symbols_expected,:closed,:eligible,:evaluated,:skipped_pending,:stale_skips,:counts,:fills)", cycle)
+            cur.execute("INSERT OR IGNORE INTO cycles (minute, processed_at, latency_ms, lag_s, mode, status, symbols_with_data, symbols_expected, "
+                        "closed, eligible, evaluated, skipped_pending, stale_skips, counts, fills, equity_inr, cash_inr, halted) VALUES "
+                        "(:minute,:processed_at,:latency_ms,:lag_s,:mode,:status,:symbols_with_data,:symbols_expected,:closed,:eligible,"
+                        ":evaluated,:skipped_pending,:stale_skips,:counts,:fills,:equity_inr,:cash_inr,:halted)", cycle)
             cur.executemany("INSERT OR IGNORE INTO signals VALUES (?,?,?,?,?,?,?)", signals)
-            cur.executemany("INSERT OR IGNORE INTO paper_orders (order_key, config_id, symbol, side, horizon, decided_at, status) "
-                            "VALUES (?,?,?,?,?,?,'pending')", orders)
-            cur.executemany("UPDATE paper_orders SET status=?, fill_ts=?, qty=?, price=?, product=?, charges_paise=?, realized_paise=? "
-                            "WHERE order_key=? AND status='pending'", fills)
+            cur.executemany("INSERT OR IGNORE INTO paper_orders (order_key, config_id, symbol, side, horizon, decided_at, status, requested_qty, reason) "
+                            "VALUES (?,?,?,?,?,?,?,?,?)", orders)
+            cur.executemany("INSERT OR IGNORE INTO paper_fills VALUES (?,?,?,?,?,?,?,?,?,?)", fills)
+            cur.executemany("UPDATE paper_orders SET status=?, fill_ts=?, qty=?, price=?, product=?, charges_paise=?, realized_paise=?, "
+                            "reason=? WHERE order_key=? AND status='pending'", done)
+            cur.executemany("INSERT OR IGNORE INTO portfolio_events VALUES (?,?,?)", events)
+            cur.executemany("INSERT OR IGNORE INTO refusals VALUES (?,?,?)", refusals)
             cur.execute("COMMIT")
         except Exception:
             cur.execute("ROLLBACK")
@@ -137,12 +157,15 @@ class ScreeningStore:
         q = lambda s: self.db.execute(s).fetchone()[0]
         return {"events": q("SELECT COUNT(*) FROM events"), "late_events": q("SELECT COUNT(*) FROM events WHERE late=1"),
                 "event_conflicts": q("SELECT COUNT(*) FROM event_conflicts"), "cycles": q("SELECT COUNT(*) FROM cycles"),
-                "signals": q("SELECT COUNT(*) FROM signals"), "paper_orders": q("SELECT COUNT(*) FROM paper_orders"),
-                "paper_filled": q("SELECT COUNT(*) FROM paper_orders WHERE status='filled'")}
+                "signals": q("SELECT COUNT(*) FROM signals"), "paper_orders": q("SELECT COUNT(*) FROM paper_orders WHERE status != 'rejected'"),
+                "paper_refused": q("SELECT COALESCE(SUM(n), 0) FROM refusals"),
+                "paper_filled": q("SELECT COUNT(*) FROM paper_orders WHERE status='filled'"), "paper_fills": q("SELECT COUNT(*) FROM paper_fills"),
+                "portfolio_events": q("SELECT COUNT(*) FROM portfolio_events")}
 
     @_locked
     def page(self, table: str, *, where: dict | None = None, order: str, limit: int = 50, offset: int = 0) -> dict:
         allowed = {"signals": {"horizon", "symbol", "decision", "config_id"}, "paper_orders": {"horizon", "symbol", "side", "status", "config_id"},
+                   "paper_fills": {"symbol", "side", "config_id", "order_key"}, "portfolio_events": {"event"}, "refusals": {"reason"},
                    "cycles": {"status"}, "configs": {"horizon", "family", "timeframe", "symbol", "status"}}
         if table not in allowed:
             raise ValueError(table)

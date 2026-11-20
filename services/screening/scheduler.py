@@ -34,6 +34,7 @@ import pandas as pd
 
 from nseql.instruments.calendar import IST, TradingCalendar
 from nseql.screening.engine import ScreeningEngine
+from nseql.screening.execution import ExecConfig, PortfolioRules
 from nseql.screening.features import SESSION_MINUTES, SESSION_OPEN_MIN
 from nseql.screening.registry import FAMILIES, HORIZON, TF_NAMES, build
 from nseql.screening.store import ScreeningStore, _iso
@@ -68,12 +69,20 @@ class ReplayMinuteFeed:
 class MinuteScheduler:
     def __init__(self, root: Path, symbols: list[str], n_configs: int | None = None, *, calendar: TradingCalendar | None = None,
                  feed=None, kill=None, checkpoint_every: int = 15, grace_seconds: float = 5.0, mode: str = "replay",
-                 clock: Callable[[], datetime] | None = None):
+                 clock: Callable[[], datetime] | None = None, execution: str = "realistic", exec_cfg: ExecConfig | None = None,
+                 portfolio: PortfolioRules | None | bool = True):
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
         t0 = time.perf_counter()
         self.reg = build(symbols, n_configs)
-        self.engine = ScreeningEngine(self.reg)
+        if execution not in ("realistic", "simple"):
+            raise ValueError("execution must be 'realistic' or 'simple'")
+        if execution == "simple":
+            exec_cfg, portfolio = None, None
+        else:
+            exec_cfg = exec_cfg or ExecConfig()
+            portfolio = PortfolioRules() if portfolio is True else (portfolio or None)
+        self.engine = ScreeningEngine(self.reg, exec_cfg, portfolio)
         self.store = ScreeningStore(self.root / "screening.sqlite")
         r = self.reg
         self.store.register_configs([(str(r.ids[i]), i, r.symbols[r.sym[i]], TF_NAMES[r.tf[i]], HORIZON[TF_NAMES[r.tf[i]]],
@@ -169,20 +178,29 @@ class MinuteScheduler:
         if res.status == "duplicate":
             return {"minute": minute, "status": "duplicate", "latency_ms": lat}
         hz = lambda i: "intraday" if r.intraday[i] else "swing"
+        iso_em = lambda em: _iso(pd.Timestamp(int(em) * 60_000_000_000))
+        okey = lambda i, decided, side: f"{r.ids[i]}|{iso_em(decided)}|{side}"
         signals = [(str(r.ids[i]), minute, hz(i), r.symbols[r.sym[i]], d, p, why) for i, d, p, why in res.signals]
-        orders = [(f"{r.ids[i]}|{minute}|{'BUY' if d == 'BUY' else 'SELL'}", str(r.ids[i]), r.symbols[r.sym[i]],
-                   "BUY" if d == "BUY" else "SELL", hz(i), minute) for i, d, _, _ in res.signals] if allow else []
-        fills = []
-        for f in res.fills:
-            i = f["config"]
-            key = f"{r.ids[i]}|{_iso(pd.Timestamp(f['decided'] * 60_000_000_000))}|{f['side']}"
-            fills.append((f["status"], minute, f.get("qty"), f.get("price"), f.get("product"), f.get("charges_paise"), f.get("realized_paise"), key))
+        orders = [(okey(o["config"], o["decided"], o["side"]), str(r.ids[o["config"]]), r.symbols[r.sym[o["config"]]], o["side"],
+                   hz(o["config"]), iso_em(o["decided"]), o["status"], o["qty"], o["reason"]) for o in res.orders if o["status"] != "rejected"]
+        # a refused BUY is already in `signals` (what the strategy wanted); store only counts per reason, not a row each
+        refused: dict[str, int] = {}
+        for o in res.orders:
+            if o["status"] == "rejected":
+                refused[o["reason"]] = refused.get(o["reason"], 0) + 1
+        fills = [(f"{okey(f['config'], f['decided'], f['side'])}|{minute}", okey(f["config"], f["decided"], f["side"]), str(r.ids[f["config"]]),
+                  r.symbols[r.sym[f["config"]]], f["side"], minute, f["qty"], f["price"], f["charges_paise"], f["realized_paise"]) for f in res.fills]
+        done = [(d["status"], iso_em(d["last_fill"]) if d["last_fill"] is not None else None, d["filled_qty"], d["avg_price"], d["product"],
+                 d["charges_paise"], d["realized_paise"], d["reason"], okey(d["config"], d["decided"], d["side"])) for d in res.done]
+        events = [(ev["ts"], ev["event"], json.dumps(ev)) for ev in res.events]
+        x = self.engine.x
         lag = (now - pd.Timestamp(minute)).total_seconds() + lat / 1000
         cyc = {"minute": minute, "processed_at": time.time(), "latency_ms": round(lat, 3), "lag_s": round(lag, 3), "mode": self.mode,
                "status": "processed", "symbols_with_data": res.symbols_with_data, "symbols_expected": len(r.symbols),
                "closed": json.dumps(res.closed), "eligible": res.eligible, "evaluated": res.evaluated, "skipped_pending": res.skipped_pending,
-               "stale_skips": res.stale_skips, "counts": json.dumps(res.counts), "fills": len(fills)}
-        self.store.record(cyc, signals, orders, fills)
+               "stale_skips": res.stale_skips, "counts": json.dumps(res.counts), "fills": len(fills),
+               "equity_inr": x.equity() / 100 if x.rules else None, "cash_inr": x.cash / 100 if x.rules else None, "halted": int(x.halted_day)}
+        self.store.record(cyc, signals, orders, fills, done, events, [(minute, k, v) for k, v in refused.items()])
         self._since_ckpt += 1
         return cyc
 
@@ -218,4 +236,5 @@ class MinuteScheduler:
                 "running": self._thread is not None and self._thread.is_alive(), "registered": len(self.reg), "symbols": len(self.reg.symbols),
                 "watermark": self.watermark, "last_cycle": self.last_cycle, "overruns": self.overruns, "recovery": self.recovery,
                 "startup_seconds": self.startup_seconds, "paper_orders_enabled": not (self.kill is not None and self.kill.engaged),
+                "portfolio": self.engine.x.snapshot(),
                 "live_trading": False, **self.store.counts()}

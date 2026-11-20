@@ -119,8 +119,14 @@ without something only the operator can supply), **NOT IMPLEMENTED**.
   idempotent processing, checkpoint and crash recovery, gap/late/conflict handling, API and dashboard page.
   Streaming decisions equal an independent batch reference. Benchmarked at 1k/5k/10k/50k (synthetic
   stream): p99 cycle 211 ms at 50k, no missed evaluations, ledger identical after SIGKILL + restart.
+- DONE (2026-11-20): realistic execution in the minute loop (10% of bar volume shared across all our
+  orders, half-spread + impact, partial fills, entry time-out, per-order brokerage cap) and one shared
+  portfolio (cash reservations, 2% per trade, 10% per symbol, 100% gross, 50 positions, 2% daily loss
+  limit), with refused signals counted by reason. Tested: cap never exceeded, cash identity to the paisa,
+  free cash never negative, exact recovery.
 - NOT IMPLEMENTED: a live 1-minute feed (needs a licensed real-time entitlement); positional, long-term,
-  F&O, ETF, mutual-fund and SIP engines; shared capital and volume caps in the paper loop.
+  F&O, ETF, mutual-fund and SIP engines; ranking of competing signals for scarce capital (first-come in
+  registry order today); correlation and tail-risk limits.
 
 ### Learning Brain (see LEARNING_BRAIN.md)
 - DONE: episodic memory (append-only, hash-chained, point-in-time), semantic findings with FDR control,

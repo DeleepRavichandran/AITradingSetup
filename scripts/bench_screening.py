@@ -42,6 +42,7 @@ def _ledger_hash(db_path: Path) -> str:
     h = hashlib.sha256()
     for q in ("SELECT config_id, bar_ts, decision, price, reason FROM signals ORDER BY 1, 2",
               "SELECT order_key, status, fill_ts, qty, price, charges_paise, realized_paise FROM paper_orders ORDER BY 1",
+              "SELECT * FROM paper_fills ORDER BY 1", "SELECT * FROM refusals ORDER BY 1, 2",
               "SELECT minute, status, eligible, evaluated FROM cycles ORDER BY 1"):
         for r in db.execute(q):
             h.update(repr(tuple(r)).encode())
@@ -57,7 +58,7 @@ def child(args) -> None:
     t0 = time.perf_counter()
     stream = minute_stream(args.symbols, DAYS[: args.days], seed=1)
     gen_s = time.perf_counter() - t0
-    sch = MinuteScheduler(root, symbols(args.symbols), args.n, checkpoint_every=args.checkpoint_every, mode="benchmark")
+    sch = MinuteScheduler(root, symbols(args.symbols), args.n, checkpoint_every=args.checkpoint_every, mode="benchmark", execution=args.execution)
     start_s = sch.startup_seconds
     rec = dict(sch.recovery)
     cyc, eng, wm = [], [], sch.watermark
@@ -107,12 +108,14 @@ def child(args) -> None:
         "checkpoint_mb": round(os.path.getsize(sch.ckpt) / 2**20, 1) if sch.ckpt.exists() else None,
         "signals": q("SELECT COUNT(*) FROM signals")[0], "paper_orders": q("SELECT COUNT(*) FROM paper_orders")[0],
         "ledger_hash": _ledger_hash(root / "screening.sqlite"),
+        "portfolio": {k: v for k, v in sch.engine.x.snapshot().items() if k in ("mode", "shared_capital", "equity_inr", "open_positions")},
+        "paper_fills": q("SELECT COUNT(*) FROM paper_fills")[0], "refused_signals": q("SELECT COALESCE(SUM(n), 0) FROM refusals")[0],
     }), flush=True)
 
 
 def run_child(n, root, a, kill_after=0) -> tuple[dict | None, float]:
     cmd = [sys.executable, __file__, "--child", "--n", str(n), "--root", str(root), "--symbols", str(a.symbols), "--days", str(a.days),
-           "--checkpoint-every", str(a.checkpoint_every), "--kill-after", str(kill_after)]
+           "--checkpoint-every", str(a.checkpoint_every), "--kill-after", str(kill_after), "--execution", a.execution]
     t0 = time.perf_counter()
     p = subprocess.run(cmd, capture_output=True, text=True)
     dt = time.perf_counter() - t0
@@ -140,7 +143,7 @@ def realtime(n, root, a, minutes: int) -> dict:
     frames = {s: pd.DataFrame(v) for s, v in frames.items()}
     start = stream[0][0] - pd.Timedelta(seconds=55)
     offset = start.to_pydatetime() - datetime.now()
-    sch = MinuteScheduler(root, symbols(a.symbols), n, feed=ReplayMinuteFeed(frames, "synthetic replay (wall clock)"), mode="realtime",
+    sch = MinuteScheduler(root, symbols(a.symbols), n, feed=ReplayMinuteFeed(frames, "synthetic replay (wall clock)"), mode="realtime", execution=a.execution,
                           grace_seconds=2.0, clock=lambda: datetime.now() + offset)
     sch.start()
     t_end = time.time() + 60 * minutes + 10
@@ -161,7 +164,7 @@ def main():
     ap.add_argument("--days", type=int, default=3); ap.add_argument("--checkpoint-every", type=int, default=15)
     ap.add_argument("--kill-after", type=int, default=0); ap.add_argument("--no-recovery", action="store_true")
     ap.add_argument("--no-realtime", action="store_true"); ap.add_argument("--realtime-minutes", type=int, default=3)
-    ap.add_argument("--out")
+    ap.add_argument("--out"); ap.add_argument("--execution", default="realistic", choices=["realistic", "simple"])
     a = ap.parse_args()
     if a.child:
         return child(a)
@@ -170,7 +173,7 @@ def main():
     hw = {"cpu": next((l.split(":", 1)[1].strip() for l in open("/proc/cpuinfo") if l.startswith("model name")), platform.processor()),
           "logical_cpus": os.cpu_count(), "memory_gb": round(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 2**30, 1),
           "python": platform.python_version(), "numpy": numpy.__version__, "pandas": pandas.__version__, "os": platform.platform()}
-    rep = {"generated_at": datetime.now().isoformat(timespec="seconds"), "hardware": hw, "data": "SYNTHETIC random-walk 1-minute bars",
+    rep = {"generated_at": datetime.now().isoformat(timespec="seconds"), "hardware": hw, "data": "SYNTHETIC random-walk 1-minute bars", "execution": a.execution,
            "symbols": a.symbols, "sessions": a.days, "runs": {}}
     tmp = Path(tempfile.mkdtemp(prefix="nseql_bench_"))
     for n in [int(x) for x in a.sizes.split(",")]:
@@ -199,7 +202,7 @@ def main():
         rep["realtime"] = realtime(n, tmp / "rt", a, a.realtime_minutes)
         print("realtime:", rep["realtime"]["lag_s_after_minute_close"], "overruns", rep["realtime"]["overruns"], flush=True)
     shutil.rmtree(tmp, ignore_errors=True)
-    out = Path(a.out or Path(__file__).resolve().parents[1] / "docs" / "benchmarks" / f"screening_{datetime.now():%Y-%m-%d}.json")
+    out = Path(a.out or Path(__file__).resolve().parents[1] / "docs" / "benchmarks" / f"screening_{a.execution}_{datetime.now():%Y-%m-%d}.json")
     out.write_text(json.dumps(rep, indent=1))
     print("wrote", out)
 

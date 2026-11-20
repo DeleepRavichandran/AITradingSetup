@@ -39,6 +39,7 @@ def frames(data_dir):
 
 def _run(frames, root, n=None, upto=None, **kw):
     feed = ReplayMinuteFeed(frames)
+    kw.setdefault("execution", "simple")          # the parity reference is defined on whole fills at the next open
     sch = MinuteScheduler(root, sorted(frames), n, feed=feed, **kw)
     for m in feed.minutes()[:upto]:
         sch.run_cycle(m + pd.Timedelta(seconds=6))
@@ -211,7 +212,7 @@ def test_crash_and_restart_reproduce_the_uninterrupted_run(frames, full_run, tmp
     a = _run(frames, tmp_path, upto=crash_at, checkpoint_every=15)
     assert a.ckpt.exists() and pd.Timestamp(a.watermark) == feed_minutes[crash_at - 1]
     del a                                            # crash: no final checkpoint
-    b = MinuteScheduler(tmp_path, sorted(frames), feed=ReplayMinuteFeed(frames))
+    b = MinuteScheduler(tmp_path, sorted(frames), feed=ReplayMinuteFeed(frames), execution="simple")
     assert b.recovery["checkpoint"] is not None and pd.Timestamp(b.recovery["checkpoint"]) < feed_minutes[crash_at - 1]
     for m in feed_minutes:                           # the feed restarts from the beginning: everything old is a duplicate
         b.run_cycle(m + pd.Timedelta(seconds=6))

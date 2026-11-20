@@ -10,11 +10,11 @@ Run on 2026-11-19, Python 3.13.18, numpy 2.5.5, pandas 3.1.1, Linux. Command: `p
 | `tests/acceptance` | 17 |
 | `tests/audit` | 31 |
 | `tests/brain` | 51 |
-| `tests/screening` | 13 |
-| **Total, as root** | **307 passed** (262 s) |
-| **Total, as an unprivileged user (as on CI)** | 304 passed, 3 skipped (root-only sandbox fallback) (254 s) |
+| `tests/screening` | 21 |
+| **Total, as root** | **315 passed** (244 s) |
+| **Total, as an unprivileged user (as on CI)** | 312 passed, 3 skipped (root-only sandbox fallback) (238 s) |
 
-One-minute screening slice (13 tests): incremental features equal a pandas reference; ~17,000
+One-minute screening slice (21 tests; 8 added 2026-11-20 for realistic fills and the shared portfolio — volume cap, fill prices, cash identity, limits, refusals, partial fills, daily loss limit, recovery): incremental features equal a pandas reference; ~17,000
 streaming decisions equal an independent per-configuration reference; duplicate events, repeated
 cycles and old minutes change nothing; crash + restart reproduce the uninterrupted ledger; gaps, late
 and conflicting bars; kill switch; the wall-clock thread; the API (replay job, pagination, filters,

@@ -1,0 +1,303 @@
+{
+ "generated_at": "2026-11-20T06:06:43",
+ "hardware": {
+  "cpu": "Intel(R) Xeon(R) Processor @ 2.30GHz",
+  "logical_cpus": 4,
+  "memory_gb": 15.7,
+  "python": "3.13.18",
+  "numpy": "2.5.5",
+  "pandas": "3.1.1",
+  "os": "Linux-6.18.44-fc-v726-x86_64-with-glibc2.39"
+ },
+ "data": "SYNTHETIC random-walk 1-minute bars",
+ "execution": "realistic",
+ "symbols": 300,
+ "sessions": 3,
+ "runs": {
+  "1000": {
+   "configs": 1000,
+   "symbols": 300,
+   "sessions": 3,
+   "minutes_with_data": 1125,
+   "minutes_processed": 1125,
+   "no_data_minutes": 0,
+   "minutes_processed_this_run": 1125,
+   "cycle_ms": {
+    "p50": 8.23,
+    "p95": 22.28,
+    "p99": 30.84,
+    "max": 55.65
+   },
+   "engine_ms": {
+    "p50": 2.06,
+    "p95": 5.19,
+    "p99": 6.17,
+    "max": 10.75
+   },
+   "cycles_over_60s_budget": 0,
+   "evaluations": 286397,
+   "eligible": 286397,
+   "eligible_not_evaluated": 0,
+   "skipped_pending_order": 52,
+   "decisions": {
+    "NO_TRADE": 229184,
+    "BUY": 39649,
+    "HOLD": 16319,
+    "EXIT": 1245
+   },
+   "evaluations_per_second": 100166,
+   "peak_rss_mb": 275.5,
+   "cpu_seconds": 9.51,
+   "wall_seconds": 13.39,
+   "startup_seconds": 0.331,
+   "stream_generation_seconds": 0.39,
+   "recovery": {
+    "checkpoint": null,
+    "seconds": 0.0
+   },
+   "replay_to_watermark_seconds": null,
+   "db_mb": 60.4,
+   "checkpoint_mb": 2.4,
+   "signals": 40894,
+   "paper_orders": 2490,
+   "ledger_hash": "2caeeaaa9bb8d57e",
+   "portfolio": {
+    "mode": "realistic",
+    "shared_capital": true,
+    "equity_inr": 937236.31,
+    "open_positions": 0
+   },
+   "paper_fills": 2548,
+   "refused_signals": 38404,
+   "process_wall_seconds": 14.61,
+   "recovery_test": {
+    "killed_after_minutes": 682,
+    "killed_at": "2026-11-17 14:22:00",
+    "restart_startup_seconds": 0.31,
+    "checkpoint_load_seconds": 0.009,
+    "checkpoint_watermark": "2026-11-17T14:15:00",
+    "seconds_until_caught_up_to_kill_point": 1.48,
+    "ledger_identical_to_uninterrupted_run": true,
+    "minutes_processed_total": 1125
+   }
+  },
+  "5000": {
+   "configs": 5000,
+   "symbols": 300,
+   "sessions": 3,
+   "minutes_with_data": 1125,
+   "minutes_processed": 1125,
+   "no_data_minutes": 0,
+   "minutes_processed_this_run": 1125,
+   "cycle_ms": {
+    "p50": 22.3,
+    "p95": 38.54,
+    "p99": 49.61,
+    "max": 58.52
+   },
+   "engine_ms": {
+    "p50": 2.76,
+    "p95": 6.58,
+    "p99": 7.8,
+    "max": 9.94
+   },
+   "cycles_over_60s_budget": 0,
+   "evaluations": 1539991,
+   "eligible": 1539991,
+   "eligible_not_evaluated": 0,
+   "skipped_pending_order": 55,
+   "decisions": {
+    "NO_TRADE": 1261217,
+    "BUY": 260547,
+    "HOLD": 16980,
+    "EXIT": 1247
+   },
+   "evaluations_per_second": 406769,
+   "peak_rss_mb": 276.5,
+   "cpu_seconds": 14.23,
+   "wall_seconds": 22.52,
+   "startup_seconds": 0.387,
+   "stream_generation_seconds": 0.4,
+   "recovery": {
+    "checkpoint": null,
+    "seconds": 0.0
+   },
+   "replay_to_watermark_seconds": null,
+   "db_mb": 95.4,
+   "checkpoint_mb": 3.2,
+   "signals": 261794,
+   "paper_orders": 2494,
+   "ledger_hash": "6073867cd0e0ec38",
+   "portfolio": {
+    "mode": "realistic",
+    "shared_capital": true,
+    "equity_inr": 938197.85,
+    "open_positions": 0
+   },
+   "paper_fills": 2552,
+   "refused_signals": 259300,
+   "process_wall_seconds": 24.34,
+   "recovery_test": {
+    "killed_after_minutes": 682,
+    "killed_at": "2026-11-17 14:22:00",
+    "restart_startup_seconds": 0.312,
+    "checkpoint_load_seconds": 0.011,
+    "checkpoint_watermark": "2026-11-17T14:15:00",
+    "seconds_until_caught_up_to_kill_point": 1.55,
+    "ledger_identical_to_uninterrupted_run": true,
+    "minutes_processed_total": 1125
+   }
+  },
+  "10000": {
+   "configs": 10000,
+   "symbols": 300,
+   "sessions": 3,
+   "minutes_with_data": 1125,
+   "minutes_processed": 1125,
+   "no_data_minutes": 0,
+   "minutes_processed_this_run": 1125,
+   "cycle_ms": {
+    "p50": 26.95,
+    "p95": 53.33,
+    "p99": 66.99,
+    "max": 289.29
+   },
+   "engine_ms": {
+    "p50": 3.03,
+    "p95": 7.34,
+    "p99": 8.38,
+    "max": 20.12
+   },
+   "cycles_over_60s_budget": 0,
+   "evaluations": 3079236,
+   "eligible": 3079236,
+   "eligible_not_evaluated": 0,
+   "skipped_pending_order": 55,
+   "decisions": {
+    "NO_TRADE": 2533357,
+    "BUY": 527652,
+    "HOLD": 16980,
+    "EXIT": 1247
+   },
+   "evaluations_per_second": 743804,
+   "peak_rss_mb": 278.2,
+   "cpu_seconds": 17.05,
+   "wall_seconds": 29.81,
+   "startup_seconds": 0.411,
+   "stream_generation_seconds": 0.41,
+   "recovery": {
+    "checkpoint": null,
+    "seconds": 0.0
+   },
+   "replay_to_watermark_seconds": null,
+   "db_mb": 137.8,
+   "checkpoint_mb": 4.2,
+   "signals": 528899,
+   "paper_orders": 2494,
+   "ledger_hash": "1e8f1bc25c360117",
+   "portfolio": {
+    "mode": "realistic",
+    "shared_capital": true,
+    "equity_inr": 938197.85,
+    "open_positions": 0
+   },
+   "paper_fills": 2552,
+   "refused_signals": 526405,
+   "process_wall_seconds": 32.27,
+   "recovery_test": {
+    "killed_after_minutes": 682,
+    "killed_at": "2026-11-17 14:22:00",
+    "restart_startup_seconds": 0.394,
+    "checkpoint_load_seconds": 0.013,
+    "checkpoint_watermark": "2026-11-17T14:15:00",
+    "seconds_until_caught_up_to_kill_point": 1.53,
+    "ledger_identical_to_uninterrupted_run": true,
+    "minutes_processed_total": 1125
+   }
+  },
+  "50000": {
+   "configs": 50000,
+   "symbols": 300,
+   "sessions": 3,
+   "minutes_with_data": 1125,
+   "minutes_processed": 1125,
+   "no_data_minutes": 0,
+   "minutes_processed_this_run": 1125,
+   "cycle_ms": {
+    "p50": 90.7,
+    "p95": 172.74,
+    "p99": 248.63,
+    "max": 1578.55
+   },
+   "engine_ms": {
+    "p50": 7.73,
+    "p95": 16.4,
+    "p99": 19.19,
+    "max": 29.02
+   },
+   "cycles_over_60s_budget": 0,
+   "evaluations": 15610886,
+   "eligible": 15610886,
+   "eligible_not_evaluated": 0,
+   "skipped_pending_order": 55,
+   "decisions": {
+    "NO_TRADE": 12829366,
+    "BUY": 2763293,
+    "HOLD": 16980,
+    "EXIT": 1247
+   },
+   "evaluations_per_second": 1603686,
+   "peak_rss_mb": 292.6,
+   "cpu_seconds": 52.12,
+   "wall_seconds": 104.15,
+   "startup_seconds": 0.566,
+   "stream_generation_seconds": 0.35,
+   "recovery": {
+    "checkpoint": null,
+    "seconds": 0.0
+   },
+   "replay_to_watermark_seconds": null,
+   "db_mb": 493.7,
+   "checkpoint_mb": 12.2,
+   "signals": 2764540,
+   "paper_orders": 2494,
+   "ledger_hash": "a47c9b47f5207fdb",
+   "portfolio": {
+    "mode": "realistic",
+    "shared_capital": true,
+    "equity_inr": 938197.85,
+    "open_positions": 0
+   },
+   "paper_fills": 2552,
+   "refused_signals": 2762046,
+   "process_wall_seconds": 112.43,
+   "recovery_test": {
+    "killed_after_minutes": 682,
+    "killed_at": "2026-11-17 14:22:00",
+    "restart_startup_seconds": 0.499,
+    "checkpoint_load_seconds": 0.023,
+    "checkpoint_watermark": "2026-11-17T14:15:00",
+    "seconds_until_caught_up_to_kill_point": 1.55,
+    "ledger_identical_to_uninterrupted_run": true,
+    "minutes_processed_total": 1125
+   }
+  }
+ },
+ "realtime": {
+  "configs": 50000,
+  "wall_minutes": 3,
+  "cycles": 3,
+  "overruns": 0,
+  "lag_s_after_minute_close": {
+   "min": 2.01,
+   "max": 2.01,
+   "mean": 2.01
+  },
+  "latency_ms": [
+   7.8,
+   5.6,
+   6.7
+  ],
+  "grace_seconds": 2.0
+ }
+}

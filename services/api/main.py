@@ -1056,8 +1056,9 @@ def create_app() -> FastAPI:
         return clean({"horizons": by_h, "paper": pnl, "decisions": dict(db.execute("SELECT decision, COUNT(*) FROM signals GROUP BY decision").fetchall()),
                       "latency_ms_recent": {"p50": float(np.percentile(lat, 50)), "p99": float(np.percentile(lat, 99)), "n": len(lat)} if lat else None,
                       "run": screening.get("meta"), "watermark": sch.watermark,
-                      "note": "Forward PAPER ledger of the screening loop: simulated fills at the next minute's open, Rs 1,00,000 per configuration, "
-                              "dated charges. Not historical research results and not real orders."})
+                      "note": "Forward PAPER ledger of the screening loop: simulated fills from the next minute "
+                              + ("(volume-capped, with spread and impact) in one shared capital pot" if sch.engine.x.rules else "at the open, Rs 1,00,000 per configuration")
+                              + ", dated charges. Not historical research results and not real orders."})
 
     def _page(table: str, order: str, where: dict, limit: int, offset: int):
         try:
@@ -1074,8 +1075,26 @@ def create_app() -> FastAPI:
         return _page("signals", "bar_ts DESC, config_id", {"horizon": horizon, "symbol": symbol, "decision": decision, "config_id": config_id}, limit, offset)
 
     @api.get("/screening/orders")
-    def screening_orders(horizon: str = "", status: str = "", symbol: str = "", config_id: str = "", limit: int = 50, offset: int = 0):
-        return _page("paper_orders", "decided_at DESC, order_key", {"horizon": horizon, "status": status, "symbol": symbol, "config_id": config_id}, limit, offset)
+    def screening_orders(horizon: str = "", status: str = "", symbol: str = "", side: str = "", config_id: str = "", limit: int = 50, offset: int = 0):
+        return _page("paper_orders", "decided_at DESC, order_key", {"horizon": horizon, "status": status, "symbol": symbol, "side": side,
+                                                                    "config_id": config_id}, limit, offset)
+
+    @api.get("/screening/fills")
+    def screening_fills(symbol: str = "", side: str = "", config_id: str = "", order_key: str = "", limit: int = 50, offset: int = 0):
+        return _page("paper_fills", "ts DESC, fill_key", {"symbol": symbol, "side": side, "config_id": config_id, "order_key": order_key}, limit, offset)
+
+    @api.get("/screening/portfolio")
+    def screening_portfolio():
+        sch = _need_screening()
+        db = sch.store.db
+        with sch.store._lock:
+            refused = dict(db.execute("SELECT reason, SUM(n) FROM refusals GROUP BY reason ORDER BY 2 DESC").fetchall())
+            events = [json.loads(r[0]) for r in db.execute("SELECT detail FROM portfolio_events ORDER BY ts DESC LIMIT 50")]
+            curve = [{"minute": r[0], "equity_inr": r[1], "cash_inr": r[2]} for r in
+                     db.execute("SELECT minute, equity_inr, cash_inr FROM cycles WHERE equity_inr IS NOT NULL AND substr(minute, 12) = '15:30:00' ORDER BY minute")]
+        return clean({**sch.engine.x.snapshot(), "refused_signals": refused, "events": events, "daily_close_equity": curve,
+                      "note": "One shared simulated capital pot for every configuration. Signals the portfolio refused are counted "
+                              "by reason; they remain in the decisions list as what the strategy wanted."})
 
     @api.get("/screening/cycles")
     def screening_cycles(status: str = "", limit: int = 100, offset: int = 0):

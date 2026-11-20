@@ -9,31 +9,29 @@ Per minute M (bars stamped at M's close):
        * intraday square-off: every open intraday position exits from 15:15; no intraday entries after 15:00.
   4. Decisions: BUY, EXIT, HOLD, NO_TRADE (this slice trades long-only cash equity; SELL, ACCUMULATE,
      REDUCE and REBALANCE are part of the decision vocabulary for products not yet in the slice).
-     BUY and EXIT create a simulated order filled at the next bar's open. No broker is ever called.
+     BUY and EXIT become simulated orders executed from the next bar (see execution.py: the simple model
+     fills whole orders at the open; the realistic model caps fills at a share of the bar's volume, adds
+     spread and impact, and puts every configuration in one shared portfolio). No broker is ever called.
 
 Idempotency: a minute at or before the last processed minute is refused (no state change), so replaying
 the same market event cannot evaluate a configuration twice or create a second order. Every order and
 signal also carries a deterministic key, and the ledger tables reject duplicate keys.
-Sizing: each configuration trades a fixed notional of Rs 1,00,000 in its own sub-account (no shared
-capital model yet). Costs: the dated charge schedule (MIS for intraday, CNC delivery for swing).
+Costs: the dated charge schedule (MIS for intraday, CNC delivery for swing).
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
 
 import numpy as np
 import pandas as pd
 
-from nseql.instruments.models import Instrument, Kind
 from nseql.instruments.rules import ChargeSchedule
-from nseql.money import to_paise
+from nseql.screening.execution import NOTIONAL, ExecConfig, Executor, PortfolioRules  # noqa: F401  (NOTIONAL re-exported)
 from nseql.screening.features import SESSION_MINUTES, TIMEFRAMES, FeatureEngine, minute_of_session
 from nseql.screening.registry import FEATURES, TF_NAMES, Registry
 
 DECISIONS = ("NO_TRADE", "BUY", "SELL", "HOLD", "ACCUMULATE", "REDUCE", "EXIT", "REBALANCE")
 D = {k: i for i, k in enumerate(DECISIONS)}
-NOTIONAL = 100_000.0
 LAST_ENTRY_MIN = 345          # 15:00
 SQUARE_OFF_MIN = 360          # 15:15
 TIE_EPS = 1e-9                # relative tolerance for rule comparisons
@@ -51,11 +49,14 @@ class MinuteResult:
     stale_skips: int = 0
     counts: dict = field(default_factory=dict)
     signals: list[tuple] = field(default_factory=list)      # (config_idx, decision, price, reason)
-    fills: list[dict] = field(default_factory=list)
+    orders: list[dict] = field(default_factory=list)        # new orders, accepted (pending) or refused
+    fills: list[dict] = field(default_factory=list)         # executions (several per order when partial)
+    done: list[dict] = field(default_factory=list)          # orders that finished: filled / partial / cancelled
+    events: list[dict] = field(default_factory=list)        # portfolio events, e.g. the daily loss limit
 
 
 class ScreeningEngine:
-    def __init__(self, reg: Registry):
+    def __init__(self, reg: Registry, exec_cfg: ExecConfig | None = None, portfolio: PortfolioRules | None = None):
         self.reg = reg
         self.fe = FeatureEngine(reg.symbols)
         n = len(reg)
@@ -71,6 +72,7 @@ class ScreeningEngine:
         self.last_minute = -1                                # epoch minutes of the last processed minute
         self._by_tf = {k: np.flatnonzero(reg.tf == k) for k in range(len(TF_NAMES))}
         self._charges = ChargeSchedule(allow_extrapolation=True)
+        self.x = Executor(self, exec_cfg, portfolio)
 
     # ------------------------------------------------------------------ helpers
     @staticmethod
@@ -84,28 +86,6 @@ class ScreeningEngine:
         # equal, and rounding differences would otherwise flip the decision (and trade on noise)
         with np.errstate(invalid="ignore"):
             return np.nan_to_num(a, nan=-np.inf) > np.nan_to_num(b, nan=np.inf) + TIE_EPS * np.maximum(1.0, np.abs(np.nan_to_num(b)))
-
-    def _fill(self, i: int, side: int, px: float, ts: pd.Timestamp, key: int) -> dict | None:
-        r = self.reg
-        inst = Instrument(r.symbols[r.sym[i]], Kind.EQ)
-        product = "MIS" if r.intraday[i] else "CNC"
-        d: date = ts.date()
-        if side > 0:
-            q = int(NOTIONAL // px)
-            if q <= 0:
-                return {"config": i, "side": "BUY", "status": "cancelled", "reason": "price above notional", "ts": ts, "decided": key}
-            ch = self._charges.compute(inst, +1, q, to_paise(px), product, d).total
-            self.pos[i], self.qty[i], self.entry_px[i], self.entry_ch[i] = 1, q, px, ch
-            self.stop_px[i] = px * (1 - r.stop[i])
-            return {"config": i, "side": "BUY", "status": "filled", "qty": q, "price": px, "charges_paise": int(ch), "realized_paise": 0,
-                    "ts": ts, "decided": key, "product": product}
-        q = int(self.qty[i])
-        ch = self._charges.compute(inst, -1, q, to_paise(px), product, d, dp_applicable=product == "CNC").total
-        gross = (to_paise(px) - to_paise(self.entry_px[i])) * q
-        realized = int(gross - self.entry_ch[i] - ch)
-        self.pos[i], self.qty[i], self.entry_px[i], self.entry_ch[i], self.stop_px[i] = 0, 0, 0.0, 0, 0.0
-        return {"config": i, "side": "SELL", "status": "filled", "qty": q, "price": px, "charges_paise": int(ch), "realized_paise": realized,
-                "ts": ts, "decided": key, "product": product}
 
     # ------------------------------------------------------------------ one minute
     def step(self, ts: pd.Timestamp, symbols: list[str], o, h, lo, c, v, *, allow_orders: bool = True) -> MinuteResult:
@@ -122,15 +102,13 @@ class ScreeningEngine:
         res = MinuteResult(ts, "processed", symbols_with_data=len(sel))
         has_bar = np.zeros(fe.S, dtype=bool)
         has_bar[sel] = True
-        # 1. fills at this bar's open
+        # 1. working orders execute against this bar (open price; volume-capped in the realistic model)
         open_px = np.full(fe.S, np.nan)
         open_px[sel] = o
-        pend = np.flatnonzero((self.pend != 0) & has_bar[r.sym])
-        for i in pend:
-            f = self._fill(int(i), int(self.pend[i]), float(open_px[r.sym[i]]), ts, int(self.pend_key[i]))
-            self.pend[i] = 0
-            if f:
-                res.fills.append(f)
+        vol = np.zeros(fe.S)
+        vol[sel] = v
+        self.x.new_day(ts)
+        res.fills, res.done = self.x.fill(ts, has_bar, open_px, vol)
         # 2. features
         res.closed = fe.update(ts, sel, o, h, lo, c, v)
         # 3. eligibility
@@ -170,19 +148,20 @@ class ScreeningEngine:
         forced = eligible & (stop_hit | sq_off)
         dec[forced] = D["EXIT"]
         reason[forced] = np.where(stop_hit[forced], 1, 2)
-        ev = np.flatnonzero(dec >= 0)
-        self.evals[ev] += 1
-        self.last_eval[ev] = em
-        res.evaluated = int(len(ev))
-        res.counts = {DECISIONS[k]: int((dec[ev] == k).sum()) for k in np.unique(dec[ev])}
-        # 4. actionable decisions -> simulated orders (filled at the next bar's open)
-        act = ev[(dec[ev] == D["BUY"]) | (dec[ev] == D["EXIT"])]
+        ev_all = np.flatnonzero(dec >= 0)
+        self.evals[ev_all] += 1
+        self.last_eval[ev_all] = em
+        res.evaluated = int(len(ev_all))
+        res.counts = {DECISIONS[k]: int((dec[ev_all] == k).sum()) for k in np.unique(dec[ev_all])}
+        # 4. portfolio check, then actionable decisions -> simulated orders (filled from the next bar)
+        ev = self.x.check_loss(ts)
+        if ev:
+            res.events.append(ev)
+        act = [int(i) for i in ev_all[(dec[ev_all] == D["BUY"]) | (dec[ev_all] == D["EXIT"])]]
         names = ("rule", "stop", "square-off", "no new intraday entries")
         for i in act:
-            res.signals.append((int(i), DECISIONS[dec[i]], float(fe.last_close[r.sym[i]]), names[reason[i]]))
-            if allow_orders:
-                self.pend[i] = 1 if dec[i] == D["BUY"] else -1
-                self.pend_key[i] = em
+            res.signals.append((i, DECISIONS[dec[i]], float(fe.last_close[r.sym[i]]), names[reason[i]]))
+        res.orders = self.x.submit(act, {i: DECISIONS[dec[i]] for i in act}, em, allow_orders)
         self.last_minute = em
         return res
 
@@ -193,6 +172,7 @@ class ScreeningEngine:
             st[k] = getattr(self, k)
         st["last_minute"] = np.array([self.last_minute])
         st["ids"] = self.reg.ids
+        st.update(self.x.state())
         return st
 
     def load(self, st: dict) -> None:
@@ -202,6 +182,8 @@ class ScreeningEngine:
         for k in ("pos", "qty", "entry_px", "entry_ch", "stop_px", "pend", "pend_key", "evals", "last_eval"):
             setattr(self, k, np.array(st[k]))
         self.last_minute = int(np.asarray(st["last_minute"])[0])
+        if "x_scalars" in st:
+            self.x.load(st)
 
 
 assert set(TIMEFRAMES) == set(TF_NAMES)

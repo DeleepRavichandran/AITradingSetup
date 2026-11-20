@@ -1,6 +1,6 @@
 # Master Prompt V5 — status against the requested platform
 
-Updated 2026-11-19. This compares the multi-asset, multi-horizon platform requested in Master Prompt
+Updated 2026-11-20 (realistic execution and one shared portfolio in the minute loop). This compares the multi-asset, multi-horizon platform requested in Master Prompt
 V5 with what exists in the repository today. It complements [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md).
 
 Categories:
@@ -58,8 +58,8 @@ figure below comes from a *synthetic* minute stream; no real-time market feed is
 | §5 Incremental live evaluation at 50k | Verified working on a synthetic stream (benchmark) |
 | §5 Stateful parallel or distributed workers, backpressure | **Not implemented**: one process evaluates every configuration. At 50k, p99 cycle time is far below the 60 s budget, so distribution is not justified yet. |
 | §6–8 Research agents, memory, controlled self-improvement | Existing. **Learning is not demonstrated** (synthetic sealed test; see LEARNING_BRAIN.md). No new learning claim is made. |
-| §9 Realistic execution | Existing engine. The screening slice uses simplified paper fills (next minute's open, fixed notional, no volume cap). |
-| §10 Portfolio Brain (shared capital across all strategies, tax lots across products) | **Not implemented** for the screening loop: each configuration trades its own Rs 1,00,000 sub-account |
+| §9 Realistic execution | Existing event engine. The minute loop now also has volume-capped partial fills, spread and impact, per-order brokerage caps and entry time-outs: **verified working** on synthetic data (test_execution_portfolio.py). |
+| §10 Portfolio Brain | **Incomplete.** The minute loop has one shared capital pot with cash reservations, per-symbol and gross exposure caps, a position cap and a daily loss limit: **verified working** on synthetic data. Not built: signal ranking for scarce capital, strategy-correlation limits, tail-risk measures, tax lots across products, separate goal portfolios. |
 | §11 Options intelligence | **Not implemented** (real option premium data is blocked) |
 | §12 Fundamentals and events | **Incomplete**: scheduled events with known-from dates are implemented. Fundamentals and news are **not implemented**; data is **blocked** by licensing. |
 | §15 Real-time paper trading | **Incomplete**: forward paper ledger on replayed minutes; end-of-day Kite paper sessions are **unverified**. Live feed **not implemented**. |
@@ -74,4 +74,4 @@ figure below comes from a *synthetic* minute stream; no real-time market feed is
 1. **No real data** has been imported, so every strategy result in this repository is on synthetic data.
 2. **Privileged API container**: the strategy sandbox needs `CAP_SYS_ADMIN`. Generated code should move to a separate, isolated worker service.
 3. **No real-time feed**: the minute loop is proven on a replayed stream only.
-4. **Paper fills in the minute loop are simplified**: no volume participation cap and no shared capital.
+4. **Capital allocation is first-come**: when signals compete for scarce capital the portfolio serves them in registry order; deciding which signal deserves the money is not built.
