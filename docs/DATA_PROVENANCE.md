@@ -79,6 +79,15 @@ not a news archive.** Only the three STT entries from 2023 onward are marked ver
 were written from memory and are flagged `verified: false` in the file and in the dashboard.
 Real-data backtests list the structural breaks inside their window as warnings.
 
+### TradingView chart exports
+
+`nseql import-tradingview <dataset> "NSE_RELIANCE, 1D.csv" ... --licence "..."` reads files exported by
+hand with TradingView's "Export chart data" (a paid-plan feature as far as we know). TradingView has no
+public data API and forbids scraping, so nothing is fetched automatically. Symbol and interval come
+from the default file name. The time column may be Unix seconds, milliseconds or ISO text; dates that
+cannot be NSE data are refused. Bars are restamped from bar start to bar end. History length depends on
+the TradingView plan. Check TradingView's terms before using exported data in other software.
+
 ### Market context
 
 `nseql import-context` builds a separate context dataset from Kite (India VIX, NIFTY 50 and 8 sector

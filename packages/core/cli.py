@@ -24,6 +24,9 @@ def main(argv: list[str] | None = None) -> int:
     q = sub.add_parser("quality", help="data-quality report for a dataset"); q.add_argument("dataset"); q.add_argument("--interval", default="1d")
     i = sub.add_parser("import-bhavcopy", help="import NSE bhavcopy files you are licensed to use")
     i.add_argument("dataset_id"); i.add_argument("files", nargs="+"); i.add_argument("--licence", required=True)
+    tv = sub.add_parser("import-tradingview", help="import CSV files exported from TradingView charts (manual export)")
+    tv.add_argument("dataset_id"); tv.add_argument("files", nargs="+", help="e.g. 'NSE_RELIANCE, 1D.csv'"); tv.add_argument("--licence", required=True)
+    tv.add_argument("--interval", help="override the interval read from the file names (1d, 5m, ...)")
     kl = sub.add_parser("kite-login", help="daily Kite login: prints the login URL, then exchanges the request_token for an access token")
     kl.add_argument("--request-token", help="the request_token from the redirect URL after you log in")
     ik = sub.add_parser("import-kite", help="import equity/index candles from Kite Connect into a dataset")
@@ -98,6 +101,19 @@ def main(argv: list[str] | None = None) -> int:
         from nseql.data.adapters.bhavcopy import import_bhavcopies
         d = import_bhavcopies([Path(f) for f in a.files], s.data_dir, a.dataset_id, licence=a.licence)
         print(f"imported {len(d.instruments)} instruments into {d.root}; content_hash={d.content_hash}")
+    elif a.cmd == "import-tradingview":
+        import glob
+
+        from nseql.data.adapters.tradingview import import_tradingview
+        files = [Path(x) for f in a.files for x in (sorted(glob.glob(f)) or [f])]
+        ds, notes = import_tradingview(files, s.data_dir, a.dataset_id, licence=a.licence, interval=a.interval)
+        print(f"dataset {ds.id}: {len(ds.instruments)} symbols, content_hash={ds.content_hash}")
+        for n in notes:
+            print("note:", n)
+        from nseql.data.corporate import scan_dataset
+        if ds.intervals() == ["1d"] and scan_dataset(ds):
+            print(f"WARNING: price drops that look like splits/bonuses; see `nseql corporate-actions {ds.id}`")
+        print("next: nseql quality", ds.id)
     elif a.cmd == "kite-login":
         import os
 

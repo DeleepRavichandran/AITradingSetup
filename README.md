@@ -39,6 +39,7 @@ Getting ready for real data (each step needs your Kite Connect subscription or f
 nseql kite-login                                   # once a day
 nseql import-kite kite_2026 --symbols RELIANCE,TCS,INFY --start 2024-01-01 --licence "Kite Connect, personal research"
 nseql corporate-actions kite_2026                  # unlisted splits/bonuses; attach confirmed ones with --file
+nseql import-tradingview tv_2025 "NSE_RELIANCE, 1D.csv" "NSE_TCS, 1D.csv" --licence "TradingView export, personal research"   # no Kite? use chart exports
 nseql holidays nse_holidays_2026.csv --source "NSE circular ..."
 nseql events --file results_and_macro.csv --source "exchange filings; RBI/Fed calendars" --expiries 2024-01-01 2026-12-31
 nseql import-context --start 2023-01-01 --licence "Kite Connect, personal research"   # VIX, sectors, rupee, crude, gold
