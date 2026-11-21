@@ -19,7 +19,7 @@ export default function Market() {
   const expiry = exp || chain.data?.expiries?.[0];
   return (
     <Page title="Market Explorer" sub="The loaded universe as the research team sees it: only data up to the end of the validation window is shown, so nothing here can leak the sealed period."
-      right={<select value={ds} onChange={(e) => { setDs(e.target.value); setSym(null); }}>{(dss.data || []).map((d) => <option key={d.dataset_id}>{d.dataset_id}</option>)}</select>}>
+      right={<select aria-label="Dataset" value={ds} onChange={(e) => { setDs(e.target.value); setSym(null); }}>{(dss.data || []).map((d) => <option key={d.dataset_id}>{d.dataset_id}</option>)}</select>}>
       <Err e={ov.error} /><Loading on={ov.loading} />
       {o && <>
         <Synthetic on={o.synthetic} />
@@ -48,7 +48,7 @@ export default function Market() {
         </Card></div>
         <div className="grid g2" style={{ marginTop: 14 }}>
           <Card title="Return correlation, last 120 sessions"><Heatmap labels={o.correlation.labels} matrix={o.correlation.matrix} /></Card>
-          <Card title={`Option chain · ${idx || "no index"} · ${chain.data?.date || ""}`} right={chain.data && <select value={expiry} onChange={(e) => setExp(e.target.value)}>{chain.data.expiries.map((e: string) => <option key={e}>{e}</option>)}</select>}>
+          <Card title={`Option chain · ${idx || "no index"} · ${chain.data?.date || ""}`} right={chain.data && <select aria-label="Expiry" value={expiry} onChange={(e) => setExp(e.target.value)}>{chain.data.expiries.map((e: string) => <option key={e}>{e}</option>)}</select>}>
             {chain.data ? <><p className="dim">Spot {num(chain.data.spot)}. {chain.data.greeks_note}.</p>
               <DataTable maxHeight={330} cols={[{ key: "strike", r: true }, { key: "type" }, { key: "close", r: true, f: (r) => num(r.close) }, { key: "iv", label: "IV", r: true, f: (r) => pct(r.iv) },
                 { key: "delta", r: true, f: (r) => num(r.delta) }, { key: "theta", r: true, f: (r) => num(r.theta) }, { key: "vega", r: true, f: (r) => num(r.vega) },

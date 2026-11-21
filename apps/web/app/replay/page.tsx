@@ -17,7 +17,7 @@ export default function Replay() {
   const d = rp.data, t = d?.trade;
   return (
     <Page title="Trade Replay" sub="One trade at a time: the bars around it, the order that was placed, the fills it received, the engine events and the exact cash-ledger lines. Markers sit on the bar where each fill happened."
-      right={<select value={rid || ""} onChange={(e) => { setRun(e.target.value); setI(0); }}>{withFiles.map((r) => <option key={r.run_id} value={r.run_id}>{r.run_id} · {r.strategy} · {r.metrics.trades} trades</option>)}</select>}>
+      right={<select aria-label="Backtest run" value={rid || ""} onChange={(e) => { setRun(e.target.value); setI(0); }}>{withFiles.map((r) => <option key={r.run_id} value={r.run_id}>{r.run_id} · {r.strategy} · {r.metrics.trades} trades</option>)}</select>}>
       <Err e={trades.error || rp.error} />
       {!rid && <div className="empty">No runs with trades yet. Run a backtest first.</div>}
       {d && t && <>

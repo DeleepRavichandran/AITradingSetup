@@ -78,7 +78,7 @@ export default function Screening() {
             [k, `${num(v.filled, 0)} fills · realised ${inr(v.realized_inr)} after charges ${inr(v.charges_inr)}`] as [string, React.ReactNode])} />
           <p className="dim" style={{ marginTop: 6 }}>{sm?.note}</p>
         </Card>
-        <Card title="Decisions" right={<select value={decision} onChange={(e) => { setDecision(e.target.value); setSigOff(0); }}>
+        <Card title="Decisions" right={<select aria-label="Filter decisions" value={decision} onChange={(e) => { setDecision(e.target.value); setSigOff(0); }}>
           <option value="">BUY + EXIT</option><option value="BUY">BUY</option><option value="EXIT">EXIT</option></select>}>
           <Err e={signals.error} />
           <DataTable maxHeight={420} rows={signals.data?.rows || []} cols={[

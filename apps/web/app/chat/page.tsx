@@ -22,7 +22,7 @@ export default function Chat() {
   };
   return (
     <Page title="AI Analyst Chat" sub="Questions are answered only from the experiment registry. With an Anthropic API key configured on the server the answer is written by Claude; without one you get a plain digest of the same records, labelled as such. It never predicts profit."
-      right={<select value={run} onChange={(e) => setRun(e.target.value)}><option value="">no run in focus</option>{(runs.data || []).map((r) => <option key={r.run_id} value={r.run_id}>{r.run_id} · {r.strategy}</option>)}</select>}>
+      right={<select aria-label="Run in focus" value={run} onChange={(e) => setRun(e.target.value)}><option value="">no run in focus</option>{(runs.data || []).map((r) => <option key={r.run_id} value={r.run_id}>{r.run_id} · {r.strategy}</option>)}</select>}>
       <Err e={err} />
       <Card>
         {log.length === 0 && <div className="row">{SUGGEST.map((s) => <button key={s} onClick={() => ask(s)}>{s}</button>)}</div>}

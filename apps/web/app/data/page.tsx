@@ -35,7 +35,7 @@ export default function Data() {
           <DataTable maxHeight={170} cols={[{ key: "ex_date", label: "ex-date" }, { key: "symbol" }, { key: "kind" }, { key: "ratio", r: true }, { key: "amount", r: true }]} rows={det.data.corporate_actions} empty="None recorded." />
         </Card>
       </div>}
-      {q.data && <div style={{ marginTop: 14 }}><Card title="Quality report" right={<select value={kind} onChange={(e) => setKind(e.target.value)}>{["EQ", "INDEX", "FUT", "OPT", "ALL"].map((k) => <option key={k}>{k}</option>)}</select>}>
+      {q.data && <div style={{ marginTop: 14 }}><Card title="Quality report" right={<select aria-label="Instrument kind" value={kind} onChange={(e) => setKind(e.target.value)}>{["EQ", "INDEX", "FUT", "OPT", "ALL"].map((k) => <option key={k}>{k}</option>)}</select>}>
         {q.data.integrity_failures.length > 0 && <Banner tone="crit">Integrity check FAILED for {q.data.integrity_failures.length} file(s): stored bytes no longer match the manifest.</Banner>}
         <div className="stats" style={{ marginBottom: 10 }}>
           <Stat k="Symbols checked" v={`${q.data.symbols_checked}/${q.data.symbols_total}`} h={q.data.truncated ? "truncated" : ""} />
