@@ -15,7 +15,16 @@
 | Web: `tests/vega.test.mjs` (node:test, parser) | 5 |
 | Web: `tests/e2e.test.mjs` (Playwright Chromium + axe-core, mocked API) | 22 |
 
-Results: see "Runs" below. New this round: parser safety (exact phrases, negations, questions, low
+Runs (2026-11-21, on 868d2fc's tree):
+- Python as root: **356 passed** (368 s).
+- Python as an unprivileged user (uid 65534): **349 passed, 3 skipped** (root-only sandbox fallback),
+  4 failed with `PermissionError` while loading the TLS CA bundle, which this development container keeps
+  under `/root` (`SSL_CERT_FILE`). Re-run with a readable copy of the same bundle: those 4 (and the rest
+  of their files, 11 tests) pass. Environment artefact, not a code defect.
+- Web: parser 5/5, e2e 22/22, `tsc --noEmit` clean, `next build` OK.
+- Docker smoke of the split API/sandbox stack: see PLATFORM_V5_STATUS §17.
+
+New this round: parser safety (exact phrases, negations, questions, low
 confidence, refusals); browser tests for confirmation, timeout, cancel, manual emergency stop, speech
 errors, rapid repeats, denied permissions, voice consent, camera/mic release on unmount, axe (light and
 dark), 360/768/1280 px; ranked allocator (10); Angel One verification harness and poller capacity /
