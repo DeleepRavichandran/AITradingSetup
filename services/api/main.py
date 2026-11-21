@@ -763,6 +763,14 @@ def create_app() -> FastAPI:
         ses = load_session(st.exp_dir) or {}
         return KiteHistorical(os.environ.get("KITE_API_KEY") or ses.get("api_key"), os.environ.get("KITE_ACCESS_TOKEN") or ses.get("access_token"))
 
+    _angel: dict = {}
+
+    def _angel_api():
+        from nseql.data.adapters.angelone import AngelHistorical
+        if "api" not in _angel:
+            _angel["api"] = AngelHistorical(session_dir=st.exp_dir)
+        return _angel["api"]
+
     def _calendar():
         from nseql.instruments.calendar import TradingCalendar
         hol = st.exp_dir / "holidays.json"
@@ -778,8 +786,10 @@ def create_app() -> FastAPI:
             strat = strategy_registry.create(meta["strategy"], meta.get("params") or {})
             allocs.insert(0, Allocation(strat, "algo", meta["capital"]))
         warm = 0
-        if meta["feed"] == "kite_daily":
-            feed = KiteDailyFeed(meta["kite"], meta["live_from"], api_factory=_kite_api, calendar=_calendar())
+        if meta["feed"] in ("kite_daily", "angel_daily"):
+            feed = KiteDailyFeed(meta["kite"], meta["live_from"], api_factory=_kite_api if meta["feed"] == "kite_daily" else _angel_api,
+                                 calendar=_calendar())
+            feed.kind = meta["feed"]
         else:
             from nseql.backtester.runner import default_symbols
             d = st.dataset(meta["dataset_id"])
@@ -823,22 +833,26 @@ def create_app() -> FastAPI:
         if body.strategy and body.strategy.startswith("generated:"):
             raise HTTPException(400, "paper trading of generated code is NOT IMPLEMENTED: it would have to run inside the sandbox "
                                      "process per bar. Promote it by adding a reviewed copy to the strategy library.")
-        if body.feed not in ("replay", "kite_daily"):
-            raise HTTPException(400, "feed must be 'replay' or 'kite_daily'")
+        if body.feed not in ("replay", "kite_daily", "angel_daily"):
+            raise HTTPException(400, "feed must be 'replay', 'kite_daily' or 'angel_daily'")
         sid = f"paper_{uuid.uuid4().hex[:8]}"
         meta = {**body.model_dump(), "session_id": sid, "created": datetime.now().isoformat(timespec="seconds"), "closed": False}
         try:
             if body.strategy:
                 cls = strategy_registry.get(body.strategy)
                 cls(**body.params)
-                if body.feed == "kite_daily" and (cls.requires != "EQ" or "1d" not in cls.intervals):
-                    raise ValueError("the kite_daily feed supports daily cash-equity strategies only")
-            if body.feed == "kite_daily":
+                if body.feed != "replay" and (cls.requires != "EQ" or "1d" not in cls.intervals):
+                    raise ValueError(f"the {body.feed} feed supports daily cash-equity strategies only")
+            if body.feed in ("kite_daily", "angel_daily"):
                 if not body.symbols:
-                    raise ValueError("kite_daily needs a list of NSE symbols")
-                from nseql.data.adapters.kite_import import resolve
-                nse = _kite_api().instruments("NSE")
-                found, missing = resolve(nse, nse[nse["segment"] == "INDICES"], [*body.symbols, "NIFTY 50"])
+                    raise ValueError(f"{body.feed} needs a list of NSE symbols")
+                if body.feed == "kite_daily":
+                    from nseql.data.adapters.kite_import import resolve
+                    nse = _kite_api().instruments("NSE")
+                    found, missing = resolve(nse, nse[nse["segment"] == "INDICES"], [*body.symbols, "NIFTY 50"])
+                else:
+                    from nseql.data.adapters.angelone import resolve as angel_resolve
+                    found, missing = angel_resolve(_angel_api().instruments(st.exp_dir), [*body.symbols, "NIFTY 50"])
                 if missing:
                     raise ValueError(f"not found in Kite's NSE instrument list: {missing}")
                 meta["kite"] = found
@@ -856,7 +870,7 @@ def create_app() -> FastAPI:
                 ps.advance(warm)
             st.sessions[sid], st.session_meta[sid] = ps, meta
         reg.audit("user", "PAPER_SESSION_STARTED", session=sid, strategy=body.strategy, feed=body.feed, window=body.window)
-        if body.feed == "kite_daily":
+        if body.feed in ("kite_daily", "angel_daily"):
             scheduler.tick()      # load the warm-up history now rather than at the next timer tick
         return {"session_id": sid, "persisted": True, **clean(ps.state())}
 
@@ -1025,6 +1039,62 @@ def create_app() -> FastAPI:
             return {"registered": len(sch.reg), "minutes": len(mins), **sch.store.counts()}
         return st.job("screening_replay", work, dataset=d.id)
 
+    def _watchlist() -> list[str]:
+        from nseql.data.adapters.angelone import watchlist
+        return watchlist(st.exp_dir)
+
+    def _start_live_screening() -> None:
+        """Unattended: log in to Angel One, fetch daily history once, warm up, then screen every minute.
+        Paper orders only from the live start (kept across restarts). Errors are visible in /screening/status."""
+        from nseql.data.adapters.angelone import credentials_present, missing_credentials, resolve as angel_resolve
+        from nseql.screening.feeds import BrokerMinutePoller, warm_up
+        from nseql.screening.scheduler import MinuteScheduler
+        screening["live"] = {"state": "starting", "broker": "angelone"}
+        try:
+            if not credentials_present():
+                raise RuntimeError(f"Angel One credentials missing in .env: {', '.join(missing_credentials())}")
+            api = _angel_api()
+            api.ensure_login()
+            tokens, missing = angel_resolve(api.instruments(st.exp_dir), [*_watchlist(), "NIFTY 50"])
+            if not tokens:
+                raise RuntimeError(f"none of the watchlist symbols were found at Angel One: {missing}")
+            root = st.exp_dir / "screening" / "live_angelone"
+            root.mkdir(parents=True, exist_ok=True)
+            lf = root / "live.json"
+            first = not lf.exists()
+            live_from = json.loads(lf.read_text())["live_from"] if not first else datetime.now().strftime("%Y-%m-%dT%H:%M:00")
+            syms = [x["symbol"] for x in tokens]
+            sch = MinuteScheduler(root, syms, None, feed=BrokerMinutePoller(tokens, _angel_api), kill=st.kill, mode="live",
+                                  calendar=_calendar(), live_from=live_from)
+            if first:
+                lf.write_text(json.dumps({"live_from": live_from, "symbols": syms, "not_found": missing}))
+                screening["live"]["warm_up"] = warm_up(sch, api, tokens, days=5)
+            meta = {"root": str(root), "symbols": syms, "configs": None, "mode": "live", "broker": "angelone", "live_from": live_from,
+                    "synthetic": False, "not_found": missing}
+            (st.exp_dir / "screening" / "current.json").write_text(json.dumps(meta))
+            screening["sch"], screening["meta"] = sch, meta
+            sch.start()
+            screening["live"].update(state="running", symbols=len(syms), live_from=live_from, not_found=missing)
+            reg.audit("system", "LIVE_SCREENING_STARTED", broker="angelone", symbols=len(syms), live_from=live_from)
+        except Exception as e:                      # reported, never crashes the API
+            screening["live"].update(state="error", error=f"{type(e).__name__}: {e}")
+            st.notify("feed", f"Live screening could not start: {type(e).__name__}: {e}")
+            return
+        hist = "angel_daily"                         # daily history for backtests, once; a failure here does not stop screening
+        if not (st.data_dir / hist).exists():
+            try:
+                from datetime import date as _date
+
+                from nseql.data.adapters.angel_import import import_angel
+                screening["live"]["history"] = "downloading 2 years of daily candles"
+                ds, _ = import_angel(api, [s for s in syms if s != "NIFTY50"], _date.today().replace(year=_date.today().year - 2), _date.today(),
+                                     st.data_dir, hist, licence="Angel One SmartAPI, personal research", cache_dir=st.exp_dir,
+                                     progress=lambda *_: None)
+                screening["live"]["history"] = f"dataset {ds.id}: {len(ds.instruments)} instruments"
+            except Exception as e:
+                screening["live"]["history"] = f"download failed: {type(e).__name__}: {e} (will retry at the next start)"
+
+
     def _need_screening():
         sch = _screening_open()
         if sch is None:
@@ -1034,9 +1104,11 @@ def create_app() -> FastAPI:
     @api.get("/screening/status")
     def screening_status():
         sch = _screening_open()
+        live = screening.get("live")
         if sch is None:
-            return {"started": False, "live_feed": "NOT IMPLEMENTED (needs a licensed real-time feed)", "live_trading": False}
-        return clean({"started": True, **sch.status(), "run": screening.get("meta")})
+            return clean({"started": False, "live": live or {"state": "off", "how": "set NSEQL_LIVE_SCREENING=angelone and the ANGEL_* keys in .env"},
+                          "live_trading": False})
+        return clean({"started": True, **sch.status(), "run": screening.get("meta"), "live": live})
 
     @api.get("/screening/summary")
     def screening_summary():
@@ -1198,6 +1270,8 @@ def create_app() -> FastAPI:
                                calendar=_calendar())
     app.state.scheduler = scheduler
     _restore_sessions()
+    if os.environ.get("NSEQL_LIVE_SCREENING", "").lower() == "angelone":
+        threading.Thread(target=_start_live_screening, name="live-screening-bootstrap", daemon=True).start()
     if os.environ.get("NSEQL_SCHEDULER", "").lower() == "true":
         scheduler.start(float(os.environ.get("NSEQL_SCHEDULER_TICK_SECONDS", "60")))
     app.mount("/api", api)

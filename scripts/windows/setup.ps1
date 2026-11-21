@@ -10,7 +10,7 @@
   This script does not place orders, does not touch broker settings and never enables live trading.
   STATUS: written for Windows 10/11; not yet run on a real Windows machine.
 #>
-param([switch]$Docker, [switch]$SkipWeb)
+param([switch]$Docker, [switch]$SkipWeb, [switch]$NoAutostart)
 $ErrorActionPreference = "Stop"
 $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 Set-Location $repo
@@ -30,6 +30,29 @@ if ($envText -match "(?m)^NSEQL_API_TOKEN=\s*$") {
 if ($envText -match "(?m)^NSEQL_SCHEDULER=false") {
     (Get-Content .env -Raw) -replace "(?m)^NSEQL_SCHEDULER=false", "NSEQL_SCHEDULER=true" | Set-Content .env -NoNewline
     Write-Host "Turned on the paper-trading scheduler (NSEQL_SCHEDULER=true). It never places real orders."
+}
+
+# ---------------------------------------------------------------- Angel One (asked once; stored only in .env)
+function Set-EnvValue($name, $value) {
+    $text = Get-Content .env -Raw
+    if ($text -match "(?m)^$name=") { $text = $text -replace "(?m)^$name=.*$", "$name=$value" } else { $text = $text.TrimEnd() + "`r`n$name=$value`r`n" }
+    Set-Content -Path .env -Value $text -NoNewline
+}
+$angelMissing = @("ANGEL_API_KEY", "ANGEL_CLIENT_CODE", "ANGEL_PIN", "ANGEL_TOTP_SECRET") | Where-Object { (Get-Content .env -Raw) -notmatch "(?m)^$_=\S+" }
+if ($angelMissing) {
+    Write-Host ""
+    Write-Host "Angel One login details (asked once, saved only in .env on this laptop; press Enter to skip):"
+    foreach ($k in $angelMissing) {
+        $prompt = @{ ANGEL_API_KEY = "  SmartAPI API key"; ANGEL_CLIENT_CODE = "  Angel One client ID"; ANGEL_PIN = "  4-digit MPIN";
+                     ANGEL_TOTP_SECRET = "  TOTP secret (text under the QR code)" }[$k]
+        $secure = Read-Host $prompt -AsSecureString
+        $plain = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
+        if ($plain) { Set-EnvValue $k $plain.Trim() }
+    }
+}
+if (-not (@("ANGEL_API_KEY", "ANGEL_CLIENT_CODE", "ANGEL_PIN", "ANGEL_TOTP_SECRET") | Where-Object { (Get-Content .env -Raw) -notmatch "(?m)^$_=\S+" })) {
+    Set-EnvValue "NSEQL_LIVE_SCREENING" "angelone"
+    Write-Host "Live screening with Angel One will start automatically (simulated orders only)."
 }
 
 # ---------------------------------------------------------------- Docker Desktop
@@ -78,6 +101,19 @@ if (-not $SkipWeb) {
             if ($LASTEXITCODE -ne 0) { throw "dashboard build failed" }
         } finally { Pop-Location }
     }
+}
+
+# ---------------------------------------------------------------- check the Angel One login, then auto-start
+if ((Get-Content .env -Raw) -match "(?m)^NSEQL_LIVE_SCREENING=angelone") {
+    & (Join-Path $PSScriptRoot "nseql.ps1") angel-check
+    if ($LASTEXITCODE -ne 0) { Write-Warning "Angel One login failed - check the four values in .env and run setup again." }
+}
+if (-not $NoAutostart) {
+    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$(Join-Path $PSScriptRoot 'start.ps1')`" -Hidden"
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Days 0)
+    Register-ScheduledTask -TaskName "NSE AI Quant Lab" -Action $action -Trigger $trigger -Settings $settings -Description "Starts the research lab at logon (paper trading only)" -Force | Out-Null
+    Write-Host "Auto-start installed: the lab starts by itself when you log in to Windows (remove with: Unregister-ScheduledTask 'NSE AI Quant Lab')."
 }
 
 Write-Host ""

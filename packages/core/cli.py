@@ -27,6 +27,11 @@ def main(argv: list[str] | None = None) -> int:
     tv = sub.add_parser("import-tradingview", help="import CSV files exported from TradingView charts (manual export)")
     tv.add_argument("dataset_id"); tv.add_argument("files", nargs="+", help="e.g. 'NSE_RELIANCE, 1D.csv'"); tv.add_argument("--licence", required=True)
     tv.add_argument("--interval", help="override the interval read from the file names (1d, 5m, ...)")
+    sub.add_parser("angel-check", help="test the Angel One login from .env (automatic TOTP) and fetch one candle")
+    ia = sub.add_parser("import-angelone", help="import candles from Angel One SmartAPI (free for Angel One clients)")
+    ia.add_argument("dataset_id"); ia.add_argument("--symbols", help="comma separated; default: the watchlist")
+    ia.add_argument("--start", required=True); ia.add_argument("--end"); ia.add_argument("--interval", default="1d")
+    ia.add_argument("--licence", default="Angel One SmartAPI, personal research")
     kl = sub.add_parser("kite-login", help="daily Kite login: prints the login URL, then exchanges the request_token for an access token")
     kl.add_argument("--request-token", help="the request_token from the redirect URL after you log in")
     ik = sub.add_parser("import-kite", help="import equity/index candles from Kite Connect into a dataset")
@@ -114,6 +119,36 @@ def main(argv: list[str] | None = None) -> int:
         if ds.intervals() == ["1d"] and scan_dataset(ds):
             print(f"WARNING: price drops that look like splits/bonuses; see `nseql corporate-actions {ds.id}`")
         print("next: nseql quality", ds.id)
+    elif a.cmd in ("angel-check", "import-angelone"):
+        from datetime import date as _d
+        from datetime import datetime as _dt
+        from datetime import timedelta as _td
+
+        from nseql.data.adapters.angelone import AngelError, AngelHistorical, missing_credentials, resolve  # noqa: I001
+        miss = missing_credentials()
+        if miss:
+            print("missing in .env:", ", ".join(miss)); return 2
+        from nseql.data.adapters.angelone import watchlist
+        watch = watchlist(s.experiments_dir)
+        try:
+            api = AngelHistorical(session_dir=s.experiments_dir)
+            if a.cmd == "angel-check":
+                api.login()
+                print(f"login OK for client {api.client_code} (session saved; renewed automatically each day)")
+                found, missing = resolve(api.instruments(s.experiments_dir), [*watch, "NIFTY 50"])
+                print(f"watchlist: {len(found)} found" + (f", not found: {', '.join(missing)}" if missing else ""))
+                df = api.candles(found[0]["token"], "1d", _dt.now() - _td(days=10), _dt.now())
+                print(f"{found[0]['symbol']}: last daily candle {df['ts'].iloc[-1]:%Y-%m-%d} close {df['close'].iloc[-1]}" if len(df) else "no candles returned")
+                return 0
+            from nseql.data.adapters.angel_import import import_angel
+            syms = [x.strip() for x in a.symbols.split(",")] if a.symbols else watch
+            ds, missing = import_angel(api, syms, _d.fromisoformat(a.start), _d.fromisoformat(a.end) if a.end else _d.today(), s.data_dir,
+                                       a.dataset_id, licence=a.licence, interval=a.interval, cache_dir=s.experiments_dir)
+        except AngelError as e:
+            print(e); return 1
+        print(f"dataset {ds.id}: {len(ds.instruments)} instruments, content_hash={ds.content_hash}")
+        if missing:
+            print("not imported:", ", ".join(missing))
     elif a.cmd == "kite-login":
         import os
 

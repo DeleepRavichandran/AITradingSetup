@@ -4,6 +4,35 @@ Status: the scripts below are written for Windows 10/11 but have **not been run 
 yet**, and they were not syntax-checked with PowerShell. The Python code has Windows-specific guards
 (time-zone data, POSIX-only calls) that are tested on Linux only. Report anything that fails.
 
+## Zero-touch mode with Angel One (recommended)
+
+Only a one-time setup is needed. After it, nothing has to be done by hand.
+
+1. In the Angel One app or website, enable **SmartAPI** and create an app. Note the **API key**.
+2. On SmartAPI, enable TOTP two-factor login. Copy the **text shown under the QR code** (the TOTP secret).
+   You will also need your **client ID** and **4-digit MPIN**.
+3. Run `scripts\windows\setup.ps1` once. It asks for those four values (typing is hidden), saves them only
+   in `.env` on the laptop, tests the login, and installs auto-start at Windows logon.
+
+From then on, every time you log in to Windows the lab starts in the background. It then:
+
+- logs in to Angel One by itself every day, generating the TOTP code from the secret;
+- downloads 2 years of daily history for the watchlist, the first time only;
+- warms up its indicators on the last few days of minute data;
+- screens every minute during market hours;
+- paper-trades in the shared portfolio, from the moment it first went live.
+
+Nothing is ever sent as a real order. Check it any time at http://localhost:3000 → *Strategy Monitor*.
+The watchlist is `config/watchlist_default.txt`; put your own list in `experiments/watchlist.txt` to replace it.
+
+Caveats:
+
+- **Untested on the real service.** The Angel One code has been tested only against a simulated server.
+  Expect a first-run fix or two; the dashboard's status card and `experiments\logs\api.log` show the error.
+- **The laptop must be on.** Screening only happens while it is awake during market hours.
+- **Protect the secret.** The TOTP secret plus your MPIN can log in to your account. They stay in `.env`
+  on the laptop, which is never committed to git.
+
 There are two ways to run it. Pick one.
 
 | | Native (Python + Node) | Docker Desktop |

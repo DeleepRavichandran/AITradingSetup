@@ -39,7 +39,7 @@ figure below comes from a *synthetic* minute stream; no real-time market feed is
 | Forward paper ledger kept separate from research/backtest ledgers; fills at next minute's open; dated charges | **Verified working** (synthetic data) | `test_paper_ledger_is_consistent` |
 | Decision vocabulary BUY / SELL / HOLD / ACCUMULATE / REDUCE / EXIT / REBALANCE / NO TRADE | **Incomplete** | All eight are defined. This slice emits BUY, EXIT, HOLD and NO TRADE; the rest need products (shorting, long-term, portfolios) that are not in the slice yet. |
 | API (`/api/screening/*`, server-side pagination and filters) and dashboard page "Strategy Monitor" with Intraday / Swing views | **Verified working** (API by test; page by type-check and build) | `tests/screening/test_screening_api.py` |
-| Real-time 1-minute feed (KiteTicker or polling) | **Not implemented** (and **blocked** on a licensed real-time entitlement) | — |
+| Real-time 1-minute feed | **Implemented, unverified**: Angel One SmartAPI polling of completed 1-minute candles (`nseql.screening.feeds`), with automatic TOTP login, warm-up and unattended start in the API. Mock-tested only; not yet run against the real service. KiteTicker is not implemented. | `tests/unit/test_angelone.py` |
 
 ## Requested scope by area
 

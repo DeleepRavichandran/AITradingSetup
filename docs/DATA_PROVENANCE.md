@@ -79,6 +79,14 @@ not a news archive.** Only the three STT entries from 2023 onward are marked ver
 were written from memory and are flagged `verified: false` in the file and in the dashboard.
 Real-data backtests list the structural breaks inside their window as warnings.
 
+### Angel One SmartAPI
+
+`nseql import-angelone` and the live screening feed use Angel One's SmartAPI (free for Angel One clients),
+with automatic daily login via TOTP. Credentials are read from `.env` only. Raw responses are kept
+byte-for-byte as for every import. Angel One reports no history for expired F&O contracts and current
+listings only. Per-request day limits apply (30 days of 1-minute data per request). **Unverified**: tested
+against a simulated server only.
+
 ### TradingView chart exports
 
 `nseql import-tradingview <dataset> "NSE_RELIANCE, 1D.csv" ... --licence "..."` reads files exported by

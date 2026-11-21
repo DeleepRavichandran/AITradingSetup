@@ -70,7 +70,7 @@ class MinuteScheduler:
     def __init__(self, root: Path, symbols: list[str], n_configs: int | None = None, *, calendar: TradingCalendar | None = None,
                  feed=None, kill=None, checkpoint_every: int = 15, grace_seconds: float = 5.0, mode: str = "replay",
                  clock: Callable[[], datetime] | None = None, execution: str = "realistic", exec_cfg: ExecConfig | None = None,
-                 portfolio: PortfolioRules | None | bool = True):
+                 portfolio: PortfolioRules | None | bool = True, live_from=None):
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
         t0 = time.perf_counter()
@@ -89,6 +89,7 @@ class MinuteScheduler:
                                       FAMILIES[r.fam[i]], json.dumps(r.params[i]), float(r.stop[i])) for i in range(len(r))])
         self.calendar = calendar or TradingCalendar()
         self.feed, self.kill, self.mode = feed, kill, mode
+        self.live_from = _iso(live_from) if live_from is not None else None   # minutes before this: no paper orders (warm-up)
         self.checkpoint_every, self.grace = checkpoint_every, grace_seconds
         self.clock = clock or (lambda: datetime.now(IST).replace(tzinfo=None))
         self.ckpt = self.root / "checkpoint.npz"
@@ -171,9 +172,11 @@ class MinuteScheduler:
         known = [x for x in rows if x["symbol"] in self.engine.fe.index]
         sy = [x["symbol"] for x in known]
         cols = [np.array([x[k] for x in known], dtype=float) for k in ("open", "high", "low", "close", "volume")]
-        allow = not (self.kill is not None and self.kill.engaged)
+        warm = self.live_from is not None and minute < self.live_from
+        allow = not (self.kill is not None and self.kill.engaged) and not warm
         t0 = time.perf_counter()
-        res = self.engine.step(pd.Timestamp(minute), sy, *cols, allow_orders=allow)
+        res = self.engine.step(pd.Timestamp(minute), sy, *cols, allow_orders=allow,
+                               block_reason="warm-up history (before live start)" if warm else "kill switch engaged")
         lat = (time.perf_counter() - t0) * 1000
         if res.status == "duplicate":
             return {"minute": minute, "status": "duplicate", "latency_ms": lat}
@@ -195,7 +198,7 @@ class MinuteScheduler:
         events = [(ev["ts"], ev["event"], json.dumps(ev)) for ev in res.events]
         x = self.engine.x
         lag = (now - pd.Timestamp(minute)).total_seconds() + lat / 1000
-        cyc = {"minute": minute, "processed_at": time.time(), "latency_ms": round(lat, 3), "lag_s": round(lag, 3), "mode": self.mode,
+        cyc = {"minute": minute, "processed_at": time.time(), "latency_ms": round(lat, 3), "lag_s": round(lag, 3), "mode": "warmup" if warm else self.mode,
                "status": "processed", "symbols_with_data": res.symbols_with_data, "symbols_expected": len(r.symbols),
                "closed": json.dumps(res.closed), "eligible": res.eligible, "evaluated": res.evaluated, "skipped_pending": res.skipped_pending,
                "stale_skips": res.stale_skips, "counts": json.dumps(res.counts), "fills": len(fills),
@@ -232,7 +235,9 @@ class MinuteScheduler:
         self._stop.set()
 
     def status(self) -> dict:
-        return {"mode": self.mode, "feed": getattr(self.feed, "label", None) or "none attached (live 1-minute feed NOT IMPLEMENTED)",
+        return {"mode": self.mode, "feed": getattr(self.feed, "label", None) or "none attached",
+                "feed_status": getattr(self.feed, "status", None), "feed_errors": dict(list(getattr(self.feed, "errors", {}).items())[:20]),
+                "live_from": self.live_from,
                 "running": self._thread is not None and self._thread.is_alive(), "registered": len(self.reg), "symbols": len(self.reg.symbols),
                 "watermark": self.watermark, "last_cycle": self.last_cycle, "overruns": self.overruns, "recovery": self.recovery,
                 "startup_seconds": self.startup_seconds, "paper_orders_enabled": not (self.kill is not None and self.kill.engaged),

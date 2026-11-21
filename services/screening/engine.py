@@ -88,7 +88,8 @@ class ScreeningEngine:
             return np.nan_to_num(a, nan=-np.inf) > np.nan_to_num(b, nan=np.inf) + TIE_EPS * np.maximum(1.0, np.abs(np.nan_to_num(b)))
 
     # ------------------------------------------------------------------ one minute
-    def step(self, ts: pd.Timestamp, symbols: list[str], o, h, lo, c, v, *, allow_orders: bool = True) -> MinuteResult:
+    def step(self, ts: pd.Timestamp, symbols: list[str], o, h, lo, c, v, *, allow_orders: bool = True,
+             block_reason: str = "kill switch engaged") -> MinuteResult:
         ts = pd.Timestamp(ts)
         em = self.epoch_min(ts)
         if em <= self.last_minute:
@@ -161,7 +162,7 @@ class ScreeningEngine:
         names = ("rule", "stop", "square-off", "no new intraday entries")
         for i in act:
             res.signals.append((i, DECISIONS[dec[i]], float(fe.last_close[r.sym[i]]), names[reason[i]]))
-        res.orders = self.x.submit(act, {i: DECISIONS[dec[i]] for i in act}, em, allow_orders)
+        res.orders = self.x.submit(act, {i: DECISIONS[dec[i]] for i in act}, em, allow_orders, block_reason)
         self.last_minute = em
         return res
 

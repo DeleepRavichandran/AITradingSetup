@@ -173,7 +173,7 @@ only in the replay benchmark, at 421 ms.
 
 ## Not in this slice
 
-- A live feed: KiteTicker or polling is **not implemented** and needs a licensed real-time entitlement.
+- A verified live feed. Angel One polling exists (`nseql.screening.feeds`, automatic login, warm-up with paper orders off) but is **unverified** against the real service; KiteTicker is not implemented.
 - Positional (weekly/monthly) and long-term investing.
 - F&O, ETFs, mutual funds and SIP.
 - Shared portfolio capital.

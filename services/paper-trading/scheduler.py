@@ -52,7 +52,7 @@ class PaperScheduler:
                     continue
                 kind = getattr(s.feed, "kind", "")
                 try:
-                    if kind == "kite_daily":
+                    if kind in ("kite_daily", "angel_daily"):
                         done += self._daily(sid, s, now)
                     elif kind == "replay":
                         n = int(self.meta(sid).get("auto_bars") or 0)

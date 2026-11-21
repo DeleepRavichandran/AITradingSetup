@@ -121,14 +121,15 @@ class Executor:
         return None
 
     # ------------------------------------------------------------------ order submission
-    def submit(self, actionable: list[int], decisions: dict[int, str], minute_em: int, allow: bool) -> list[dict]:
+    def submit(self, actionable: list[int], decisions: dict[int, str], minute_em: int, allow: bool,
+               block_reason: str = "kill switch engaged") -> list[dict]:
         """Turn BUY/EXIT decisions into orders. Returns order records (accepted and refused)."""
         e, r, out = self.e, self.e.reg, []
         if not allow:
             for i in np.flatnonzero((e.pend == 1)):
-                out.append(self._close_order(int(i), "cancelled", "kill switch engaged"))
+                out.append(self._close_order(int(i), "cancelled", block_reason))
             return out + [{"config": i, "side": "BUY" if decisions[i] == "BUY" else "SELL", "decided": minute_em, "status": "rejected",
-                           "qty": 0, "reason": "kill switch engaged"} for i in actionable]
+                           "qty": 0, "reason": block_reason} for i in actionable]
         eq = self.equity() if self.rules else 0
         close = e.fe.last_close
         if self.rules:

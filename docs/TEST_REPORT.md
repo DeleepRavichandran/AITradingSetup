@@ -4,15 +4,15 @@ Run on 2026-11-19, Python 3.13.18, numpy 2.5.5, pandas 3.1.1, Linux. Command: `p
 
 | Suite | Tests |
 |---|---:|
-| `tests/unit` | 117 |
+| `tests/unit` | 125 |
 | `tests/integration` | 78 |
 | `tests/regression` | 5 |
 | `tests/acceptance` | 17 |
 | `tests/audit` | 31 |
 | `tests/brain` | 51 |
 | `tests/screening` | 21 |
-| **Total, as root** | **320 passed** (295 s) |
-| **Total, as an unprivileged user (as on CI)** | 312 passed, 3 skipped (root-only sandbox fallback) (238 s) |
+| **Total, as root** | **328 passed** (311 s) |
+| **Total, as an unprivileged user (as on CI)** | 325 passed, 3 skipped (root-only sandbox fallback) (316 s) |
 
 One-minute screening slice (21 tests; 8 added 2026-11-20 for realistic fills and the shared portfolio — volume cap, fill prices, cash identity, limits, refusals, partial fills, daily loss limit, recovery): incremental features equal a pandas reference; ~17,000
 streaming decisions equal an independent per-configuration reference; duplicate events, repeated
