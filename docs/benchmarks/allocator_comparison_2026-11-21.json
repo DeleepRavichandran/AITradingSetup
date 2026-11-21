@@ -1,0 +1,660 @@
+{
+  "generated": "2026-11-21T13:11:39+05:30",
+  "symbols": 20,
+  "configs": 3420,
+  "warmup_days": [
+    "2026-11-02",
+    "2026-11-03"
+  ],
+  "evaluation_days": [
+    "2026-11-04",
+    "2026-11-05",
+    "2026-11-06"
+  ],
+  "seeds": [
+    201,
+    202,
+    203,
+    204,
+    205
+  ],
+  "data": "SYNTHETIC. Not market data; results say nothing about real profitability.",
+  "scenarios": {
+    "random_walk": {
+      "runs": [
+        {
+          "seed": 201,
+          "first_come": {
+            "net_pnl_inr": -58786.76,
+            "return_pct": -6.1404,
+            "max_drawdown_pct": 6.1412,
+            "realised_after_charges_inr": -58781.6,
+            "charges_inr": 13148.42,
+            "closed_exits": 1147,
+            "entries": 1148,
+            "distinct_symbols": 20,
+            "top_symbol_share_of_entries": 0.0758,
+            "buy_signals": 190025,
+            "busiest_minute_buys": 551,
+            "minutes_with_10plus_buys": 1038,
+            "allocation_outcomes": {
+              "accepted": 1148,
+              "deferred": 62268,
+              "rejected": 126609
+            },
+            "round_trips_seen": 1932,
+            "qualified_configs_at_end": 2,
+            "calibration": {
+              "resolved_predictions": 1932,
+              "brier": 0.1645,
+              "base_rate_brier": 0.1567,
+              "reliability": 0.95
+            },
+            "p99_cycle_ms": 4.46,
+            "wall_s": 19.0
+          },
+          "ranked": {
+            "net_pnl_inr": -57218.55,
+            "return_pct": -6.006,
+            "max_drawdown_pct": 6.0395,
+            "realised_after_charges_inr": -57219.37,
+            "charges_inr": 12959.11,
+            "closed_exits": 1140,
+            "entries": 1140,
+            "distinct_symbols": 20,
+            "top_symbol_share_of_entries": 0.0667,
+            "buy_signals": 192019,
+            "busiest_minute_buys": 552,
+            "minutes_with_10plus_buys": 1038,
+            "allocation_outcomes": {
+              "accepted": 1140,
+              "deferred": 48759,
+              "rejected": 142120
+            },
+            "round_trips_seen": 2053,
+            "qualified_configs_at_end": 1,
+            "calibration": {
+              "resolved_predictions": 2053,
+              "brier": 0.17,
+              "base_rate_brier": 0.1653,
+              "reliability": 0.972
+            },
+            "p99_cycle_ms": 7.25,
+            "wall_s": 22.0
+          }
+        },
+        {
+          "seed": 202,
+          "first_come": {
+            "net_pnl_inr": -61158.09,
+            "return_pct": -6.404,
+            "max_drawdown_pct": 6.428,
+            "realised_after_charges_inr": -61158.15,
+            "charges_inr": 14702.83,
+            "closed_exits": 1300,
+            "entries": 1300,
+            "distinct_symbols": 20,
+            "top_symbol_share_of_entries": 0.0754,
+            "buy_signals": 194130,
+            "busiest_minute_buys": 542,
+            "minutes_with_10plus_buys": 1038,
+            "allocation_outcomes": {
+              "accepted": 1300,
+              "deferred": 75360,
+              "rejected": 117470
+            },
+            "round_trips_seen": 2178,
+            "qualified_configs_at_end": 1,
+            "calibration": {
+              "resolved_predictions": 2178,
+              "brier": 0.1591,
+              "base_rate_brier": 0.1531,
+              "reliability": 0.961
+            },
+            "p99_cycle_ms": 4.44,
+            "wall_s": 21.8
+          },
+          "ranked": {
+            "net_pnl_inr": -59482.61,
+            "return_pct": -6.2234,
+            "max_drawdown_pct": 6.2681,
+            "realised_after_charges_inr": -59482.98,
+            "charges_inr": 12870.36,
+            "closed_exits": 1139,
+            "entries": 1139,
+            "distinct_symbols": 20,
+            "top_symbol_share_of_entries": 0.065,
+            "buy_signals": 195287,
+            "busiest_minute_buys": 541,
+            "minutes_with_10plus_buys": 1038,
+            "allocation_outcomes": {
+              "accepted": 1139,
+              "deferred": 62245,
+              "rejected": 131903
+            },
+            "round_trips_seen": 1962,
+            "qualified_configs_at_end": 1,
+            "calibration": {
+              "resolved_predictions": 1962,
+              "brier": 0.1512,
+              "base_rate_brier": 0.1413,
+              "reliability": 0.93
+            },
+            "p99_cycle_ms": 7.14,
+            "wall_s": 23.0
+          }
+        },
+        {
+          "seed": 203,
+          "first_come": {
+            "net_pnl_inr": -63335.18,
+            "return_pct": -6.6047,
+            "max_drawdown_pct": 6.6595,
+            "realised_after_charges_inr": -63333.82,
+            "charges_inr": 14104.91,
+            "closed_exits": 1237,
+            "entries": 1237,
+            "distinct_symbols": 20,
+            "top_symbol_share_of_entries": 0.0897,
+            "buy_signals": 182294,
+            "busiest_minute_buys": 497,
+            "minutes_with_10plus_buys": 1038,
+            "allocation_outcomes": {
+              "accepted": 1237,
+              "deferred": 71791,
+              "rejected": 109266
+            },
+            "round_trips_seen": 1995,
+            "qualified_configs_at_end": 1,
+            "calibration": {
+              "resolved_predictions": 1995,
+              "brier": 0.1535,
+              "base_rate_brier": 0.1476,
+              "reliability": 0.96
+            },
+            "p99_cycle_ms": 4.79,
+            "wall_s": 22.3
+          },
+          "ranked": {
+            "net_pnl_inr": -60669.98,
+            "return_pct": -6.3298,
+            "max_drawdown_pct": 6.3501,
+            "realised_after_charges_inr": -60669.36,
+            "charges_inr": 14190.54,
+            "closed_exits": 1247,
+            "entries": 1247,
+            "distinct_symbols": 20,
+            "top_symbol_share_of_entries": 0.0626,
+            "buy_signals": 182493,
+            "busiest_minute_buys": 496,
+            "minutes_with_10plus_buys": 1038,
+            "allocation_outcomes": {
+              "accepted": 1247,
+              "deferred": 57966,
+              "rejected": 123280
+            },
+            "round_trips_seen": 2059,
+            "qualified_configs_at_end": 5,
+            "calibration": {
+              "resolved_predictions": 2059,
+              "brier": 0.1696,
+              "base_rate_brier": 0.1661,
+              "reliability": 0.978
+            },
+            "p99_cycle_ms": 7.48,
+            "wall_s": 22.1
+          }
+        },
+        {
+          "seed": 204,
+          "first_come": {
+            "net_pnl_inr": -60089.95,
+            "return_pct": -6.3003,
+            "max_drawdown_pct": 6.344,
+            "realised_after_charges_inr": -60090.63,
+            "charges_inr": 14113.72,
+            "closed_exits": 1231,
+            "entries": 1231,
+            "distinct_symbols": 20,
+            "top_symbol_share_of_entries": 0.0869,
+            "buy_signals": 187511,
+            "busiest_minute_buys": 515,
+            "minutes_with_10plus_buys": 1038,
+            "allocation_outcomes": {
+              "accepted": 1231,
+              "deferred": 66440,
+              "rejected": 119840
+            },
+            "round_trips_seen": 1881,
+            "qualified_configs_at_end": 0,
+            "calibration": {
+              "resolved_predictions": 1881,
+              "brier": 0.1502,
+              "base_rate_brier": 0.145,
+              "reliability": 0.964
+            },
+            "p99_cycle_ms": 4.6,
+            "wall_s": 19.3
+          },
+          "ranked": {
+            "net_pnl_inr": -61382.29,
+            "return_pct": -6.4201,
+            "max_drawdown_pct": 6.537,
+            "realised_after_charges_inr": -61378.94,
+            "charges_inr": 15444.54,
+            "closed_exits": 1347,
+            "entries": 1347,
+            "distinct_symbols": 20,
+            "top_symbol_share_of_entries": 0.0676,
+            "buy_signals": 183583,
+            "busiest_minute_buys": 509,
+            "minutes_with_10plus_buys": 1038,
+            "allocation_outcomes": {
+              "accepted": 1347,
+              "deferred": 77004,
+              "rejected": 105232
+            },
+            "round_trips_seen": 2049,
+            "qualified_configs_at_end": 4,
+            "calibration": {
+              "resolved_predictions": 2049,
+              "brier": 0.1688,
+              "base_rate_brier": 0.1627,
+              "reliability": 0.963
+            },
+            "p99_cycle_ms": 7.5,
+            "wall_s": 20.3
+          }
+        },
+        {
+          "seed": 205,
+          "first_come": {
+            "net_pnl_inr": -59404.83,
+            "return_pct": -6.2171,
+            "max_drawdown_pct": 6.2648,
+            "realised_after_charges_inr": -59404.56,
+            "charges_inr": 16494.94,
+            "closed_exits": 1466,
+            "entries": 1466,
+            "distinct_symbols": 20,
+            "top_symbol_share_of_entries": 0.0757,
+            "buy_signals": 199454,
+            "busiest_minute_buys": 575,
+            "minutes_with_10plus_buys": 1038,
+            "allocation_outcomes": {
+              "accepted": 1466,
+              "deferred": 98187,
+              "rejected": 99801
+            },
+            "round_trips_seen": 2453,
+            "qualified_configs_at_end": 4,
+            "calibration": {
+              "resolved_predictions": 2453,
+              "brier": 0.1616,
+              "base_rate_brier": 0.1616,
+              "reliability": 1.0
+            },
+            "p99_cycle_ms": 4.85,
+            "wall_s": 21.0
+          },
+          "ranked": {
+            "net_pnl_inr": -54531.75,
+            "return_pct": -5.7077,
+            "max_drawdown_pct": 5.7942,
+            "realised_after_charges_inr": -55754.46,
+            "charges_inr": 14980.12,
+            "closed_exits": 1329,
+            "entries": 1330,
+            "distinct_symbols": 20,
+            "top_symbol_share_of_entries": 0.0729,
+            "buy_signals": 195205,
+            "busiest_minute_buys": 559,
+            "minutes_with_10plus_buys": 1038,
+            "allocation_outcomes": {
+              "accepted": 1330,
+              "deferred": 83098,
+              "rejected": 110777
+            },
+            "round_trips_seen": 2345,
+            "qualified_configs_at_end": 6,
+            "calibration": {
+              "resolved_predictions": 2345,
+              "brier": 0.1816,
+              "base_rate_brier": 0.1795,
+              "reliability": 0.988
+            },
+            "p99_cycle_ms": 7.29,
+            "wall_s": 21.7
+          }
+        }
+      ],
+      "ranked_minus_first_come_pnl_inr": [
+        1568.2099999999991,
+        1675.479999999996,
+        2665.199999999997,
+        -1292.3400000000038,
+        4873.080000000002
+      ],
+      "ranked_better_in": "4 of 5 seeds",
+      "mean_difference_inr": 1897.93
+    },
+    "common_factor_with_persistent_edges": {
+      "runs": [
+        {
+          "seed": 201,
+          "first_come": {
+            "net_pnl_inr": -63451.62,
+            "return_pct": -6.6279,
+            "max_drawdown_pct": 6.6956,
+            "realised_after_charges_inr": -63451.7,
+            "charges_inr": 9336.65,
+            "closed_exits": 813,
+            "entries": 813,
+            "distinct_symbols": 20,
+            "top_symbol_share_of_entries": 0.0763,
+            "buy_signals": 185409,
+            "busiest_minute_buys": 769,
+            "minutes_with_10plus_buys": 1033,
+            "allocation_outcomes": {
+              "accepted": 813,
+              "deferred": 36021,
+              "rejected": 148575
+            },
+            "round_trips_seen": 1798,
+            "qualified_configs_at_end": 0,
+            "calibration": {
+              "resolved_predictions": 1798,
+              "brier": 0.1629,
+              "base_rate_brier": 0.1516,
+              "reliability": 0.925
+            },
+            "p99_cycle_ms": 4.35,
+            "wall_s": 18.5
+          },
+          "ranked": {
+            "net_pnl_inr": -61666.4,
+            "return_pct": -6.4209,
+            "max_drawdown_pct": 6.4626,
+            "realised_after_charges_inr": -61666.4,
+            "charges_inr": 9108.12,
+            "closed_exits": 790,
+            "entries": 790,
+            "distinct_symbols": 20,
+            "top_symbol_share_of_entries": 0.0722,
+            "buy_signals": 187063,
+            "busiest_minute_buys": 766,
+            "minutes_with_10plus_buys": 1033,
+            "allocation_outcomes": {
+              "accepted": 790,
+              "deferred": 32928,
+              "rejected": 153345
+            },
+            "round_trips_seen": 1830,
+            "qualified_configs_at_end": 3,
+            "calibration": {
+              "resolved_predictions": 1830,
+              "brier": 0.1639,
+              "base_rate_brier": 0.1554,
+              "reliability": 0.945
+            },
+            "p99_cycle_ms": 8.61,
+            "wall_s": 22.2
+          }
+        },
+        {
+          "seed": 202,
+          "first_come": {
+            "net_pnl_inr": -68660.49,
+            "return_pct": -7.1385,
+            "max_drawdown_pct": 7.9177,
+            "realised_after_charges_inr": -68660.49,
+            "charges_inr": 14282.62,
+            "closed_exits": 1252,
+            "entries": 1252,
+            "distinct_symbols": 20,
+            "top_symbol_share_of_entries": 0.0775,
+            "buy_signals": 163217,
+            "busiest_minute_buys": 548,
+            "minutes_with_10plus_buys": 1038,
+            "allocation_outcomes": {
+              "accepted": 1252,
+              "deferred": 49480,
+              "rejected": 112485
+            },
+            "round_trips_seen": 1839,
+            "qualified_configs_at_end": 0,
+            "calibration": {
+              "resolved_predictions": 1839,
+              "brier": 0.1415,
+              "base_rate_brier": 0.1317,
+              "reliability": 0.926
+            },
+            "p99_cycle_ms": 4.54,
+            "wall_s": 19.2
+          },
+          "ranked": {
+            "net_pnl_inr": -64832.21,
+            "return_pct": -6.7519,
+            "max_drawdown_pct": 7.2653,
+            "realised_after_charges_inr": -64832.21,
+            "charges_inr": 12857.95,
+            "closed_exits": 1133,
+            "entries": 1133,
+            "distinct_symbols": 20,
+            "top_symbol_share_of_entries": 0.0583,
+            "buy_signals": 164971,
+            "busiest_minute_buys": 550,
+            "minutes_with_10plus_buys": 1038,
+            "allocation_outcomes": {
+              "accepted": 1133,
+              "deferred": 39969,
+              "rejected": 123869
+            },
+            "round_trips_seen": 1724,
+            "qualified_configs_at_end": 0,
+            "calibration": {
+              "resolved_predictions": 1724,
+              "brier": 0.1415,
+              "base_rate_brier": 0.1248,
+              "reliability": 0.866
+            },
+            "p99_cycle_ms": 7.75,
+            "wall_s": 21.6
+          }
+        },
+        {
+          "seed": 203,
+          "first_come": {
+            "net_pnl_inr": -61470.94,
+            "return_pct": -6.1098,
+            "max_drawdown_pct": 6.1104,
+            "realised_after_charges_inr": -61471.69,
+            "charges_inr": 17807.53,
+            "closed_exits": 1492,
+            "entries": 1492,
+            "distinct_symbols": 20,
+            "top_symbol_share_of_entries": 0.0737,
+            "buy_signals": 191177,
+            "busiest_minute_buys": 802,
+            "minutes_with_10plus_buys": 1035,
+            "allocation_outcomes": {
+              "accepted": 1492,
+              "deferred": 83301,
+              "rejected": 106384
+            },
+            "round_trips_seen": 2323,
+            "qualified_configs_at_end": 25,
+            "calibration": {
+              "resolved_predictions": 2323,
+              "brier": 0.2025,
+              "base_rate_brier": 0.1951,
+              "reliability": 0.962
+            },
+            "p99_cycle_ms": 5.81,
+            "wall_s": 22.0
+          },
+          "ranked": {
+            "net_pnl_inr": -54584.72,
+            "return_pct": -5.3566,
+            "max_drawdown_pct": 5.5178,
+            "realised_after_charges_inr": -54584.72,
+            "charges_inr": 14452.63,
+            "closed_exits": 1189,
+            "entries": 1189,
+            "distinct_symbols": 20,
+            "top_symbol_share_of_entries": 0.074,
+            "buy_signals": 179891,
+            "busiest_minute_buys": 801,
+            "minutes_with_10plus_buys": 1035,
+            "allocation_outcomes": {
+              "accepted": 1189,
+              "deferred": 59435,
+              "rejected": 119267
+            },
+            "round_trips_seen": 1783,
+            "qualified_configs_at_end": 35,
+            "calibration": {
+              "resolved_predictions": 1783,
+              "brier": 0.2135,
+              "base_rate_brier": 0.1933,
+              "reliability": 0.895
+            },
+            "p99_cycle_ms": 9.01,
+            "wall_s": 23.3
+          }
+        },
+        {
+          "seed": 204,
+          "first_come": {
+            "net_pnl_inr": -65756.24,
+            "return_pct": -6.8775,
+            "max_drawdown_pct": 7.0409,
+            "realised_after_charges_inr": -65760.18,
+            "charges_inr": 9783.01,
+            "closed_exits": 852,
+            "entries": 852,
+            "distinct_symbols": 20,
+            "top_symbol_share_of_entries": 0.0692,
+            "buy_signals": 206260,
+            "busiest_minute_buys": 908,
+            "minutes_with_10plus_buys": 1036,
+            "allocation_outcomes": {
+              "accepted": 852,
+              "deferred": 35592,
+              "rejected": 169816
+            },
+            "round_trips_seen": 1480,
+            "qualified_configs_at_end": 0,
+            "calibration": {
+              "resolved_predictions": 1480,
+              "brier": 0.1346,
+              "base_rate_brier": 0.1242,
+              "reliability": 0.916
+            },
+            "p99_cycle_ms": 4.6,
+            "wall_s": 20.4
+          },
+          "ranked": {
+            "net_pnl_inr": -61846.85,
+            "return_pct": -6.4839,
+            "max_drawdown_pct": 6.6853,
+            "realised_after_charges_inr": -61846.46,
+            "charges_inr": 10350.57,
+            "closed_exits": 906,
+            "entries": 906,
+            "distinct_symbols": 20,
+            "top_symbol_share_of_entries": 0.074,
+            "buy_signals": 207292,
+            "busiest_minute_buys": 908,
+            "minutes_with_10plus_buys": 1036,
+            "allocation_outcomes": {
+              "accepted": 906,
+              "deferred": 32901,
+              "rejected": 173485
+            },
+            "round_trips_seen": 1571,
+            "qualified_configs_at_end": 0,
+            "calibration": {
+              "resolved_predictions": 1571,
+              "brier": 0.1401,
+              "base_rate_brier": 0.1236,
+              "reliability": 0.867
+            },
+            "p99_cycle_ms": 9.0,
+            "wall_s": 24.5
+          }
+        },
+        {
+          "seed": 205,
+          "first_come": {
+            "net_pnl_inr": -49015.67,
+            "return_pct": -5.121,
+            "max_drawdown_pct": 5.7175,
+            "realised_after_charges_inr": -49016.05,
+            "charges_inr": 15379.37,
+            "closed_exits": 1359,
+            "entries": 1359,
+            "distinct_symbols": 20,
+            "top_symbol_share_of_entries": 0.0824,
+            "buy_signals": 225433,
+            "busiest_minute_buys": 889,
+            "minutes_with_10plus_buys": 1035,
+            "allocation_outcomes": {
+              "accepted": 1359,
+              "deferred": 80112,
+              "rejected": 143962
+            },
+            "round_trips_seen": 2267,
+            "qualified_configs_at_end": 5,
+            "calibration": {
+              "resolved_predictions": 2267,
+              "brier": 0.1971,
+              "base_rate_brier": 0.1921,
+              "reliability": 0.974
+            },
+            "p99_cycle_ms": 5.36,
+            "wall_s": 23.1
+          },
+          "ranked": {
+            "net_pnl_inr": -44709.61,
+            "return_pct": -4.684,
+            "max_drawdown_pct": 5.3986,
+            "realised_after_charges_inr": -44709.61,
+            "charges_inr": 14801.26,
+            "closed_exits": 1318,
+            "entries": 1318,
+            "distinct_symbols": 20,
+            "top_symbol_share_of_entries": 0.0653,
+            "buy_signals": 227206,
+            "busiest_minute_buys": 890,
+            "minutes_with_10plus_buys": 1035,
+            "allocation_outcomes": {
+              "accepted": 1318,
+              "deferred": 65724,
+              "rejected": 160164
+            },
+            "round_trips_seen": 2250,
+            "qualified_configs_at_end": 8,
+            "calibration": {
+              "resolved_predictions": 2250,
+              "brier": 0.191,
+              "base_rate_brier": 0.1842,
+              "reliability": 0.963
+            },
+            "p99_cycle_ms": 8.42,
+            "wall_s": 23.4
+          }
+        }
+      ],
+      "ranked_minus_first_come_pnl_inr": [
+        1785.2200000000012,
+        3828.280000000006,
+        6886.220000000001,
+        3909.3900000000067,
+        4306.059999999998
+      ],
+      "ranked_better_in": "5 of 5 seeds",
+      "mean_difference_inr": 4143.03
+    }
+  }
+}

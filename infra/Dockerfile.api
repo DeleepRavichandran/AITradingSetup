@@ -1,0 +1,18 @@
+FROM python:3.13-slim
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+WORKDIR /app
+COPY pyproject.toml ./
+COPY packages ./packages
+COPY services ./services
+COPY agents ./agents
+COPY scripts ./scripts
+RUN pip install --no-cache-dir ".[llm]"
+# Runs as an unprivileged user with every capability dropped (see docker-compose.yml). AI-generated
+# strategy code is NOT executed here: it goes to the separate sandbox worker (Dockerfile.sandbox).
+RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin nseql \
+ && mkdir -p /data/datasets /data/experiments /data/artifacts && chown -R 10001:10001 /data && chmod 755 /data /data/datasets
+ENV NSEQL_DATA_DIR=/data/datasets NSEQL_EXPERIMENTS_DIR=/data/experiments LIVE_TRADING_ENABLED=false
+USER 10001
+EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=5s CMD python -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/api/health')"
+CMD ["uvicorn", "nseql.api.main:app_factory", "--factory", "--host", "0.0.0.0", "--port", "8000"]

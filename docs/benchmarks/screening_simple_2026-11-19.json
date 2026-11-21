@@ -1,0 +1,270 @@
+{
+ "generated_at": "2026-11-19T18:42:54",
+ "hardware": {
+  "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+  "logical_cpus": 4,
+  "memory_gb": 15.7,
+  "python": "3.13.18",
+  "numpy": "2.5.5",
+  "pandas": "3.1.1",
+  "os": "Linux-6.18.44-fc-v653-x86_64-with-glibc2.39"
+ },
+ "data": "SYNTHETIC random-walk 1-minute bars",
+ "symbols": 300,
+ "sessions": 3,
+ "runs": {
+  "1000": {
+   "configs": 1000,
+   "symbols": 300,
+   "sessions": 3,
+   "minutes_with_data": 1125,
+   "minutes_processed": 1125,
+   "no_data_minutes": 0,
+   "minutes_processed_this_run": 1125,
+   "cycle_ms": {
+    "p50": 12.25,
+    "p95": 36.87,
+    "p99": 48.43,
+    "max": 57.55
+   },
+   "engine_ms": {
+    "p50": 2.92,
+    "p95": 7.13,
+    "p99": 9.62,
+    "max": 10.27
+   },
+   "cycles_over_60s_budget": 0,
+   "evaluations": 287145,
+   "eligible": 287145,
+   "eligible_not_evaluated": 0,
+   "skipped_pending_order": 1,
+   "decisions": {
+    "NO_TRADE": 195021,
+    "BUY": 7124,
+    "HOLD": 77893,
+    "EXIT": 7107
+   },
+   "evaluations_per_second": 69952,
+   "peak_rss_mb": 275.4,
+   "cpu_seconds": 14.09,
+   "wall_seconds": 20.15,
+   "startup_seconds": 0.454,
+   "stream_generation_seconds": 0.52,
+   "recovery": {
+    "checkpoint": null,
+    "seconds": 0.0
+   },
+   "replay_to_watermark_seconds": null,
+   "db_mb": 58.0,
+   "checkpoint_mb": 2.3,
+   "signals": 14231,
+   "paper_orders": 14231,
+   "ledger_hash": "be4b907b490d0a5c",
+   "process_wall_seconds": 21.69,
+   "recovery_test": {
+    "killed_after_minutes": 682,
+    "killed_at": "2026-11-17 14:22:00",
+    "restart_startup_seconds": 0.427,
+    "checkpoint_load_seconds": 0.013,
+    "checkpoint_watermark": "2026-11-17T14:15:00",
+    "seconds_until_caught_up_to_kill_point": 2.04,
+    "ledger_identical_to_uninterrupted_run": true,
+    "minutes_processed_total": 1125
+   }
+  },
+  "5000": {
+   "configs": 5000,
+   "symbols": 300,
+   "sessions": 3,
+   "minutes_with_data": 1125,
+   "minutes_processed": 1125,
+   "no_data_minutes": 0,
+   "minutes_processed_this_run": 1125,
+   "cycle_ms": {
+    "p50": 21.79,
+    "p95": 45.48,
+    "p99": 57.49,
+    "max": 81.32
+   },
+   "engine_ms": {
+    "p50": 3.65,
+    "p95": 8.01,
+    "p99": 10.26,
+    "max": 15.22
+   },
+   "cycles_over_60s_budget": 0,
+   "evaluations": 1543852,
+   "eligible": 1543852,
+   "eligible_not_evaluated": 0,
+   "skipped_pending_order": 10,
+   "decisions": {
+    "NO_TRADE": 1059384,
+    "BUY": 38374,
+    "HOLD": 407788,
+    "EXIT": 38306
+   },
+   "evaluations_per_second": 312456,
+   "peak_rss_mb": 276.2,
+   "cpu_seconds": 17.26,
+   "wall_seconds": 26.29,
+   "startup_seconds": 0.461,
+   "stream_generation_seconds": 0.64,
+   "recovery": {
+    "checkpoint": null,
+    "seconds": 0.0
+   },
+   "replay_to_watermark_seconds": null,
+   "db_mb": 81.3,
+   "checkpoint_mb": 2.8,
+   "signals": 76680,
+   "paper_orders": 76680,
+   "ledger_hash": "f6705d8e19e635c6",
+   "process_wall_seconds": 28.37,
+   "recovery_test": {
+    "killed_after_minutes": 682,
+    "killed_at": "2026-11-17 14:22:00",
+    "restart_startup_seconds": 0.464,
+    "checkpoint_load_seconds": 0.016,
+    "checkpoint_watermark": "2026-11-17T14:15:00",
+    "seconds_until_caught_up_to_kill_point": 2.21,
+    "ledger_identical_to_uninterrupted_run": true,
+    "minutes_processed_total": 1125
+   }
+  },
+  "10000": {
+   "configs": 10000,
+   "symbols": 300,
+   "sessions": 3,
+   "minutes_with_data": 1125,
+   "minutes_processed": 1125,
+   "no_data_minutes": 0,
+   "minutes_processed_this_run": 1125,
+   "cycle_ms": {
+    "p50": 30.25,
+    "p95": 53.93,
+    "p99": 74.14,
+    "max": 114.73
+   },
+   "engine_ms": {
+    "p50": 4.59,
+    "p95": 9.5,
+    "p99": 13.21,
+    "max": 21.33
+   },
+   "cycles_over_60s_budget": 0,
+   "evaluations": 3086817,
+   "eligible": 3086817,
+   "eligible_not_evaluated": 0,
+   "skipped_pending_order": 23,
+   "decisions": {
+    "NO_TRADE": 2121295,
+    "BUY": 76189,
+    "HOLD": 813307,
+    "EXIT": 76026
+   },
+   "evaluations_per_second": 503407,
+   "peak_rss_mb": 277.1,
+   "cpu_seconds": 21.2,
+   "wall_seconds": 32.53,
+   "startup_seconds": 0.502,
+   "stream_generation_seconds": 0.46,
+   "recovery": {
+    "checkpoint": null,
+    "seconds": 0.0
+   },
+   "replay_to_watermark_seconds": null,
+   "db_mb": 109.6,
+   "checkpoint_mb": 3.4,
+   "signals": 152215,
+   "paper_orders": 152215,
+   "ledger_hash": "0c0e875da7ecc2f7",
+   "process_wall_seconds": 35.08,
+   "recovery_test": {
+    "killed_after_minutes": 682,
+    "killed_at": "2026-11-17 14:22:00",
+    "restart_startup_seconds": 0.473,
+    "checkpoint_load_seconds": 0.022,
+    "checkpoint_watermark": "2026-11-17T14:15:00",
+    "seconds_until_caught_up_to_kill_point": 2.15,
+    "ledger_identical_to_uninterrupted_run": true,
+    "minutes_processed_total": 1125
+   }
+  },
+  "50000": {
+   "configs": 50000,
+   "symbols": 300,
+   "sessions": 3,
+   "minutes_with_data": 1125,
+   "minutes_processed": 1125,
+   "no_data_minutes": 0,
+   "minutes_processed_this_run": 1125,
+   "cycle_ms": {
+    "p50": 85.08,
+    "p95": 162.34,
+    "p99": 210.5,
+    "max": 420.56
+   },
+   "engine_ms": {
+    "p50": 14.6,
+    "p95": 25.2,
+    "p99": 34.09,
+    "max": 93.38
+   },
+   "cycles_over_60s_budget": 0,
+   "evaluations": 15648707,
+   "eligible": 15648707,
+   "eligible_not_evaluated": 0,
+   "skipped_pending_order": 146,
+   "decisions": {
+    "NO_TRADE": 10694026,
+    "BUY": 395745,
+    "HOLD": 4163998,
+    "EXIT": 394938
+   },
+   "evaluations_per_second": 912955,
+   "peak_rss_mb": 291.3,
+   "cpu_seconds": 62.98,
+   "wall_seconds": 102.08,
+   "startup_seconds": 1.113,
+   "stream_generation_seconds": 0.48,
+   "recovery": {
+    "checkpoint": null,
+    "seconds": 0.0
+   },
+   "replay_to_watermark_seconds": null,
+   "db_mb": 349.9,
+   "checkpoint_mb": 8.0,
+   "signals": 790683,
+   "paper_orders": 790683,
+   "ledger_hash": "3c4842ce59921282",
+   "process_wall_seconds": 109.61,
+   "recovery_test": {
+    "killed_after_minutes": 682,
+    "killed_at": "2026-11-17 14:22:00",
+    "restart_startup_seconds": 0.672,
+    "checkpoint_load_seconds": 0.019,
+    "checkpoint_watermark": "2026-11-17T14:15:00",
+    "seconds_until_caught_up_to_kill_point": 2.38,
+    "ledger_identical_to_uninterrupted_run": true,
+    "minutes_processed_total": 1125
+   }
+  }
+ },
+ "realtime": {
+  "configs": 50000,
+  "wall_minutes": 3,
+  "cycles": 3,
+  "overruns": 0,
+  "lag_s_after_minute_close": {
+   "min": 2.01,
+   "max": 2.01,
+   "mean": 2.01
+  },
+  "latency_ms": [
+   7.9,
+   5.4,
+   9.1
+  ],
+  "grace_seconds": 2.0
+ }
+}

@@ -1,0 +1,47 @@
+# --- secrets: never commit ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# --- private / licensed market data and generated datasets ---
+datasets/*
+!datasets/README.md
+!datasets/.gitkeep
+
+# --- experiment outputs, generated strategy code, registries ---
+experiments/*
+!experiments/README.md
+!experiments/.gitkeep
+*.sqlite
+*.sqlite3
+*.db
+mlruns/
+
+# --- python ---
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.hypothesis/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- node ---
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# --- os / editor ---
+.DS_Store
+.idea/
+.vscode/
+*.swp

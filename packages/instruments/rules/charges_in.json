@@ -1,0 +1,49 @@
+{
+  "_readme": [
+    "Effective-dated statutory and exchange charge schedule for NSE.",
+    "Each list is sorted by `from` (inclusive). A lookup for trade date D uses the last entry with from <= D.",
+    "Rates are fractions of turnover unless stated (0.001 = 0.1%). For options, turnover = premium turnover.",
+    "Backtests dated before `coverage_from` are refused unless the run sets allow_rule_extrapolation=true,",
+    "in which case the earliest entry is used and the report is flagged.",
+    "Entries marked verified=false were written from memory and MUST be checked against the cited",
+    "circular before they are relied upon. See docs/DATA_PROVENANCE.md."
+  ],
+  "coverage_from": "2017-07-01",
+  "stt": {
+    "_note": "Securities Transaction Tax. delivery: both sides. intraday/futures/options: sell side only. exercise: buyer of an ITM option, on intrinsic value.",
+    "schedule": [
+      {"from": "2017-07-01", "eq_delivery": 0.001, "eq_intraday_sell": 0.00025, "fut_sell": 0.0001,   "opt_sell": 0.0005,   "opt_exercise": 0.00125, "opt_exercise_base": "settlement_value", "verified": false, "source": "Finance Act 2016 rates in force (rates unverified). Exercise STT was levied on the full settlement value until 2019-08-31"},
+      {"from": "2019-09-01", "eq_delivery": 0.001, "eq_intraday_sell": 0.00025, "fut_sell": 0.0001,   "opt_sell": 0.0005,   "opt_exercise": 0.00125, "opt_exercise_base": "intrinsic", "verified": true, "source": "Finance (No.2) Act 2019: exercise STT on intrinsic value from 2019-09-01 (base verified via NSE STT page and broker bulletins; the unchanged rates carried from the previous row are unverified)"},
+      {"from": "2023-04-01", "eq_delivery": 0.001, "eq_intraday_sell": 0.00025, "fut_sell": 0.000125, "opt_sell": 0.000625, "opt_exercise": 0.00125, "verified": true,  "source": "Finance Act 2023"},
+      {"from": "2024-10-01", "eq_delivery": 0.001, "eq_intraday_sell": 0.00025, "fut_sell": 0.0002,   "opt_sell": 0.001,    "opt_exercise": 0.00125, "verified": true,  "source": "Finance (No.2) Act 2024"},
+      {"from": "2026-04-01", "eq_delivery": 0.001, "eq_intraday_sell": 0.00025, "fut_sell": 0.0005,   "opt_sell": 0.0015,   "opt_exercise": 0.0015,  "verified": true,  "source": "Finance Act 2026 (Union Budget 2026-27); press coverage checked 2026-11"}
+    ]
+  },
+  "exchange_txn": {
+    "_note": "NSE transaction charges, both sides.",
+    "schedule": [
+      {"from": "2017-07-01", "eq": 0.0000325, "fut": 0.000019,  "opt": 0.0005,    "verified": false, "source": "NSE schedule before 2024-04-01 (slab-based; lowest-turnover slab used)"},
+      {"from": "2024-04-01", "eq": 0.0000322, "fut": 0.0000188, "opt": 0.000495,  "verified": true,  "source": "NSE circular, revision effective 2024-04-01"},
+      {"from": "2024-10-01", "eq": 0.0000297, "fut": 0.0000173, "opt": 0.0003503, "verified": true,  "source": "NSE circular, uniform (non-slab) charges effective 2024-10-01"}
+    ]
+  },
+  "sebi_fee": {
+    "_note": "SEBI turnover fee, both sides. 0.000001 = Rs 10 per crore.",
+    "schedule": [
+      {"from": "2017-07-01", "rate": 0.000001, "verified": false, "source": "Rs 10/crore; SEBI changed this fee several times in 2019-2021 (Rs 15 -> 5 -> 10 per crore). Not modelled; impact is < 0.0001% of turnover."}
+    ]
+  },
+  "stamp_duty": {
+    "_note": "Buy side only. Uniform national rates since 2020-07-01. Earlier duty was state-specific and is modelled as zero (flagged).",
+    "schedule": [
+      {"from": "2017-07-01", "eq_delivery": 0.0,     "eq_intraday": 0.0,     "fut": 0.0,     "opt": 0.0,     "verified": false, "source": "state-specific before 2020-07-01: NOT MODELLED (understates cost)"},
+      {"from": "2020-07-01", "eq_delivery": 0.00015, "eq_intraday": 0.00003, "fut": 0.00002, "opt": 0.00003, "verified": false, "source": "Indian Stamp Act amendments effective 2020-07-01"}
+    ]
+  },
+  "gst": {
+    "_note": "On brokerage + exchange transaction charges + SEBI fee.",
+    "schedule": [
+      {"from": "2017-07-01", "rate": 0.18, "verified": true, "source": "GST introduction 2017-07-01"}
+    ]
+  }
+}
