@@ -33,7 +33,10 @@ export default function Screening() {
   const orders = useApi<any>(started ? `/screening/orders?horizon=${hz}&status=filled&limit=${PAGE}` : null, 10000);
   const cycles = useApi<any>(started ? "/screening/cycles?limit=30" : null, 10000);
   const pf = useApi<any>(started ? "/screening/portfolio" : null, 10000);
-  const s = status.data, sm = summary.data;
+  const ov = useApi<any>(started ? "/screening/overview" : null, 15000);
+  const ready = useApi<any>("/readiness", 30000);
+  const s = status.data, sm = summary.data, o = ov.data;
+  const tone = (st: string) => (st === "ready" ? "good" : st === "disabled" || st === "idle" || st === "not configured" ? "info" : st === "unverified" ? "warn" : "crit");
   const replay = async () => {
     setErr(null);
     try { setJobId((await post("/screening/replay", { sessions: 5 })).id); } catch (e: any) { setErr(e.message); }
@@ -49,6 +52,26 @@ export default function Screening() {
       {started && <>
         <DataSource d={s.data_source} />
         <Banner tone="info">Live trading is off; every order on this page is simulated. Feed: {s.feed}{s.feed_status ? ` (${s.feed_status})` : ""}.</Banner>
+        {o && <Card title="Loop overview">
+          <div className="stats" style={{ marginBottom: 10 }}>
+            <Stat k="Evaluated last cycle" v={num(o.configurations.evaluated_last_cycle, 0)} h={`of ${num(o.configurations.registered, 0)} registered`} />
+            <Stat k="Qualified / unverified" v={`${num(o.configurations.qualified, 0)} / ${num(o.configurations.unverified, 0)}`} h={`${num(o.configurations.with_forward_evidence, 0)} with forward trades`} />
+            <Stat k="Cycle latency p99" v={o.cycles.latency_ms ? `${num(o.cycles.latency_ms.p99, 1)} ms` : "—"} h={`max ${o.cycles.latency_ms ? num(o.cycles.latency_ms.max, 0) : "—"} ms`} />
+            <Stat k="Missed minutes" v={num(o.cycles.missed_minutes, 0)} h={`${o.cycles.overruns} overruns`} />
+            <Stat k="BUY signals accepted" v={num(o.signals.buy_allocation.accepted || 0, 0)} h={`${num(o.signals.buy_allocation.deferred || 0, 0)} deferred · ${num(o.signals.buy_allocation.rejected || 0, 0)} rejected`} />
+            <Stat k="Capital in use" v={o.capital.utilisation_pct != null ? `${num(o.capital.utilisation_pct, 1)}%` : "—"} h={`${o.capital.open_positions} positions`} />
+            <Stat k="Paper result after costs" v={o.paper_performance.equity_change_inr != null ? inr(o.paper_performance.equity_change_inr) : "—"} h={`charges ${inr(o.paper_performance.charges_paid_inr)}`} />
+          </div>
+          <KV items={[
+            ["Qualified means", o.configurations.qualified_rule],
+            ["Top refusal reasons", Object.entries(o.signals.refusal_reasons || {}).slice(0, 5).map(([k, v]: any) => `${k}: ${num(v, 0)}`).join(" · ") || "none"],
+            ["Learning Brain", o.learning_brain?.verdict || "—"],
+            ["Failures", [o.failures.feed_status, o.failures.event_conflicts ? `${o.failures.event_conflicts} conflicting bars` : null,
+              o.failures.late_events ? `${o.failures.late_events} late bars` : null, Object.keys(o.failures.feed_errors || {}).length ? `${Object.keys(o.failures.feed_errors).length} symbols erroring` : null].filter(Boolean).join(" · ") || "none"],
+            ["Recovery", o.recovery?.checkpoint ? `resumed from the checkpoint at ${String(o.recovery.checkpoint).replace("T", " ")} in ${o.recovery.seconds} s` : "fresh start"],
+          ] as [string, React.ReactNode][]} />
+          <p className="dim" style={{ marginTop: 6 }}>{o.paper_performance.note}</p>
+        </Card>}
         <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
           {HORIZONS.map(([k, label]) => <button key={k} className={hz === k ? "primary" : ""} onClick={() => tab(k)}>{label}</button>)}
         </div>
@@ -119,6 +142,12 @@ export default function Screening() {
           <Pager total={configs.data?.total || 0} offset={cfgOff} set={setCfgOff} />
         </Card>
       </>}
+      {ready.data && <Card title="Module readiness">
+        <DataTable rows={ready.data.modules} cols={[
+          { key: "module", label: "module" }, { key: "status", label: "status", f: (r: any) => <Badge s={r.status} tone={tone(r.status)} /> },
+          { key: "detail", label: "detail" }]} />
+        <p className="dim" style={{ marginTop: 6 }}>{ready.data.note}</p>
+      </Card>}
     </Page>
   );
 }

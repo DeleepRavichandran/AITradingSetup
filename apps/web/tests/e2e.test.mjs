@@ -34,6 +34,16 @@ function fixtures(state) {
     "/screening/configs": () => ({ total: 1, rows: [{ id: "abc123", symbol: "AAA", timeframe: "5m", horizon: "intraday", family: "sma", params: { n: 20 }, stop_pct: 0.01 }] }),
     "/screening/orders": () => ({ total: 0, rows: [] }),
     "/screening/cycles": () => ({ total: 1, rows: [{ minute: "2026-11-20T10:00:00", status: "processed", symbols_with_data: 2, symbols_expected: 2, closed: ["1m"], eligible: 171, evaluated: 171, latency_ms: 2.1 }] }),
+    "/readiness": () => ({ modules: [{ module: "API", status: "ready", detail: "up" }, { module: "Research sandbox", status: "blocked", detail: "no namespace" },
+      { module: "Live order routing", status: "disabled", detail: "LIVE_TRADING_ENABLED=false" }], note: "derived at request time" }),
+    "/screening/overview": () => ({ data_source: SOURCE, feed_health: null,
+      configurations: { registered: 342, evaluated_last_cycle: 171, evaluated_ever: 342, qualified: 0, with_forward_evidence: 4, unverified: 342, qualified_rule: "at least 5 forward round trips" },
+      cycles: { by_status: { processed: 10 }, missed_minutes: 0, overruns: 0, latency_ms: { p50: 1, p99: 3.2, max: 4 }, lag_s: null },
+      signals: { by_decision: { BUY: 6, EXIT: 4 }, buy_allocation: { accepted: 3, deferred: 2, rejected: 1 }, refusal_reasons: { "max 50 positions": 1 } },
+      capital: { equity_inr: 1000000, starting_capital_inr: 1000000, cash_inr: 900000, reserved_inr: 0, gross_exposure_inr: 100000, utilisation_pct: 10, open_positions: 1, halted_today: false },
+      paper_performance: { equity_change_inr: 0, realised_after_charges_inr: 80, charges_paid_inr: 40, note: "simulated fills on Replay of SYNTHETIC data; not real trading results" },
+      allocation: { method: "ranked" }, learning_brain: { verdict: "not benchmarked yet" },
+      failures: { feed_status: null, feed_errors: {}, event_conflicts: 0, late_events: 0, portfolio_events: [], live: null }, recovery: { checkpoint: null, seconds: 0 }, readiness: [] }),
     "/news": () => ({ items: [{ title: "Test headline", source: "Fixture Wire", link: "https://example.invalid/a", published: "2026-11-20T09:00:00Z" }], errors: {} }),
   };
 }
@@ -250,6 +260,19 @@ describe("Accessibility and layout", () => {
       });
     }
   }
+
+  test("overview and readiness are shown from the API, not invented", async () => {
+    const d = await open("/deck");
+    await d.page.getByTestId("readiness").filter({ hasText: "1 of 3 ready" }).waitFor();
+    await d.page.getByTestId("readiness").filter({ hasText: "Research sandbox" }).waitFor();
+    await d.page.getByText("3 accepted · 3 refused").waitFor();
+    await d.ctx.close();
+    const s = await open("/screening");
+    await s.page.getByRole("heading", { name: "Loop overview" }).waitFor();
+    await s.page.getByRole("heading", { name: "Module readiness" }).waitFor();
+    await s.page.getByText("simulated fills on Replay of SYNTHETIC data; not real trading results").waitFor();
+    await s.ctx.close();
+  });
 
   test("data source is labelled on the Deck and the Strategy Monitor", async () => {
     const d = await open("/deck");

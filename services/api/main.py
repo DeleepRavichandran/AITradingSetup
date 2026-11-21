@@ -1155,6 +1155,117 @@ def create_app() -> FastAPI:
                               + ("(volume-capped, with spread and impact) in one shared capital pot" if sch.engine.x.rules else "at the open, Rs 1,00,000 per configuration")
                               + ", dated charges. Not historical research results and not real orders."})
 
+    _brain_cache: dict = {}
+
+    def _brain_status() -> dict:
+        """Learning Brain status from its own benchmark KPIs (cached 60 s). Storing results is not learning:
+        'improving' is claimed only when the KPI the brain defines for out-of-sample lift is met."""
+        if _brain_cache.get("at", 0) > time.time() - 60:
+            return _brain_cache["v"]
+        try:
+            sm = brain.summary()
+            k = {r["key"]: r["status"] for r in sm.get("kpis", [])}
+            v = {"memory_episodes": sm["memory"]["episodes"], "champion": sm.get("champion"), "kpis": k,
+                 "verdict": "out-of-sample improvement shown" if k.get("oos_lift") == "met" else
+                            ("no reliable out-of-sample improvement yet" if k.get("oos_lift") == "not met" else "not benchmarked yet")}
+        except Exception as e:  # noqa: BLE001 - the overview must render even if the brain store is unreadable
+            v = {"error": f"{type(e).__name__}: {e}", "verdict": "unavailable"}
+        _brain_cache.update(at=time.time(), v=v)
+        return v
+
+    def _readiness() -> list[dict]:
+        """Each module's readiness from live runtime state. Nothing is assumed: unknown is reported as such."""
+        from nseql.data.adapters.angelone import missing_credentials
+        from nseql.screening.provenance import verification_status
+        sch = _screening_open()
+        rows = [{"module": "API", "status": "ready", "detail": f"up {round(time.time() - st.started)} s"}]
+        if sch is None:
+            live = screening.get("live") or {}
+            rows.append({"module": "Screening loop", "status": "blocked" if live.get("state") == "error" else "idle",
+                         "detail": live.get("error") or "no run yet (start a replay or the Angel One feed)"})
+        else:
+            lc = sch.last_cycle or {}
+            lms = [v for v in (lc.get("latency_ms") or []) if v is not None]
+            rows.append({"module": "Screening loop", "status": "degraded" if sch.overruns or lc.get("error") else "ready",
+                         "detail": f"{len(sch.reg):,} configurations; last minute {sch.watermark or 'none'}; overruns {sch.overruns}"
+                                   + (f"; slowest minute in last cycle {max(lms):.0f} ms" if lms else "")
+                                   + (f"; last cycle failed: {lc['error']}" if lc.get("error") else "")})
+            ds = sch.provenance()
+            rows.append({"module": "Market data", "status": "degraded" if ds.get("stale") else ("ready" if ds.get("verified") or not ds.get("live") else "unverified"),
+                         "detail": ds.get("label", "")})
+            fh = sch.feed_health()
+            if fh:
+                rows.append({"module": "Feed health", "status": "degraded" if fh["degraded"] or fh["stale_symbols"] or fh["errors"] else "ready",
+                             "detail": f"{fh['symbols']} symbols, capacity {fh['capacity_per_minute']}/min"
+                                       + (f", rotation every {fh['rotation_minutes']} min" if fh["degraded"] else "")
+                                       + (f", {len(fh['stale_symbols'])} stale" if fh["stale_symbols"] else "") + (f", {fh['errors']} errors" if fh["errors"] else "")})
+        miss = missing_credentials()
+        vs = verification_status(st.exp_dir)
+        rows.append({"module": "Angel One adapter", "status": "ready" if vs["verified"] else ("unverified" if not miss else "not configured"),
+                     "detail": vs["detail"] if not miss else f"missing {', '.join(miss)}"})
+        ok, why = sandbox.isolation_status()
+        rows.append({"module": "Research sandbox", "status": "ready" if ok else "blocked", "detail": why})
+        rows.append({"module": "AI analyst (LLM)", "status": "ready" if llm_mod.credentials_present() else "not configured",
+                     "detail": llm_mod.MODEL if llm_mod.credentials_present() else "rule-based analyst in use (no ANTHROPIC_API_KEY)"})
+        b = _brain_status()
+        rows.append({"module": "Learning Brain", "status": "unavailable" if "error" in b else "ready", "detail": b.get("error") or b["verdict"]})
+        rows.append({"module": "Kill switch", "status": "engaged" if st.kill.engaged else "ready",
+                     "detail": st.kill.reason or "clear" if st.kill.engaged else "clear; engage from the Risk page or the Deck"})
+        rows.append({"module": "Live order routing", "status": "disabled", "detail": "LIVE_TRADING_ENABLED=false; no agent can change it"
+                     if not st.settings.live_trading_enabled else "flag set in the environment; the live gate still requires human authorisation"})
+        n = st.notifier.status()
+        rows.append({"module": "WhatsApp notifications", "status": "unverified" if n["configured"] else "not configured", "detail": n["status"]})
+        return rows
+
+    @api.get("/readiness")
+    def readiness():
+        return clean({"modules": _readiness(), "note": "Derived from live runtime state at request time; 'unverified' = mock-tested only."})
+
+    @api.get("/screening/overview")
+    def screening_overview():
+        """Everything the Strategy Monitor and the Deck show about the loop, from stored results only."""
+        sch = _need_screening()
+        db, e, x = sch.store.db, sch.engine, sch.engine.x
+        q1 = lambda sql, *a: db.execute(sql, a).fetchone()[0]
+        last = e.last_minute
+        cyc = db.execute("SELECT status, COUNT(*) FROM cycles GROUP BY status").fetchall()
+        lat = [r[0] for r in db.execute("SELECT latency_ms FROM cycles WHERE status='processed' ORDER BY minute DESC LIMIT 375")]
+        lag = [r[0] for r in db.execute("SELECT lag_s FROM cycles WHERE status='processed' AND mode != 'warmup' ORDER BY minute DESC LIMIT 375") if r[0] is not None]
+        snap = x.snapshot()
+        alloc = snap["allocation"]
+        eq = snap["equity_inr"]
+        start_cap = x.rules.capital if x.rules else None
+        refused = dict(db.execute("SELECT reason, SUM(n) FROM refusals GROUP BY reason ORDER BY 2 DESC LIMIT 12").fetchall())
+        realised = db.execute("SELECT COALESCE(SUM(realized_paise), 0), COALESCE(SUM(charges_paise), 0) FROM paper_orders WHERE side='SELL'").fetchone()
+        charges_all = q1("SELECT COALESCE(SUM(charges_paise), 0) FROM paper_orders")
+        return clean({
+            "data_source": sch.provenance(), "feed_health": sch.feed_health(),
+            "configurations": {"registered": len(sch.reg), "evaluated_last_cycle": int((e.last_eval == last).sum()) if last >= 0 else 0,
+                               "evaluated_ever": int((e.last_eval >= 0).sum()),
+                               "qualified": alloc["qualified_configs"], "with_forward_evidence": alloc["configs_with_evidence"],
+                               "unverified": len(sch.reg) - alloc["qualified_configs"],
+                               "qualified_rule": f"at least {x.alloc.cfg.min_trades} forward round trips in this paper ledger and a positive shrunk mean net return"},
+            "cycles": {"by_status": dict(cyc), "missed_minutes": sum(n for s_, n in cyc if s_ != "processed"), "overruns": sch.overruns,
+                       "latency_ms": {"p50": float(np.percentile(lat, 50)), "p99": float(np.percentile(lat, 99)), "max": float(max(lat))} if lat else None,
+                       "lag_s": {"p50": float(np.percentile(lag, 50)), "max": float(max(lag))} if lag else None},
+            "signals": {"by_decision": dict(db.execute("SELECT decision, COUNT(*) FROM signals GROUP BY decision").fetchall()),
+                        "buy_allocation": dict(db.execute("SELECT COALESCE(alloc_status, 'not recorded'), COUNT(*) FROM signals WHERE decision='BUY' GROUP BY 1").fetchall()),
+                        "refusal_reasons": refused},
+            "capital": {"equity_inr": eq, "starting_capital_inr": start_cap, "cash_inr": snap["cash_inr"], "reserved_inr": snap["reserved_inr"],
+                        "gross_exposure_inr": snap["gross_exposure_inr"],
+                        "utilisation_pct": round(100 * (snap["gross_exposure_inr"] + snap["reserved_inr"]) / eq, 2) if eq else None,
+                        "open_positions": snap["open_positions"], "halted_today": snap["halted_today"]},
+            "paper_performance": {"equity_change_inr": round(eq - start_cap, 2) if start_cap else None,
+                                  "realised_after_charges_inr": realised[0] / 100, "charges_paid_inr": charges_all / 100,
+                                  "note": "simulated fills on " + sch.provenance().get("label", "unknown data") + "; not real trading results"},
+            "allocation": alloc, "learning_brain": _brain_status(),
+            "failures": {"feed_status": getattr(sch.feed, "status", None), "feed_errors": dict(list(getattr(sch.feed, "errors", {}).items())[:20]),
+                         "event_conflicts": q1("SELECT COUNT(*) FROM event_conflicts"), "late_events": q1("SELECT COUNT(*) FROM events WHERE late=1"),
+                         "portfolio_events": [dict(r) for r in db.execute("SELECT ts, event FROM portfolio_events ORDER BY ts DESC LIMIT 10")],
+                         "live": screening.get("live")},
+            "recovery": sch.recovery, "readiness": _readiness(),
+        })
+
     def _page(table: str, order: str, where: dict, limit: int, offset: int):
         try:
             return clean(_need_screening().store.page(table, where=where, order=order, limit=min(max(limit, 1), 500), offset=max(offset, 0)))

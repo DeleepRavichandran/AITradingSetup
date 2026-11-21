@@ -64,6 +64,18 @@ def test_replay_lists_filters_and_restart(boot):
     assert sum(pf["refused_signals"].values()) + c.get("/api/screening/orders?side=BUY&limit=1").json()["total"] == buys
     fl = c.get("/api/screening/fills?limit=5").json()
     assert fl["total"] >= c.get("/api/screening/orders?status=filled").json()["total"]
+    ov = c.get("/api/screening/overview").json()
+    assert ov["data_source"]["kind"] == "synthetic_replay" and ov["configurations"]["registered"] == 342
+    assert ov["configurations"]["qualified"] + ov["configurations"]["unverified"] == 342
+    assert ov["cycles"]["by_status"].get("processed", 0) > 0 and ov["cycles"]["latency_ms"]["p99"] > 0
+    assert sum(ov["signals"]["buy_allocation"].values()) == buys and set(ov["signals"]["buy_allocation"]) <= {"accepted", "rejected", "deferred"}
+    assert ov["capital"]["starting_capital_inr"] == 1_000_000 and ov["paper_performance"]["note"].startswith("simulated fills on Replay of SYNTHETIC")
+    assert ov["learning_brain"]["verdict"] in ("out-of-sample improvement shown", "no reliable out-of-sample improvement yet", "not benchmarked yet", "unavailable")
+    rd = {m["module"]: m for m in c.get("/api/readiness").json()["modules"]}
+    assert rd["Live order routing"]["status"] == "disabled" and rd["Angel One adapter"]["status"] in ("not configured", "unverified")
+    assert rd["Market data"]["status"] == "ready" and "SYNTHETIC" in rd["Market data"]["detail"]
+    acc = c.get("/api/screening/signals?decision=BUY&alloc_status=accepted&limit=5").json()
+    assert acc["total"] == ov["signals"]["buy_allocation"].get("accepted", 0) and all(r["alloc_reason"] for r in acc["rows"])
     # read-only viewer can look but cannot start a replay
     v = boot(VIEWER)
     assert v.get("/api/screening/summary").status_code == 200 and v.post("/api/screening/replay", json={}).status_code == 403

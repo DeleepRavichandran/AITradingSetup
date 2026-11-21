@@ -150,6 +150,8 @@ export default function Deck() {
   const [pf, setPf] = useState<any>(null);
   const [scr, setScr] = useState<any>(null);
   const [news, setNews] = useState<any>(null);
+  const [ov, setOv] = useState<any>(null);
+  const [ready, setReady] = useState<any>(null);
   const [apiErr, setApiErr] = useState<string | null>(null);
   const [log, setLog] = useState<Line[]>([]);
   const [mode, setMode] = useState<"idle" | "listening" | "speaking" | "alert" | "confirm">("idle");
@@ -174,7 +176,11 @@ export default function Deck() {
       const [s, st] = await Promise.all([api("/system"), api("/screening/status")]);
       if (!mounted.current) return;
       setSys(s); setScr(st); setApiErr(null);
-      if (st?.started) api("/screening/portfolio").then((p) => mounted.current && setPf(p)).catch(() => mounted.current && setPf(null));
+      if (st?.started) {
+        api("/screening/portfolio").then((p) => mounted.current && setPf(p)).catch(() => mounted.current && setPf(null));
+        api("/screening/overview").then((o) => mounted.current && setOv(o)).catch(() => mounted.current && setOv(null));
+      }
+      api("/readiness").then((r) => mounted.current && setReady(r)).catch(() => mounted.current && setReady(null));
     } catch (e: any) { if (mounted.current) setApiErr(e.message); }
   }, []);
   const loadNews = useCallback(async (refreshFeeds = false) => {
@@ -381,6 +387,11 @@ export default function Deck() {
             <div><dt>Last minute</dt><dd>{scr?.watermark ? String(scr.watermark).replace("T", " ").slice(0, 16) : "—"}</dd></div>
             <div><dt>Sandbox</dt><dd>{sys ? (sys.sandbox?.network_namespace ? "isolated" : "unavailable (research off)") : "—"}</dd></div>
             <div><dt>Analyst</dt><dd>{sys?.llm?.configured ? "Claude connected" : "rule-based (no API key)"}</dd></div>
+            {ov && <div><dt>BUY signals</dt><dd>{(ov.signals.buy_allocation.accepted || 0).toLocaleString("en-IN")} accepted · {((ov.signals.buy_allocation.deferred || 0) + (ov.signals.buy_allocation.rejected || 0)).toLocaleString("en-IN")} refused</dd></div>}
+            {ov && <div><dt>Capital in use</dt><dd>{ov.capital.utilisation_pct != null ? `${ov.capital.utilisation_pct}%` : "—"}</dd></div>}
+            {ov && <div><dt>Learning Brain</dt><dd>{ov.learning_brain?.verdict || "—"}</dd></div>}
+            {ready && <div><dt>Modules</dt><dd data-testid="readiness">{ready.modules.filter((m: any) => m.status === "ready").length} of {ready.modules.length} ready
+              {ready.modules.some((m: any) => ["blocked", "degraded", "engaged", "unavailable"].includes(m.status)) ? ` · attention: ${ready.modules.filter((m: any) => ["blocked", "degraded", "engaged", "unavailable"].includes(m.status)).map((m: any) => m.module).join(", ")}` : ""}</dd></div>}
           </dl>
           <header className={styles.sub}><h2>Paper portfolio</h2></header>
           {pf ? <dl>
