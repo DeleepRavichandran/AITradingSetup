@@ -22,10 +22,10 @@ def test_kinds_and_delays(tmp_path):
 
 
 def test_verified_only_after_a_passed_verification_run(tmp_path):
-    (tmp_path / "angel_verification.json").write_text(json.dumps({"passed": False, "checks": [{"check": "login", "ok": False}]}))
+    (tmp_path / "angel_verification.json").write_text(json.dumps({"passed": False, "checks": [{"name": "login", "status": "failed"}]}))
     assert classify(F("live_poll"), experiments_dir=tmp_path)["kind"] == "live_unverified"
     assert "login" in verification_status(tmp_path)["detail"]
-    (tmp_path / "angel_verification.json").write_text(json.dumps({"passed": True, "finished_at": "2026-11-24T10:00:00", "checks": []}))
+    (tmp_path / "angel_verification.json").write_text(json.dumps({"passed": True, "at": "2026-11-24T10:00:00", "checks": []}))
     v = classify(F("live_poll"), experiments_dir=tmp_path)
     assert v["kind"] == "live_verified" and v["verified"]
 

@@ -44,8 +44,9 @@ def verification_status(experiments_dir: Path | None) -> dict:
     except ValueError:
         return {"verified": False, "detail": "verification report unreadable"}
     ok = bool(d.get("passed"))
-    return {"verified": ok, "at": d.get("finished_at"), "detail": "verification run passed" if ok else
-            f"verification run failed: {', '.join(c['check'] for c in d.get('checks', []) if not c.get('ok'))[:200]}"}
+    bad = [c.get("name", "?") for c in d.get("checks", []) if c.get("status") != "passed"]
+    return {"verified": ok, "at": d.get("at"), "detail": "verification run passed" if ok else
+            (d.get("detail") or f"verification run not passed: {', '.join(bad)}")[:200]}
 
 
 def classify(feed, *, synthetic: bool | None = None, last_bar: str | None = None, now: datetime | None = None,

@@ -3,7 +3,6 @@ many simultaneous BUYs, checkpoint round trip, and the first-come baseline still
 import numpy as np
 import pandas as pd
 import pytest
-
 from nseql.screening.allocator import Allocator, AllocatorConfig
 from nseql.screening.engine import ScreeningEngine
 from nseql.screening.execution import ExecConfig, PortfolioRules

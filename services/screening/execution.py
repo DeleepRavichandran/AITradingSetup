@@ -38,10 +38,9 @@ from dataclasses import asdict, dataclass
 
 import numpy as np
 import pandas as pd
-
 from nseql.instruments.models import Instrument, Kind
-from nseql.screening.allocator import Allocator, AllocatorConfig
 from nseql.money import to_paise
+from nseql.screening.allocator import Allocator, AllocatorConfig
 
 NOTIONAL = 100_000.0
 
@@ -136,7 +135,7 @@ class Executor:
         """Turn BUY/EXIT decisions into orders. Returns order records (accepted and refused)."""
         e, r, out = self.e, self.e.reg, []
         if not allow:
-            for i in np.flatnonzero((e.pend == 1)):
+            for i in np.flatnonzero(e.pend == 1):
                 out.append(self._close_order(int(i), "cancelled", block_reason))
             return out + [{"config": i, "side": "BUY" if decisions[i] == "BUY" else "SELL", "decided": minute_em, "status": "rejected",
                            "qty": 0, "reason": block_reason} for i in actionable]

@@ -17,7 +17,6 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-
 from nseql.screening.execution import PortfolioRules
 from nseql.screening.scheduler import MinuteScheduler
 from nseql.screening.synthetic import factor_stream, minute_stream, symbols

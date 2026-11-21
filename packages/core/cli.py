@@ -28,6 +28,8 @@ def main(argv: list[str] | None = None) -> int:
     tv.add_argument("dataset_id"); tv.add_argument("files", nargs="+", help="e.g. 'NSE_RELIANCE, 1D.csv'"); tv.add_argument("--licence", required=True)
     tv.add_argument("--interval", help="override the interval read from the file names (1d, 5m, ...)")
     sub.add_parser("angel-check", help="test the Angel One login from .env (automatic TOTP) and fetch one candle")
+    av = sub.add_parser("angel-verify", help="verify the Angel One adapter against the real service; writes experiments/angel_verification.json")
+    av.add_argument("--symbol", help="symbol to test with (default: first of the watchlist)")
     ia = sub.add_parser("import-angelone", help="import candles from Angel One SmartAPI (free for Angel One clients)")
     ia.add_argument("dataset_id"); ia.add_argument("--symbols", help="comma separated; default: the watchlist")
     ia.add_argument("--start", required=True); ia.add_argument("--end"); ia.add_argument("--interval", default="1d")
@@ -123,6 +125,10 @@ def main(argv: list[str] | None = None) -> int:
         if ds.intervals() == ["1d"] and scan_dataset(ds):
             print(f"WARNING: price drops that look like splits/bonuses; see `nseql corporate-actions {ds.id}`")
         print("next: nseql quality", ds.id)
+    elif a.cmd == "angel-verify":
+        from nseql.data.adapters.angel_verify import verify
+        rep = verify(s.experiments_dir, symbol=a.symbol)
+        return 0 if rep["passed"] else 1
     elif a.cmd in ("angel-check", "import-angelone"):
         from datetime import date as _d
         from datetime import datetime as _dt

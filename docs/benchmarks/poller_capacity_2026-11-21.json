@@ -1,0 +1,82 @@
+{
+  "modelled": true,
+  "note": "Simulated clock; request spacing and latency are assumptions, not Angel One measurements.",
+  "request_spacing_s": 0.4,
+  "assumed_latency_s": 0.15,
+  "cycle_budget_s": 50.0,
+  "capacity_symbols_per_minute": 125,
+  "rows": [
+    {
+      "symbols": 10,
+      "requests_per_cycle": 10,
+      "cycle_seconds": 4.0,
+      "every_symbol_every_minute": true,
+      "rotation_minutes": 1,
+      "worst_case_bar_age_minutes": 2
+    },
+    {
+      "symbols": 20,
+      "requests_per_cycle": 20,
+      "cycle_seconds": 8.0,
+      "every_symbol_every_minute": true,
+      "rotation_minutes": 1,
+      "worst_case_bar_age_minutes": 2
+    },
+    {
+      "symbols": 50,
+      "requests_per_cycle": 50,
+      "cycle_seconds": 20.0,
+      "every_symbol_every_minute": true,
+      "rotation_minutes": 1,
+      "worst_case_bar_age_minutes": 2
+    },
+    {
+      "symbols": 100,
+      "requests_per_cycle": 100,
+      "cycle_seconds": 40.0,
+      "every_symbol_every_minute": true,
+      "rotation_minutes": 1,
+      "worst_case_bar_age_minutes": 2
+    },
+    {
+      "symbols": 125,
+      "requests_per_cycle": 125,
+      "cycle_seconds": 50.0,
+      "every_symbol_every_minute": true,
+      "rotation_minutes": 1,
+      "worst_case_bar_age_minutes": 2
+    },
+    {
+      "symbols": 150,
+      "requests_per_cycle": 125,
+      "cycle_seconds": 50.0,
+      "every_symbol_every_minute": false,
+      "rotation_minutes": 2,
+      "worst_case_bar_age_minutes": 3
+    },
+    {
+      "symbols": 250,
+      "requests_per_cycle": 125,
+      "cycle_seconds": 50.0,
+      "every_symbol_every_minute": false,
+      "rotation_minutes": 2,
+      "worst_case_bar_age_minutes": 3
+    },
+    {
+      "symbols": 500,
+      "requests_per_cycle": 125,
+      "cycle_seconds": 50.0,
+      "every_symbol_every_minute": false,
+      "rotation_minutes": 4,
+      "worst_case_bar_age_minutes": 5
+    },
+    {
+      "symbols": 1000,
+      "requests_per_cycle": 125,
+      "cycle_seconds": 50.0,
+      "every_symbol_every_minute": false,
+      "rotation_minutes": 8,
+      "worst_case_bar_age_minutes": 9
+    }
+  ]
+}

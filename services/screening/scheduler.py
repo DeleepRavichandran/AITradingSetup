@@ -246,8 +246,15 @@ class MinuteScheduler:
         return classify(self.feed, synthetic=getattr(self.feed, "synthetic", None), last_bar=self.watermark, now=now,
                         market_open=self.calendar.is_open(now.to_pydatetime()), experiments_dir=self.experiments_dir)
 
+    def feed_health(self, now=None) -> dict | None:
+        if not hasattr(self.feed, "health"):
+            return None
+        now = pd.Timestamp(now if now is not None else self.clock())
+        return self.feed.health(now, market_open=self.calendar.is_open(now.to_pydatetime()))
+
     def status(self) -> dict:
-        return {"data_source": self.provenance(),"mode": self.mode, "feed": getattr(self.feed, "label", None) or "none attached",
+        return {"data_source": self.provenance(), "feed_health": self.feed_health(), "mode": self.mode,
+                "feed": getattr(self.feed, "label", None) or "none attached",
                 "feed_status": getattr(self.feed, "status", None), "feed_errors": dict(list(getattr(self.feed, "errors", {}).items())[:20]),
                 "live_from": self.live_from,
                 "running": self._thread is not None and self._thread.is_alive(), "registered": len(self.reg), "symbols": len(self.reg.symbols),
