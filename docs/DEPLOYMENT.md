@@ -120,8 +120,13 @@ candidate. This integration is mock-tested only until you run that test.
 - Keep the token long and private; rotate it by changing `.env` and restarting.
 - Restrict SSH; keep the host patched; consider putting the site behind a VPN or an identity-aware
   proxy as well — a single shared token is a minimum, not a multi-user access system.
-- The API container runs as root with `SYS_ADMIN` and AppArmor unconfined so it can build the private
-  namespaces that confine generated strategy code (which itself runs unprivileged). If you remove
-  either setting the sandbox refuses to run anything: research and the code editor stop working,
-  everything else continues. The System page shows the sandbox state.
+- The API container runs as uid 10001 with every capability dropped and `no-new-privileges`. It never
+  executes AI-generated strategy code: that goes to the separate `sandbox` service, the only container
+  with `SYS_ADMIN` (plus the few capabilities needed to drop privileges) and AppArmor unconfined, so it
+  can build the namespaces each job runs in. The sandbox service holds no broker, LLM or notification
+  credentials, sees the datasets read-only, sits on an internal network with no internet route and
+  accepts requests only with `NSEQL_SANDBOX_TOKEN` (24+ characters; set it in `.env`). If the worker is
+  down or misconfigured, research and the code editor stop (fail closed); everything else continues.
+  The System and Strategy Monitor pages show the sandbox state. Volumes from older versions are
+  re-owned to uid 10001 by the one-shot `init-permissions` service.
 - `NSEQL_VIEWER_TOKEN` (optional) gives read-only access; use it on devices that only need to look.

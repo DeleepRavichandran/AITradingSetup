@@ -227,7 +227,15 @@ def prepare_workdir(work: Path) -> None:
 
 
 def isolation_status(refresh: bool = False) -> tuple[bool, str]:
-    """(available, detail). Probes once by actually running a no-op inside the full sandbox."""
+    """(available, detail). With NSEQL_SANDBOX_URL set, asks the separate sandbox worker; otherwise probes
+    once by actually running a no-op inside the full sandbox on this host."""
+    from nseql.research import sandbox_remote
+    if sandbox_remote.configured():
+        return sandbox_remote.status(refresh)
+    return local_isolation_status(refresh)
+
+
+def local_isolation_status(refresh: bool = False) -> tuple[bool, str]:
     global _ISOLATION
     if not sys.platform.startswith("linux"):
         _ISOLATION = (False, f"Linux namespaces are not available on {sys.platform}; generated code cannot be run here. "
@@ -268,6 +276,21 @@ def _preexec(limits: SandboxLimits):
 
 def run_jobs(source: str, jobs: list[dict], data_dir: Path, *, limits: SandboxLimits | None = None,
              out_dir: Path | None = None) -> dict:
+    """Run generated code in isolation: on the separate sandbox worker when NSEQL_SANDBOX_URL is set (the
+    API container then needs no privileges), otherwise in namespaces on this host. Static validation always
+    runs here first as well, so code the validator rejects never leaves this process."""
+    from nseql.research import sandbox_remote
+    if sandbox_remote.configured():
+        rep = validate_source(source)
+        if not rep.ok:
+            return {"ok": False, "results": [], "error": "static validation failed: " + "; ".join(rep.violations),
+                    "isolation": {"static_validation": False, "remote_worker": True}}
+        return sandbox_remote.run(source, jobs, limits or SandboxLimits(), out_dir)
+    return run_jobs_local(source, jobs, data_dir, limits=limits, out_dir=out_dir)
+
+
+def run_jobs_local(source: str, jobs: list[dict], data_dir: Path, *, limits: SandboxLimits | None = None,
+                   out_dir: Path | None = None) -> dict:
     """Run backtest / audit jobs for one piece of generated code in an isolated child process.
 
     Returns {"ok": bool, "results": [...], "error": str|None, "isolation": {...}}. Never raises
@@ -276,7 +299,7 @@ def run_jobs(source: str, jobs: list[dict], data_dir: Path, *, limits: SandboxLi
     """
     limits = limits or SandboxLimits()
     rep = validate_source(source)
-    available, detail = isolation_status()
+    available, detail = local_isolation_status()
     iso = {"static_validation": rep.ok, "network_namespace": available, "filesystem": available, "pid_namespace": available,
            "privileges_dropped": available, "env_scrubbed": True, "detail": detail,
            "cpu_seconds": limits.cpu_seconds, "memory_mb": limits.memory_mb, "wall_seconds": limits.wall_seconds}

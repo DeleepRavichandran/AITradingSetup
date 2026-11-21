@@ -9,14 +9,37 @@
 # optional read-only token for people who should look but not act.
 # LIVE_TRADING_ENABLED is pinned to false here on purpose; see docs/LIVE_READINESS_CHECKLIST.md.
 # HUMAN_APPROVAL_SECRET is deliberately NOT passed to any container.
+# NSEQL_SANDBOX_TOKEN (24+ characters) authenticates the API to the sandbox worker; set it in .env.
 services:
+  # One-shot: volumes created by earlier versions belong to root; the API now runs as uid 10001.
+  init-permissions:
+    build: { context: .., dockerfile: infra/Dockerfile.api }
+    user: "0"
+    command: ["sh", "-c", "mkdir -p /data/datasets /data/experiments /data/artifacts && chown -R 10001:10001 /data && chmod 755 /data /data/datasets"]
+    volumes:
+      - nseql-data:/data
+      - nseql-artifacts:/data/artifacts
+    network_mode: none
+    restart: "no"
+
   api:
     build: { context: .., dockerfile: infra/Dockerfile.api }
+    depends_on:
+      init-permissions: { condition: service_completed_successfully }
+      sandbox: { condition: service_started }
     environment:
       NSEQL_API_TOKEN: ${NSEQL_API_TOKEN:?set NSEQL_API_TOKEN in .env}
       NSEQL_VIEWER_TOKEN: ${NSEQL_VIEWER_TOKEN:-}
       LIVE_TRADING_ENABLED: "false"
       NSEQL_SCHEDULER: "true"          # background clock for paper sessions (never places real orders)
+      NSEQL_SANDBOX_URL: http://sandbox:8100
+      NSEQL_SANDBOX_TOKEN: ${NSEQL_SANDBOX_TOKEN:?set NSEQL_SANDBOX_TOKEN in .env (24+ characters)}
+      NSEQL_SANDBOX_ARTIFACTS: /data/artifacts
+      NSEQL_LIVE_SCREENING: ${NSEQL_LIVE_SCREENING:-}
+      ANGEL_API_KEY: ${ANGEL_API_KEY:-}
+      ANGEL_CLIENT_CODE: ${ANGEL_CLIENT_CODE:-}
+      ANGEL_PIN: ${ANGEL_PIN:-}
+      ANGEL_TOTP_SECRET: ${ANGEL_TOTP_SECRET:-}
       KITE_API_SECRET: ${KITE_API_SECRET:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       KITE_API_KEY: ${KITE_API_KEY:-}
@@ -28,14 +51,34 @@ services:
       WHATSAPP_API_VERSION: ${WHATSAPP_API_VERSION:-v21.0}
     volumes:
       - nseql-data:/data
-    # The strategy sandbox builds private mount/network/PID namespaces for generated code. That needs
-    # CAP_SYS_ADMIN and permission to mount, which Docker's default AppArmor profile denies. The API
-    # process therefore runs as root inside the container; generated code itself runs as uid 65534
-    # with every capability dropped, no network and a read-only private filesystem. Without these
-    # two settings the sandbox refuses to run anything (it fails closed) — research is disabled,
-    # the rest of the application still works. See docs/RISK_POLICY.md section 6.
-    cap_add: [SYS_ADMIN]
+      - nseql-artifacts:/data/artifacts
+    # Unprivileged: uid 10001 (set in the image), no capabilities, cannot gain any. Generated strategy
+    # code never runs here; it is sent to the sandbox service below.
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [default, sandbox-net]
+    restart: unless-stopped
+
+  # The ONLY container that executes AI-generated code. It needs CAP_SYS_ADMIN and an unconfined AppArmor
+  # profile to build the namespaces each job runs in (jobs then drop to uid 65534 with no capabilities,
+  # no network and a private read-only filesystem; see docs/RISK_POLICY.md section 6). It holds no broker,
+  # LLM or notification credentials, sees the datasets read-only, has no route to the internet
+  # (sandbox-net is internal) and is reachable only by the API.
+  sandbox:
+    build: { context: .., dockerfile: infra/Dockerfile.sandbox }
+    depends_on:
+      init-permissions: { condition: service_completed_successfully }     # volumes initialised once, before anyone mounts them
+    environment:
+      NSEQL_SANDBOX_TOKEN: ${NSEQL_SANDBOX_TOKEN:?set NSEQL_SANDBOX_TOKEN in .env (24+ characters)}
+      NSEQL_SANDBOX_ARTIFACTS_UID: "10001"
+      LIVE_TRADING_ENABLED: "false"
+    volumes:
+      - nseql-data:/data:ro
+      - nseql-artifacts:/data/artifacts
+    cap_drop: [ALL]
+    cap_add: [SYS_ADMIN, SETUID, SETGID, SETPCAP, CHOWN, DAC_OVERRIDE, FOWNER, SYS_CHROOT]
     security_opt: ["apparmor:unconfined"]
+    networks: [sandbox-net]
     restart: unless-stopped
 
   web:
@@ -58,4 +101,9 @@ services:
 
 volumes:
   nseql-data:
+  nseql-artifacts:
   caddy-data:
+
+networks:
+  sandbox-net:
+    internal: true
