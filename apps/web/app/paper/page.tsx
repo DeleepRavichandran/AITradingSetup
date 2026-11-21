@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { LineChart } from "@/components/charts";
-import { Badge, Banner, Card, DataTable, Err, KV, Page, Stat, Synthetic } from "@/components/ui";
+import { Badge, Banner, Card, DataSource, DataTable, Err, KV, Page, Stat, Synthetic } from "@/components/ui";
 import { inr, num, pct, post, useApi } from "@/lib/api";
 
 export default function Paper() {
@@ -27,7 +27,7 @@ export default function Paper() {
   const lib = (strategies.data?.library || []).filter((x: any) => x.intervals.includes("1d") && x.requires === "EQ");
   return (
     <Page title="Paper Trading Terminal" sub="Simulated orders only — nothing is sent to a broker. The session uses the same matching engine, costs, margin and ledger as the backtester, fed one bar at a time.">
-      <Banner tone="info"><b>Two feeds.</b> <i>Replay</i> steps through stored bars — “Advance” plays the role of the clock. <i>Kite daily</i> pulls each day’s completed candle from Kite after the close and steps once per trading day (needs Kite credentials and a daily login; not yet verified against the real API). A streaming tick feed is not implemented. Sessions are saved to disk and come back after a restart.</Banner>
+      <Banner tone="info"><b>Two feeds.</b> <i>Replay</i> steps through stored bars — “Advance” plays the role of the clock. <i>Kite daily</i> / <i>Angel One daily</i> pull each day’s completed candle after the close and step once per trading day (mock-tested; not yet verified against the real services). Live 1-minute data is on the Strategy Monitor; no streaming tick feed exists. Sessions are saved to disk and come back after a restart.</Banner>
       {sched.data && <Card title="Scheduler" right={<button onClick={tick} disabled={busy}>Run one pass now</button>}>
         <KV items={[["timer", <Badge key="t" s={sched.data.running ? "running" : "off (set NSEQL_SCHEDULER=true)"} tone={sched.data.running ? "good" : "warn"} />], ["last pass", sched.data.last_tick || "never"],
           ["holiday calendar", sched.data.holiday_calendar], ["errors", Object.entries(sched.data.errors).map(([k, v]) => `${k}: ${v}`).join(" · ") || "none"],
@@ -38,7 +38,7 @@ export default function Paper() {
       <Card title="Start a session">
         <div className="row">
           <label>Algo strategy<select value={f.strategy} onChange={(e) => setF({ ...f, strategy: e.target.value })}><option value="">none (manual orders only)</option>{lib.map((x: any) => <option key={x.name}>{x.name}</option>)}</select></label>
-          <label>Feed<select value={f.feed} onChange={(e) => setF({ ...f, feed: e.target.value })}><option value="replay">replay (stored bars)</option><option value="kite_daily">Kite daily (end of day)</option></select></label>
+          <label>Feed<select value={f.feed} onChange={(e) => setF({ ...f, feed: e.target.value })}><option value="replay">replay (stored bars)</option><option value="kite_daily">Kite daily (end of day)</option><option value="angel_daily">Angel One daily (end of day)</option></select></label>
           {f.feed === "kite_daily" && <label style={{ flex: 1, minWidth: 220 }}>NSE symbols (comma or space separated)<input value={f.symbols} onChange={(e) => setF({ ...f, symbols: e.target.value.toUpperCase() })} placeholder="RELIANCE, TCS, INFY" /></label>}
           {f.feed === "replay" && <label>Auto-advance (bars per scheduler pass)<input type="number" min={0} max={50} value={f.auto_bars} onChange={(e) => setF({ ...f, auto_bars: Number(e.target.value) })} style={{ width: 90 }} /></label>}
           <label>Trade from<select value={f.window} disabled={f.feed !== "replay"} onChange={(e) => setF({ ...f, window: e.target.value })}><option value="sealed">start of sealed window (forward test)</option><option value="validation">start of validation window</option><option value="all">first bar</option></select></label>
@@ -51,6 +51,7 @@ export default function Paper() {
         <div className="top" style={{ marginTop: 16 }}><h1>{s.label} <span className="mono dim">{s.session_id || sid}</span></h1><Badge s={s.halted ? "HALTED" : "running"} tone={s.halted ? "crit" : "good"} /><span className="sp" />
           <Badge s="saved to disk" tone="good" /><button onClick={close} disabled={busy}>Close session</button><button onClick={() => adv(1)} disabled={busy || !s.remaining}>+1 bar</button><button onClick={() => adv(5)} disabled={busy || !s.remaining}>+5</button><button onClick={() => adv(20)} disabled={busy || !s.remaining}>+20</button></div>
         <Synthetic on={s.synthetic} />
+        <DataSource d={s.data_source} />
         {s.kill_switch?.reason?.startsWith("WARMUP") && <Banner tone="info">Loading history: no orders are accepted until the first live day.</Banner>}
         {s.halted && <Banner tone="crit"><b>Session halted:</b> {s.halted}. Working orders were cancelled; positions are untouched. New orders are refused until a named human resets the kill switch and a new session is started.</Banner>}
         <div className="stats">

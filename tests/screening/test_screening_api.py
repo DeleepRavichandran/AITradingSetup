@@ -72,6 +72,9 @@ def test_replay_lists_filters_and_restart(boot):
     st2 = c2.get("/api/screening/status").json()
     assert st2["started"] and st2["signals"] == st["signals"] and st2["watermark"] == st["watermark"]
     assert st2["recovery"]["checkpoint"] == st["watermark"]
+    assert st["data_source"]["kind"] == "synthetic_replay" and st2["data_source"]["kind"] == "synthetic_replay"   # not "none" after a restart
+    b = c2.get("/api/brokers").json()["market_data"]
+    assert {"Angel One 1-minute polling (screening loop)": "UNVERIFIED"}.items() <= {m["name"]: m["status"] for m in b}.items()
 
 
 def test_replay_needs_minute_bars(boot):

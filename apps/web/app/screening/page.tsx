@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { Badge, Banner, Card, DataTable, Err, KV, Loading, Page, Stat } from "@/components/ui";
+import { Badge, Banner, Card, DataSource, DataTable, Err, KV, Loading, Page, Stat } from "@/components/ui";
 import { inr, num, post, useApi, useJob } from "@/lib/api";
 
 const HORIZONS = [["", "All"], ["intraday", "Intraday"], ["swing", "Swing"]] as const;
@@ -44,9 +44,10 @@ export default function Screening() {
       right={<button className="primary" disabled={running} onClick={replay}>{running ? "Replay running…" : "Run 5-session replay"}</button>}>
       <Err e={status.error || err} /><Loading on={status.loading} />
       {job && <Banner tone="info">Replay job <span className="mono">{job.id}</span>: <Badge s={job.status} /> {job.progress?.length ? `minute ${job.progress[job.progress.length - 1].minute}/${job.progress[job.progress.length - 1].of}` : ""} {job.error}</Banner>}
-      {s && !started && <Banner>No screening run yet. The live 1-minute feed is <b>not implemented</b> (it needs a licensed real-time feed); use a replay of stored 1-minute bars to see the loop work.</Banner>}
+      {s && !started && <Banner>No screening run yet. Run a replay of stored 1-minute bars, or set up Angel One for live 1-minute data (the Angel One adapter is mock-tested and not yet verified against the real service).{s.live?.state === "error" ? ` Live start failed: ${s.live.error}` : ""}</Banner>}
       {started && <>
-        <Banner tone={s.run?.synthetic ? "warn" : "info"}>Feed: <b>{s.feed}</b>{s.run?.synthetic ? " — SYNTHETIC data, says nothing about real markets." : ""} Live trading is off; orders here are simulated.</Banner>
+        <DataSource d={s.data_source} />
+        <Banner tone="info">Live trading is off; every order on this page is simulated. Feed: {s.feed}{s.feed_status ? ` (${s.feed_status})` : ""}.</Banner>
         <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
           {HORIZONS.map(([k, label]) => <button key={k} className={hz === k ? "primary" : ""} onClick={() => tab(k)}>{label}</button>)}
         </div>

@@ -62,6 +62,9 @@ FEATURES = [
     ("NSE bhavcopy / CSV import", "IMPLEMENTED", "parsers tested on layout samples; no real exchange file imported here"),
     ("Import of an authorised real NSE dataset", "BLOCKED", "needs files the operator is licensed to use"),
     ("Kite historical-data adapter", "UNVERIFIED", "mock-tested; needs credentials"),
+    ("Angel One SmartAPI: automatic login, history, 1-minute polling", "UNVERIFIED",
+     "mock-tested only; real-service verification needs the operator's credentials (nseql angel-verify)"),
+    ("TradingView chart-export import", "IMPLEMENTED", "manual exports only; no TradingView API exists"),
     ("AI research loop (9 agents, sandboxed code)", "IMPLEMENTED", "LLM optional; deterministic agents by default"),
     ("LLM-backed inventor / analyst", "UNVERIFIED", "needs ANTHROPIC_API_KEY; stub-tested"),
     ("Walk-forward, bootstrap, DSR, sealed out-of-sample", "IMPLEMENTED", ""),
@@ -72,9 +75,12 @@ FEATURES = [
     ("Controlled self-modification with human promotion and automatic rollback", "IMPLEMENTED", "policy-level changes only; no code self-modification"),
     ("Paper trading on replayed data", "IMPLEMENTED", "replay, not a live market; sessions persist across restarts"),
     ("Unattended end-of-day paper trading (Kite daily candles + scheduler)", "UNVERIFIED", "mock-tested; needs Kite credentials and a daily login"),
-    ("Authorised real-time streaming feed", "BLOCKED", "needs broker credentials and a data entitlement; adapter not written"),
+    ("Live 1-minute market data", "UNVERIFIED", "Angel One completed-candle polling, mock-tested; no WebSocket/tick streaming adapter"),
+    ("One-minute screening loop (intraday + swing, up to 50,000 configurations)", "IMPLEMENTED",
+     "verified on replayed and synthetic data; realistic fills and one shared portfolio"),
+    ("Command Deck (voice, camera, actions, news)", "IMPLEMENTED", "browser speech services; news from public RSS feeds"),
     ("Live order routing", "DISABLED", "gate closed by default; Kite adapter mock-tested only"),
-    ("Upstox / Angel One adapters", "NOT IMPLEMENTED", "interface stubs"),
+    ("Upstox / Angel One order routing", "NOT IMPLEMENTED", "interface stubs; live trading is disabled anyway"),
     ("WhatsApp notifications", "UNVERIFIED", "mock-tested; needs WhatsApp Business Cloud API credentials"),
     ("News / event store", "IMPLEMENTED", "ingestion + point-in-time queries; ships with no content"),
     ("Currency / commodity / interest-rate derivatives", "NOT IMPLEMENTED", "instrument kinds exist; no adapters or fixtures"),
@@ -879,6 +885,11 @@ def create_app() -> FastAPI:
             scheduler.tick()      # load the warm-up history now rather than at the next timer tick
         return {"session_id": sid, "persisted": True, **clean(ps.state())}
 
+    def _paper_provenance(ps) -> dict:
+        from nseql.screening.provenance import classify
+        syn = getattr(getattr(ps.feed, "ds", None), "synthetic", None)
+        return classify(ps.feed, synthetic=syn, experiments_dir=st.exp_dir)
+
     def _session(sid: str) -> PaperSession:
         if sid not in st.sessions:
             raise HTTPException(404, "unknown paper session" + (f" (it could not be restored: {st.restore_errors[sid]})" if sid in st.restore_errors else ""))
@@ -894,7 +905,8 @@ def create_app() -> FastAPI:
     def paper_state(sid: str):
         s_ = _session(sid)
         return {"session_id": sid, "persisted": True, "config": {k: v for k, v in st.session_meta[sid].items() if k != "kite"},
-                "feed_status": getattr(s_.feed, "status", None), "feed_gaps": getattr(s_.feed, "gaps", [])[-20:], **clean(s_.state())}
+                "feed_status": getattr(s_.feed, "status", None), "feed_gaps": getattr(s_.feed, "gaps", [])[-20:],
+                "data_source": _paper_provenance(s_), **clean(s_.state())}
 
     @api.post("/paper/sessions/{sid}/close")
     def paper_close(sid: str):
@@ -1002,7 +1014,10 @@ def create_app() -> FastAPI:
             return None
         from nseql.screening.scheduler import MinuteScheduler
         m = json.loads(meta.read_text())
-        screening["sch"] = MinuteScheduler(Path(m["root"]), m["symbols"], m["configs"], kill=st.kill, mode=m["mode"])
+        from nseql.screening.scheduler import ReplayMinuteFeed
+        feed = ReplayMinuteFeed({}, f"replay of {m.get('dataset')} (finished)", synthetic=bool(m.get("synthetic"))) if m["mode"] == "replay" else None
+        screening["sch"] = MinuteScheduler(Path(m["root"]), m["symbols"], m["configs"], kill=st.kill, mode=m["mode"], feed=feed,
+                                           experiments_dir=st.exp_dir)
         screening["meta"] = m
         return screening["sch"]
 
@@ -1029,8 +1044,8 @@ def create_app() -> FastAPI:
         root = st.exp_dir / "screening" / f"replay_{datetime.now():%Y%m%d_%H%M%S}"
 
         def work(job):
-            feed = ReplayMinuteFeed(frames, f"replay of {d.id}" + (" (SYNTHETIC)" if d.synthetic else ""))
-            sch = MinuteScheduler(root, syms, body.configs, feed=feed, kill=st.kill, mode="replay")
+            feed = ReplayMinuteFeed(frames, f"replay of {d.id}" + (" (SYNTHETIC)" if d.synthetic else ""), synthetic=d.synthetic)
+            sch = MinuteScheduler(root, syms, body.configs, feed=feed, kill=st.kill, mode="replay", experiments_dir=st.exp_dir)
             mins = feed.minutes()
             for k, m in enumerate(mins):
                 sch.run_cycle(m + pd.Timedelta(seconds=6))
@@ -1070,7 +1085,7 @@ def create_app() -> FastAPI:
             live_from = json.loads(lf.read_text())["live_from"] if not first else datetime.now().strftime("%Y-%m-%dT%H:%M:00")
             syms = [x["symbol"] for x in tokens]
             sch = MinuteScheduler(root, syms, None, feed=BrokerMinutePoller(tokens, _angel_api), kill=st.kill, mode="live",
-                                  calendar=_calendar(), live_from=live_from)
+                                  calendar=_calendar(), live_from=live_from, experiments_dir=st.exp_dir)
             if first:
                 lf.write_text(json.dumps({"live_from": live_from, "symbols": syms, "not_found": missing}))
                 screening["live"]["warm_up"] = warm_up(sch, api, tokens, days=5)
@@ -1103,7 +1118,8 @@ def create_app() -> FastAPI:
     def _need_screening():
         sch = _screening_open()
         if sch is None:
-            raise HTTPException(404, "no screening run yet: start a replay (POST /screening/replay); a live 1-minute feed is NOT IMPLEMENTED")
+            raise HTTPException(404, "no screening run yet: start a replay (POST /screening/replay), or set NSEQL_LIVE_SCREENING=angelone "
+                                     "for the Angel One 1-minute polling feed (mock-tested, not yet verified against the real service)")
         return sch
 
     @api.get("/screening/status")
@@ -1230,7 +1246,10 @@ def create_app() -> FastAPI:
                 "adapters": [{**kite.describe(), "credentials_present": kite.connected}, Upstox(st.gate).describe(), AngelOneSmartAPI(st.gate).describe()],
                 "market_data": [{"name": "replay (stored dataset)", "status": "IMPLEMENTED"},
                                 {"name": "Kite historical REST", "status": "UNVERIFIED", "credentials_present": st.settings.kite_credentials_present},
-                                {"name": "KiteTicker WebSocket", "status": "NOT IMPLEMENTED"}],
+                                {"name": "Angel One SmartAPI historical REST", "status": "UNVERIFIED"},
+                                {"name": "Angel One 1-minute polling (screening loop)", "status": "UNVERIFIED"},
+                                {"name": "TradingView chart exports (manual files)", "status": "IMPLEMENTED"},
+                                {"name": "KiteTicker / Angel One SmartStream WebSocket", "status": "NOT IMPLEMENTED"}],
                 "gate_default": st.gate.check(None).to_dict(),
                 "note": "order routing and market data are separate adapters; no order can be sent while the gate is closed"}
 

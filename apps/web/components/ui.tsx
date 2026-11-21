@@ -81,3 +81,18 @@ export const Page = ({ title, sub, children, right }: { title: string; sub?: Rea
     {children}
   </>
 );
+
+/** Market-data provenance from the backend (nseql.screening.provenance). Never inferred in the browser. */
+export const DataSource = ({ d, compact }: { d?: any; compact?: boolean }) => {
+  if (!d) return null;
+  const tone = d.stale ? "crit" : d.verified ? "good" : d.live ? "warn" : d.kind === "none" ? "warn" : "info";
+  const bits = [d.delay_seconds != null ? `delay ≈ ${d.delay_seconds >= 120 ? `${Math.round(d.delay_seconds / 60)} min` : `${d.delay_seconds} s`}` : null,
+    d.freshness_seconds != null ? `last bar ${Math.round(d.freshness_seconds)} s ago` : null,
+    d.market_open === false && d.live ? "market closed" : null].filter(Boolean);
+  if (compact) return <Badge s={d.label} tone={tone} />;
+  return (
+    <Banner tone={tone === "good" ? "good" : tone === "crit" ? "crit" : tone === "warn" ? "warn" : "info"}>
+      <b>Data: {d.label}.</b>{bits.length ? ` ${bits.join(" · ")}.` : ""}{d.detail ? ` ${d.detail}.` : ""}{d.synthetic ? " Synthetic data says nothing about real markets." : ""}
+    </Banner>
+  );
+};

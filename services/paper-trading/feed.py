@@ -3,9 +3,9 @@
 `ReplayFeed` replays a stored dataset bar by bar. It is a REPLAY of historical (or synthetic)
 data, clearly labelled as such — it is not a live market connection.
 
-`LiveFeed` is the interface a real broker WebSocket adapter must implement. No live adapter is
-implemented: streaming authorised real-time data is BLOCKED until broker credentials and a
-market-data entitlement are available (acceptance test #13).
+`KiteDailyFeed` delivers each day's completed daily candle (Kite or Angel One; mock-tested, unverified).
+`LiveFeed` is the interface a streaming (WebSocket) adapter would implement; none exists. Live 1-minute
+data for the screening loop comes from polling completed candles (nseql.screening.feeds), not streaming.
 """
 from __future__ import annotations
 

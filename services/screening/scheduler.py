@@ -15,9 +15,11 @@ Recovery: on start the last checkpoint is loaded and every logged minute after i
 the same deterministic engine. Ledger writes use deterministic keys, so minutes that were already
 written before a crash are not written twice.
 
-Real-time operation needs a licensed live 1-minute feed. NONE is attached by default: the KiteTicker
-adapter is NOT IMPLEMENTED. With no feed, the scheduler processes bars that are pushed into the event
-log (`ingest`), e.g. a replay of a stored dataset.
+Feeds: `ReplayMinuteFeed` (stored bars replayed as if live) and `nseql.screening.feeds.BrokerMinutePoller`
+(completed 1-minute candles polled from Angel One; mock-tested, NOT yet verified against the real service).
+No WebSocket/tick streaming adapter exists (KiteTicker and Angel One SmartStream are not implemented).
+With no feed, the scheduler processes bars pushed into the event log (`ingest`). Every status response
+carries a provenance block (nseql.screening.provenance) saying which of these the data is.
 """
 from __future__ import annotations
 
@@ -45,8 +47,8 @@ class ReplayMinuteFeed:
     time is <= now and that has not been returned yet. A REPLAY, labelled as such everywhere."""
     kind = "replay"
 
-    def __init__(self, frames: dict[str, pd.DataFrame], label: str = "replay"):
-        self.label = label
+    def __init__(self, frames: dict[str, pd.DataFrame], label: str = "replay", synthetic: bool = False):
+        self.label, self.synthetic = label, synthetic
         rows = []
         for s, df in frames.items():
             d = df[["ts", "open", "high", "low", "close", "volume"]].copy()
@@ -70,7 +72,7 @@ class MinuteScheduler:
     def __init__(self, root: Path, symbols: list[str], n_configs: int | None = None, *, calendar: TradingCalendar | None = None,
                  feed=None, kill=None, checkpoint_every: int = 15, grace_seconds: float = 5.0, mode: str = "replay",
                  clock: Callable[[], datetime] | None = None, execution: str = "realistic", exec_cfg: ExecConfig | None = None,
-                 portfolio: PortfolioRules | None | bool = True, live_from=None):
+                 portfolio: PortfolioRules | None | bool = True, live_from=None, experiments_dir: Path | None = None):
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
         t0 = time.perf_counter()
@@ -89,6 +91,7 @@ class MinuteScheduler:
                                       FAMILIES[r.fam[i]], json.dumps(r.params[i]), float(r.stop[i])) for i in range(len(r))])
         self.calendar = calendar or TradingCalendar()
         self.feed, self.kill, self.mode = feed, kill, mode
+        self.experiments_dir = experiments_dir
         self.live_from = _iso(live_from) if live_from is not None else None   # minutes before this: no paper orders (warm-up)
         self.checkpoint_every, self.grace = checkpoint_every, grace_seconds
         self.clock = clock or (lambda: datetime.now(IST).replace(tzinfo=None))
@@ -234,8 +237,14 @@ class MinuteScheduler:
     def stop(self) -> None:
         self._stop.set()
 
+    def provenance(self, now=None) -> dict:
+        from nseql.screening.provenance import classify
+        now = pd.Timestamp(now if now is not None else self.clock())
+        return classify(self.feed, synthetic=getattr(self.feed, "synthetic", None), last_bar=self.watermark, now=now,
+                        market_open=self.calendar.is_open(now.to_pydatetime()), experiments_dir=self.experiments_dir)
+
     def status(self) -> dict:
-        return {"mode": self.mode, "feed": getattr(self.feed, "label", None) or "none attached",
+        return {"data_source": self.provenance(),"mode": self.mode, "feed": getattr(self.feed, "label", None) or "none attached",
                 "feed_status": getattr(self.feed, "status", None), "feed_errors": dict(list(getattr(self.feed, "errors", {}).items())[:20]),
                 "live_from": self.live_from,
                 "running": self._thread is not None and self._thread.is_alive(), "registered": len(self.reg), "symbols": len(self.reg.symbols),
