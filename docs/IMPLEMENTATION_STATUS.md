@@ -125,8 +125,8 @@ without something only the operator can supply), **NOT IMPLEMENTED**.
   limit), with refused signals counted by reason. Tested: cap never exceeded, cash identity to the paisa,
   free cash never negative, exact recovery.
 - NOT IMPLEMENTED: a live 1-minute feed (needs a licensed real-time entitlement); positional, long-term,
-  F&O, ETF, mutual-fund and SIP engines; ranking of competing signals for scarce capital (first-come in
-  registry order today); correlation and tail-risk limits.
+  F&O, ETF, mutual-fund and SIP engines; tail-risk limits. (Ranked allocation of
+  competing signals with correlation and concentration penalties: implemented 2026-11-21, synthetic only.)
 
 ### Learning Brain (see LEARNING_BRAIN.md)
 - DONE: episodic memory (append-only, hash-chained, point-in-time), semantic findings with FDR control,

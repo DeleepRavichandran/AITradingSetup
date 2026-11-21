@@ -75,6 +75,7 @@ FEATURES = [
     ("Controlled self-modification with human promotion and automatic rollback", "IMPLEMENTED", "policy-level changes only; no code self-modification"),
     ("Paper trading on replayed data", "IMPLEMENTED", "replay, not a live market; sessions persist across restarts"),
     ("Unattended end-of-day paper trading (Kite daily candles + scheduler)", "UNVERIFIED", "mock-tested; needs Kite credentials and a daily login"),
+    ("Authorised real-time streaming feed", "BLOCKED", "needs broker credentials and a data entitlement; WebSocket/tick adapter not written"),
     ("Live 1-minute market data", "UNVERIFIED", "Angel One completed-candle polling, mock-tested; no WebSocket/tick streaming adapter"),
     ("One-minute screening loop (intraday + swing, up to 50,000 configurations)", "IMPLEMENTED",
      "verified on replayed and synthetic data; realistic fills and one shared portfolio"),
@@ -1364,7 +1365,8 @@ def create_app() -> FastAPI:
                                 {"name": "Angel One SmartAPI historical REST", "status": "UNVERIFIED"},
                                 {"name": "Angel One 1-minute polling (screening loop)", "status": "UNVERIFIED"},
                                 {"name": "TradingView chart exports (manual files)", "status": "IMPLEMENTED"},
-                                {"name": "KiteTicker / Angel One SmartStream WebSocket", "status": "NOT IMPLEMENTED"}],
+                                {"name": "KiteTicker WebSocket", "status": "NOT IMPLEMENTED"},
+                                {"name": "Angel One SmartStream WebSocket", "status": "NOT IMPLEMENTED"}],
                 "gate_default": st.gate.check(None).to_dict(),
                 "note": "order routing and market data are separate adapters; no order can be sent while the gate is closed"}
 

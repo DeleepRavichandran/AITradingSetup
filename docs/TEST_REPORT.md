@@ -1,5 +1,40 @@
 # Test report
 
+## 2026-11-21 (independent review follow-up)
+
+| Suite | Tests |
+|---|---:|
+| `tests/unit` | 137 |
+| `tests/integration` | 78 |
+| `tests/regression` | 5 |
+| `tests/acceptance` | 17 |
+| `tests/audit` | 37 |
+| `tests/brain` | 51 |
+| `tests/screening` | 31 |
+| **Total Python** | **356** |
+| Web: `tests/vega.test.mjs` (node:test, parser) | 5 |
+| Web: `tests/e2e.test.mjs` (Playwright Chromium + axe-core, mocked API) | 22 |
+
+Results: see "Runs" below. New this round: parser safety (exact phrases, negations, questions, low
+confidence, refusals); browser tests for confirmation, timeout, cancel, manual emergency stop, speech
+errors, rapid repeats, denied permissions, voice consent, camera/mic release on unmount, axe (light and
+dark), 360/768/1280 px; ranked allocator (10); Angel One verification harness and poller capacity /
+staleness (5); sandbox worker (6); overview and readiness API assertions.
+
+Coverage limits, stated plainly:
+- Browser tests use Playwright's Chromium with a **fake** SpeechRecognition. Branded Google Chrome and
+  Microsoft Edge, and their real (online) speech services, were not tested.
+- Angel One is tested against a **mocked** SmartAPI only; `nseql angel-verify` was not run against the
+  real service (no credentials).
+- The allocator comparison and the poller capacity table use synthetic data / a simulated clock.
+
+Defect found this round: the P1a commit (6c6e4f2) renamed two feature/market-data rows that the
+acceptance suite checks ("Authorised real-time streaming feed", "KiteTicker WebSocket"); CI caught it on
+d7b229c. Restored as separate rows. axe found low-contrast muted text, white-on-blue below 4.5:1 and
+unlabelled selects; fixed.
+
+## 2026-11-19
+
 Run on 2026-11-19, Python 3.13.18, numpy 2.5.5, pandas 3.1.1, Linux. Command: `pytest`.
 
 | Suite | Tests |

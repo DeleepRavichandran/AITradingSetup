@@ -59,12 +59,12 @@ figure below comes from a *synthetic* minute stream; no real-time market feed is
 | §5 Stateful parallel or distributed workers, backpressure | **Not implemented**: one process evaluates every configuration. At 50k, p99 cycle time is far below the 60 s budget, so distribution is not justified yet. |
 | §6–8 Research agents, memory, controlled self-improvement | Existing. **Learning is not demonstrated** (synthetic sealed test; see LEARNING_BRAIN.md). No new learning claim is made. |
 | §9 Realistic execution | Existing event engine. The minute loop now also has volume-capped partial fills, spread and impact, per-order brokerage caps and entry time-outs: **verified working** on synthetic data (test_execution_portfolio.py). |
-| §10 Portfolio Brain | **Incomplete.** The minute loop has one shared capital pot with cash reservations, per-symbol and gross exposure caps, a position cap and a daily loss limit: **verified working** on synthetic data. Not built: signal ranking for scarce capital, strategy-correlation limits, tail-risk measures, tax lots across products, separate goal portfolios. |
+| §10 Portfolio Brain | **Incomplete.** The minute loop has one shared capital pot with cash reservations, per-symbol and gross exposure caps, a position cap and a daily loss limit: **verified working** on synthetic data. Since 2026-11-21: **ranked allocation** (forward evidence shrunk to group, calibration reliability, impact-adjusted expected net return, liquidity capacity, correlation with the portfolio, symbol/family concentration, negative-expectancy gate), every BUY recorded as accepted / rejected / deferred with its reason: **verified working** on synthetic data (test_allocator.py; comparison in docs/benchmarks/allocator_comparison_2026-11-21.json). Not built: tail-risk measures, tax lots across products, separate goal portfolios. |
 | §11 Options intelligence | **Not implemented** (real option premium data is blocked) |
 | §12 Fundamentals and events | **Incomplete**: scheduled events with known-from dates are implemented. Fundamentals and news are **not implemented**; data is **blocked** by licensing. |
-| §15 Real-time paper trading | **Incomplete**: forward paper ledger on replayed minutes; end-of-day Kite paper sessions are **unverified**. Live feed **not implemented**. |
-| §16 Data quality and operations | **Incomplete**: gaps, late and conflicting events, and cycle latency are recorded. No CPU/memory pressure monitors and no alerting. |
-| §17 Security: generated code in separately isolated workers; no privileged API container | **Not implemented**. The API container still needs `CAP_SYS_ADMIN` to build sandbox namespaces. This is the highest-risk open security item. |
+| §15 Real-time paper trading | **Incomplete**: forward paper ledger on replayed minutes. Angel One 1-minute polling is implemented and **mock-tested only**; `nseql angel-verify` exists but has **not been run against the real service** (no credentials here). Poller capacity: 125 symbols/minute at 0.4 s spacing (modelled), rotation beyond. No tick/WebSocket feed. |
+| §16 Data quality and operations | **Incomplete**: gaps, late and conflicting events, cycle latency, per-symbol staleness and module readiness are recorded and shown (`/screening/overview`, `/readiness`). No CPU/memory pressure monitors and no alerting. |
+| §17 Security: generated code in separately isolated workers; no privileged API container | **Implemented (Docker deployment)**: generated code runs only in the `sandbox` service; the API runs as uid 10001 with no capabilities. Verified by tests and a local Docker smoke run (2026-11-21). The Windows/no-Docker mode still runs the sandbox in-process where namespaces exist (on Windows they do not, so research is refused). |
 | §18 Dashboard (26 modules) | **Incomplete**: 20 pages exist, including the new Strategy Monitor. Futures, Options, ETF, Mutual Fund, SIP, Long-Term and Operations pages do not exist. |
 | §19 PostgreSQL / ClickHouse / Redis Streams / Prometheus / Ray | **Not implemented**. SQLite (WAL) and NumPy meet the measured load of this slice. |
 | Live order routing | Disabled. Unchanged. |
@@ -72,6 +72,7 @@ figure below comes from a *synthetic* minute stream; no real-time market feed is
 ## Highest-risk open items
 
 1. **No real data** has been imported, so every strategy result in this repository is on synthetic data.
-2. **Privileged API container**: the strategy sandbox needs `CAP_SYS_ADMIN`. Generated code should move to a separate, isolated worker service.
-3. **No real-time feed**: the minute loop is proven on a replayed stream only.
-4. **Capital allocation is first-come**: when signals compete for scarce capital the portfolio serves them in registry order; deciding which signal deserves the money is not built.
+2. **Angel One not verified against the real service**: the harness exists; the operator must run `nseql angel-verify` during market hours with their own credentials.
+3. **No real-time feed proven**: the minute loop is proven on replayed streams only.
+4. **The screened strategies lose money after costs on synthetic data under either allocator.** Ranked allocation reduced losses versus first-come on 9 of 10 unseen synthetic runs; it does not create an edge.
+5. **The sandbox worker is privileged** (SYS_ADMIN, AppArmor unconfined), though isolated from credentials, the internet and the ledgers.

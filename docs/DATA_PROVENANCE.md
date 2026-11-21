@@ -40,6 +40,18 @@ recorded). An action is refused when the prices do not drop on its date, which i
 data looks like. `nseql holidays` stores the NSE holiday list with its source and the years it covers. Check your licence before sharing any report
 that embeds prices.
 
+### Verifying the Angel One feed (`nseql angel-verify`)
+
+Live 1-minute data is labelled **"Live 1-minute candles (adapter not verified)"** on every page until the
+operator runs `nseql angel-verify` with their own `ANGEL_*` credentials during market hours (09:20-15:25
+IST) and every check passes: credentials, TOTP login and a 0600 session file, session reuse and recovery
+from a corrupted token, the scrip master and watchlist, candle format and bar stamping, the in-progress
+minute never passed on (and whether the last bar is revised), paced vs burst rate limits, fast failure on
+an unreachable host, stale-symbol detection, and a scan proving the report holds no secret. The report is
+written to `experiments/angel_verification.json` (client code masked; a report containing any secret is
+not saved). Only `passed: true` changes the label to "verified". **As of 2026-11-21 this has not been run:
+no credentials are available in the development environment; the adapter remains mock-tested.**
+
 Derivative symbols are built as `<UNDERLYING><YY><MON><DD>FUT` / `…<STRIKE><CE|PE>`. Index levels
 are taken from the `UndrlygPric` column of UDiFF F&O rows as a close-only series (recorded as
 derived). Assumption to confirm on your first real file: UDiFF `TtlTradgVol` is in units, not lots.

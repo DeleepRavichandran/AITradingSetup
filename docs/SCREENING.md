@@ -47,8 +47,9 @@ the API replay and the benchmark use the realistic one by default.
       positions stay < 50;
     - if equity falls 2% below the day's open, no new entries for the rest of the day.
   - **Refused BUYs:** counted per minute by reason in `refusals`; the signal itself stays in `signals`.
-  - **Ranking:** competing BUYs in the same minute are served in registry order. That is deterministic
-    but arbitrary; a ranking model (which signal deserves the capital) is not built yet.
+  - **Ranking (since 2026-11-21, `allocation="ranked"`, the default):** competing BUYs in a minute are
+    served best-first by a score that uses only information available at that minute; see
+    "Ranked allocation" below. `allocation="first_come"` keeps the old registry-order baseline.
 
 ## Registry
 
@@ -107,10 +108,10 @@ Same hardware, data and command as below; `--execution realistic`. Full results:
 
 ### Two things the numbers expose
 
-- **Capital goes to whoever asks first.** From 5,000 configurations up, the portfolio placed exactly the
-  same orders: the first configurations in registry order take the 50 slots and the 2% daily loss limit
-  stops entries early. More configurations produce more refused signals, not different trades. A ranking
-  step that decides which signal deserves scarce capital is the next piece of work.
+- **Capital went to whoever asked first** (in this 2026-11-20 run). From 5,000 configurations up, the
+  portfolio placed exactly the same orders: the first configurations in registry order took the 50 slots
+  and the 2% daily loss limit stopped entries early. This is what the ranked allocator (2026-11-21)
+  replaces; the benchmark has not been re-run with it.
 - **Refused strategies keep asking.** A refused configuration stays flat and signals BUY again on every
   bar while its condition holds. That is why there are 2.76 million signals at 50k, and why the database
   reaches 494 MB per 3 sessions. Storing only the first signal of each refused streak is the obvious fix;
@@ -170,6 +171,46 @@ only in the replay benchmark, at 421 ms.
   delay, jitter, late bars) is **not measured**, because no licensed real-time feed is connected.
 - **Not measured:** multi-process scaling, behaviour under real exchange load, and cloud cost. The
   benchmark ran on one 4-vCPU, 16 GB machine.
+
+## Ranked allocation (services/screening/allocator.py)
+
+Inputs, all known at the decision minute (no future returns):
+
+| input | how |
+|---|---|
+| forward evidence | each configuration's completed round trips in THIS paper ledger (net return after charges and simulated slippage) |
+| shrinkage / confidence | mean and win rate pulled toward the family+timeframe group (k=10), the group toward 0 / 50% (k=20); confidence n/(n+10); "qualified" = >= 5 trades and positive shrunk mean |
+| calibration | predicted win probability at entry vs outcome; after 30 resolved, a reliability factor in [0.5, 1] from the Brier score vs the base rate scales the evidence |
+| costs, liquidity | minus 2x impact for this order size at the EWMA 1-minute volume; size cut to participation x volume x TTL; below one share = rejected |
+| correlation, redundancy | minus 10 bps x correlation of the symbol's last 60 one-minute returns with the portfolio; one new entry per symbol per minute |
+| diversification | minus 10 bps x the symbol's share of its limit, minus 5 bps x the family's share of open positions |
+| risk limits | then the existing hard limits (cash, symbol, gross, positions, daily loss) in rank order |
+| negative expectancy | a configuration with >= 5 forward trades and negative expected net return gets no capital |
+
+Outcomes per BUY (`signals.alloc_status`, `alloc_reason`, `alloc_score`): **accepted**; **rejected** (fails
+on its own, or a limit was already full before the minute); **deferred** (would have passed, but a
+higher-ranked signal used the capital / slot / symbol room). Allocator state is in the checkpoint.
+
+### Comparison with first-come on unseen data (docs/benchmarks/allocator_comparison_2026-11-21.json)
+
+20 symbols (3,420 configurations), 2 warm-up days then 3 evaluation days, seeds 201-205 (not used in
+development; seed 101 was looked at once before the negative-expectancy gate was added, so it was
+dropped from the evaluation). SYNTHETIC data.
+
+| scenario | ranked better | mean difference (3 days) | both allocators |
+|---|---|---|---|
+| random walk | 4 of 5 seeds | +Rs 1,898 | lose Rs 45k-69k |
+| common factor + persistent edges (many simultaneous BUYs; busiest minute 550-900) | 5 of 5 | +Rs 4,143 | lose Rs 45k-69k |
+
+Ranking reduces losses modestly; it does not make these strategies profitable. Most intraday
+configurations lose to costs; with ~20% win rates almost none qualify within two days.
+
+## Poller capacity (docs/benchmarks/poller_capacity_2026-11-21.json, MODELLED)
+
+One request per symbol per cycle, 0.4 s spacing, 50 s budget: at most 125 symbols every minute. Larger
+watchlists are polled in rotation (250 symbols: every 2 minutes; 500: every 4; 1,000: every 8), reported
+as degraded in `feed_health`. The fetch runs inside the cycle, so at 125 symbols bars are processed ~50 s
+after the minute. These are simulated-clock numbers; real latency and limits need `nseql angel-verify`.
 
 ## Not in this slice
 
