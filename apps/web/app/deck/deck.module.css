@@ -96,3 +96,9 @@
 .meter em { position: absolute; right: 0; top: 8px; font-style: normal; font-size: 11px; color: var(--steel); }
 
 @media (prefers-reduced-motion: reduce) { .meter span { transition: none; } }
+
+/* confirmation and consent prompts; the separate, always-visible emergency stop */
+.confirm { width: min(100%, 520px); padding: 12px 14px; border: 1px solid var(--amber); background: rgba(255,181,71,.08); display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.confirm p { margin: 0 0 4px; flex-basis: 100%; color: #ffe2b0; }
+.estop { background: rgba(255,77,94,.18) !important; border: 1px solid var(--signal) !important; color: #ffd0d5 !important; font-weight: 600; padding: 8px 14px !important; }
+.estop:hover:not(:disabled), .estop:focus-visible { background: rgba(255,77,94,.32) !important; color: #fff !important; box-shadow: 0 0 16px rgba(255,77,94,.55) !important; }
