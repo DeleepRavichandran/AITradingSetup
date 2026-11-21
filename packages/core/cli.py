@@ -90,10 +90,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"artefacts: {path}")
     elif a.cmd == "research":
         from nseql.agents.llm import default_client
-        from nseql.research.loop import ResearchBudget, ResearchLoop
+        from nseql.research.loop import ResearchBudget, ResearchLoop, SandboxUnavailable
         from nseql.research.registry import Registry
         out = ResearchLoop(s.data_dir, s.experiments_dir, Registry(s.registry_path), dataset_id=a.dataset, seed=a.seed, llm=default_client(),
-                           budget=ResearchBudget(max_iterations=a.iterations, max_backtests=a.max_backtests)).run()
+                           budget=ResearchBudget(max_iterations=a.iterations, max_backtests=a.max_backtests))
+        try:
+            out = out.run()
+        except SandboxUnavailable as e:
+            print(e); print("Backtests, screening and paper trading still work; research needs Linux or Docker Desktop."); return 2
         print(f"experiment {out['experiment_id']}  status={out['status']}  usage={out['usage']}  inventor={out['inventor']}")
         for x in out["results"]:
             print(f"\n=== {x['hypothesis_id']} [{x['family']}] -> {x['decision']} {x['reasons']}\n{x['explanation']}")

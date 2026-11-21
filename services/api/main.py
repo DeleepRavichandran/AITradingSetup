@@ -650,6 +650,11 @@ def create_app() -> FastAPI:
     @api.post("/research/run")
     def research_run(body: ResearchIn):
         st.dataset(body.dataset_id)
+        ok, detail = sandbox.isolation_status()
+        if not ok:
+            raise HTTPException(409, "Research runs AI-written strategy code, which only runs inside the Linux sandbox, and that "
+                                     f"is not available on this machine ({detail}). Backtests, screening, paper trading and the "
+                                     "Command Deck all still work. To enable research on Windows, run the lab in Docker Desktop.")
         if any(j["kind"] == "research" and j["status"] == "running" for j in st.jobs.values()):
             raise HTTPException(409, "a research run is already in progress")
 

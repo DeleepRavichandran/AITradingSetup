@@ -32,3 +32,29 @@ def test_windows_scripts_never_load_the_approval_secret_or_enable_live_trading()
     for f in (ROOT / "scripts" / "windows").glob("*.ps1"):
         text = f.read_text().lower()
         assert "live_trading_enabled=true" not in text.replace(" ", "") and "approve_strategy" not in text, f.name
+
+
+def test_research_refuses_up_front_without_a_sandbox_and_records_nothing(data_dir, tmp_path, monkeypatch):
+    """On a machine without the sandbox (e.g. native Windows) research must not record 'rejected' hypotheses:
+    nothing was tested, and the learning agent would learn from failures that never happened."""
+    import pytest as _pt
+    from fastapi.testclient import TestClient
+
+    from nseql import config
+    from nseql.research import loop as L
+    from nseql.research.registry import Registry
+    monkeypatch.setattr(sandbox, "isolation_status", lambda refresh=False: (False, "Linux namespaces are not available on win32"))
+    reg = Registry(tmp_path / "r.sqlite")
+    with _pt.raises(L.SandboxUnavailable, match="not available on this machine"):
+        L.ResearchLoop(data_dir, tmp_path, reg, dataset_id="synthetic_v1").run()
+    assert reg.hypotheses(100) == [] and reg.experiments(100) == []
+    tok = "sandbox-refusal-test-operator-token-1"
+    for k, v in {"NSEQL_DATA_DIR": str(data_dir), "NSEQL_EXPERIMENTS_DIR": str(tmp_path / "exp"), "NSEQL_AUTO_FIXTURE": "false",
+                 "NSEQL_API_TOKEN": tok}.items():
+        monkeypatch.setenv(k, v)
+    config.get_settings.cache_clear()
+    from nseql.api.main import create_app
+    c = TestClient(create_app(), headers={"Authorization": f"Bearer {tok}"})
+    r = c.post("/api/research/run", json={})
+    assert r.status_code == 409 and "Docker Desktop" in r.json()["detail"] and "still work" in r.json()["detail"]
+    config.get_settings.cache_clear()

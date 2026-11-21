@@ -56,6 +56,10 @@ def get_partition(reg: Registry, ds: Dataset) -> V.Partition:
     return p
 
 
+class SandboxUnavailable(RuntimeError):
+    """Raised when research cannot run because AI-written code has nowhere safe to run."""
+
+
 class ResearchLoop:
     def __init__(self, data_dir: Path, experiments_dir: Path, registry: Registry, *, dataset_id: str = "synthetic_v1",
                  seed: int = 0, llm: LLMClient | None = None, budget: ResearchBudget | None = None,
@@ -307,6 +311,12 @@ class ResearchLoop:
 
     # ------------------------------------------------------------------ the loop
     def run(self, title: str = "autonomous research run") -> dict:
+        ok, detail = sandbox.isolation_status()
+        if not ok:
+            # Research runs AI-written code, which only ever runs inside the sandbox. Without it nothing can be
+            # tested, so stop before proposing anything: recording "rejected" hypotheses here would teach the
+            # learning agent that ideas failed when they were never run.
+            raise SandboxUnavailable(f"Research needs the strategy sandbox, which is not available on this machine: {detail}")
         self.t0 = time.monotonic()
         self.eid = self.reg.start_experiment(title, self.budget.to_dict())
         self.reg.audit("research_director", "EXPERIMENT_STARTED", experiment=self.eid, budget=self.budget.to_dict())
