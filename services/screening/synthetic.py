@@ -33,3 +33,31 @@ def minute_stream(n_symbols: int, days: list[str], *, seed: int = 0, missing: fl
 
 def symbols(n: int) -> list[str]:
     return [f"SYN{i:03d}" for i in range(n)]
+
+
+def factor_stream(n_symbols: int, days: list[str], *, seed: int = 0, factor_vol: float = 0.0010, idio_vol: float = 0.0008,
+                  edge_share: float = 0.2, edge_bps: float = 0.4) -> list[tuple[pd.Timestamp, list[dict]]]:
+    """SYNTHETIC bars with a common market factor (so many BUY signals fire in the same minute) and a few
+    symbols with a small persistent upward drift (``edge_bps`` per minute for ``edge_share`` of symbols).
+    Built for comparing capital allocators; the persistent drift is an assumption real markets need not share."""
+    rng = np.random.default_rng(seed)
+    syms = [f"SYN{i:03d}" for i in range(n_symbols)]
+    px = rng.uniform(80, 3000, n_symbols)
+    drift = np.where(rng.random(n_symbols) < edge_share, edge_bps / 1e4, 0.0)
+    beta = rng.uniform(0.6, 1.4, n_symbols)
+    liq = rng.uniform(300, 8000, n_symbols)
+    out = []
+    for day in days:
+        d0 = pd.Timestamp(day)
+        for k in range(1, SESSION_MINUTES + 1):
+            ts = d0 + pd.Timedelta(minutes=SESSION_OPEN_MIN + k)
+            r = drift + beta * rng.normal(0, factor_vol) + rng.normal(0, idio_vol, n_symbols)
+            o = px
+            c = np.round(px * np.exp(r), 2)
+            h = np.round(np.maximum(o, c) * (1 + np.abs(rng.normal(0, 0.0004, n_symbols))), 2)
+            lo = np.round(np.minimum(o, c) * (1 - np.abs(rng.normal(0, 0.0004, n_symbols))), 2)
+            v = np.maximum(1, rng.poisson(liq))
+            out.append((ts, [{"symbol": syms[j], "ts": ts, "open": float(o[j]), "high": float(h[j]), "low": float(lo[j]),
+                              "close": float(c[j]), "volume": float(v[j])} for j in range(n_symbols)]))
+            px = c
+    return out

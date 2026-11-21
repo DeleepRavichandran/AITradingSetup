@@ -1147,6 +1147,8 @@ def create_app() -> FastAPI:
                for r in db.execute("SELECT horizon, COUNT(*), SUM(realized_paise), SUM(charges_paise) FROM paper_orders WHERE status='filled' GROUP BY horizon")}
         lat = [r[0] for r in db.execute("SELECT latency_ms FROM cycles WHERE status='processed' ORDER BY minute DESC LIMIT 375")]
         return clean({"horizons": by_h, "paper": pnl, "decisions": dict(db.execute("SELECT decision, COUNT(*) FROM signals GROUP BY decision").fetchall()),
+                      "buy_allocation": dict(db.execute("SELECT COALESCE(alloc_status, 'not recorded'), COUNT(*) FROM signals WHERE decision='BUY' "
+                                                        "GROUP BY 1").fetchall()),
                       "latency_ms_recent": {"p50": float(np.percentile(lat, 50)), "p99": float(np.percentile(lat, 99)), "n": len(lat)} if lat else None,
                       "run": screening.get("meta"), "watermark": sch.watermark,
                       "note": "Forward PAPER ledger of the screening loop: simulated fills from the next minute "
@@ -1164,8 +1166,10 @@ def create_app() -> FastAPI:
         return _page("configs", "idx", {"horizon": horizon, "family": family, "timeframe": timeframe, "symbol": symbol}, limit, offset)
 
     @api.get("/screening/signals")
-    def screening_signals(horizon: str = "", symbol: str = "", decision: str = "", config_id: str = "", limit: int = 50, offset: int = 0):
-        return _page("signals", "bar_ts DESC, config_id", {"horizon": horizon, "symbol": symbol, "decision": decision, "config_id": config_id}, limit, offset)
+    def screening_signals(horizon: str = "", symbol: str = "", decision: str = "", config_id: str = "", alloc_status: str = "",
+                          limit: int = 50, offset: int = 0):
+        return _page("signals", "bar_ts DESC, config_id", {"horizon": horizon, "symbol": symbol, "decision": decision, "config_id": config_id,
+                                                           "alloc_status": alloc_status}, limit, offset)
 
     @api.get("/screening/orders")
     def screening_orders(horizon: str = "", status: str = "", symbol: str = "", side: str = "", config_id: str = "", limit: int = 50, offset: int = 0):

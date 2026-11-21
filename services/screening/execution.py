@@ -27,6 +27,9 @@ Shared portfolio (``PortfolioRules``), when enabled
     entries for the rest of the day (exits continue).
   * Every refused BUY is recorded with its reason. The strategy's signal is still recorded: the research
     ledger shows what it wanted; the paper ledger shows what the portfolio allowed.
+  * Allocation order (``allocation``): ``ranked`` (default; see allocator.py) serves the minute's BUY
+    signals best-first by forward evidence, costs, liquidity, correlation and concentration, and labels
+    each accepted / rejected / deferred. ``first_come`` is the original registry-order baseline.
 """
 from __future__ import annotations
 
@@ -37,6 +40,7 @@ import numpy as np
 import pandas as pd
 
 from nseql.instruments.models import Instrument, Kind
+from nseql.screening.allocator import Allocator, AllocatorConfig
 from nseql.money import to_paise
 
 NOTIONAL = 100_000.0
@@ -63,6 +67,7 @@ class PortfolioRules:
     max_positions: int = 50
     daily_loss_pct: float = 0.02
     cost_buffer: float = 0.003          # cash reserved above the order value for slippage and charges
+    allocation: str = "ranked"          # "ranked" (allocator.py) or "first_come" (registry order, the old baseline)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -76,11 +81,16 @@ def _tick(px: float, tick: float, up: bool) -> float:
 class Executor:
     """Owns the order and cash state; mutates the engine's position arrays."""
 
-    STATE = ("pend_qty", "pend_req", "pend_ttl", "ord_val", "ord_brk", "ord_ch", "ord_fill", "ord_cost", "ord_res", "ord_real", "ord_last")
+    STATE = ("pend_qty", "pend_req", "pend_ttl", "ord_val", "ord_brk", "ord_ch", "ord_fill", "ord_cost", "ord_res", "ord_real", "ord_last",
+             "ord_basis")
 
-    def __init__(self, eng, cfg: ExecConfig | None, rules: PortfolioRules | None):
+    def __init__(self, eng, cfg: ExecConfig | None, rules: PortfolioRules | None, alloc_cfg: AllocatorConfig | None = None):
         self.e, self.cfg, self.rules = eng, cfg, rules
+        if rules and rules.allocation not in ("ranked", "first_come"):
+            raise ValueError(f"unknown allocation {rules.allocation!r}")
         n = len(eng.reg)
+        self.group = eng.reg.fam.astype(np.int64) * 16 + eng.reg.tf.astype(np.int64)
+        self.alloc = Allocator(n, len(eng.reg.symbols), 16 * 16, alloc_cfg)
         for k in self.STATE:
             setattr(self, k, np.zeros(n, dtype=np.int64))
         self.cash = to_paise(rules.capital) if rules else 0
@@ -132,63 +142,149 @@ class Executor:
                            "qty": 0, "reason": block_reason} for i in actionable]
         eq = self.equity() if self.rules else 0
         close = e.fe.last_close
-        if self.rules:
-            held_sym = np.bincount(r.sym, weights=np.where(e.pos == 1, e.qty * np.nan_to_num(close[r.sym]), 0.0), minlength=len(r.symbols))
-            res_sym = np.bincount(r.sym, weights=np.where(e.pend == 1, self.ord_res / 100.0, 0.0), minlength=len(r.symbols))
-            gross = float(held_sym.sum() + res_sym.sum())
-            n_pos = int(((e.pos == 1) | (e.pend == 1)).sum())
+        buys = []
         for i in actionable:
-            side = "BUY" if decisions[i] == "BUY" else "SELL"
-            if side == "SELL":
+            if decisions[i] != "BUY":
                 e.pend[i], e.pend_key[i] = -1, minute_em
                 self.pend_qty[i] = self.pend_req[i] = e.qty[i] if self.cfg else 0
                 self._reset_order(i)
-                out.append({"config": i, "side": side, "decided": minute_em, "status": "pending", "qty": int(e.qty[i]), "reason": ""})
-                continue
-            px = float(close[r.sym[i]])
-            if self.rules is None and self.cfg is None:              # simple: size at the fill
-                e.pend[i], e.pend_key[i] = 1, minute_em
+                out.append({"config": i, "side": "SELL", "decided": minute_em, "status": "pending", "qty": int(e.qty[i]), "reason": "",
+                            "alloc": "accepted", "alloc_reason": "exits are always served", "score": None})
+            else:
+                buys.append(i)
+        if not buys:
+            return out
+        est = self.alloc.estimates(self.group)
+        if self.rules is None:
+            for i in buys:
+                q = 0
+                if self.cfg is not None:                             # realistic fills, own Rs 1,00,000 per configuration
+                    px = float(close[r.sym[i]])
+                    q = int(NOTIONAL // px) if px > 0 else 0
+                    if q <= 0:
+                        out.append(self._buy_rec(i, minute_em, "rejected", q, "price above trade size", "rejected"))
+                        continue
+                e.pend[i], e.pend_key[i] = 1, minute_em                 # simple model: sized at the fill
                 self._reset_order(i)
-                out.append({"config": i, "side": side, "decided": minute_em, "status": "pending", "qty": 0, "reason": ""})
-                continue
-            value = self.rules.per_trade_pct * eq / 100 if self.rules else NOTIONAL
-            q = int(value // px) if px > 0 else 0
-            need = q * px * (1 + (self.rules.cost_buffer if self.rules else 0))
-            why = ""
-            if q <= 0:
+                self.pend_qty[i] = self.pend_req[i] = q
+                self.pend_ttl[i] = self.cfg.entry_ttl_minutes if self.cfg else 0
+                self.alloc.record_entry(i, float(est["p_win"][i]))
+                out.append(self._buy_rec(i, minute_em, "pending", q, "", "accepted", "no shared portfolio"))
+            return out
+
+        rules, lim = self.rules, eq / 100
+        held_sym = np.bincount(r.sym, weights=np.where(e.pos == 1, e.qty * np.nan_to_num(close[r.sym]), 0.0), minlength=len(r.symbols))
+        res_sym = np.bincount(r.sym, weights=np.where(e.pend == 1, self.ord_res / 100.0, 0.0), minlength=len(r.symbols))
+        gross = float(held_sym.sum() + res_sym.sum())
+        n_pos = int(((e.pos == 1) | (e.pend == 1)).sum())
+        free = (self.cash - self.reserved) / 100
+        start = (free, n_pos, held_sym + res_sym, gross)                   # limits as they stood before this minute's entries
+        b = np.array(buys, dtype=np.int64)
+        px = close[r.sym[b]]
+        q0 = np.where(px > 0, (rules.per_trade_pct * lim) // np.where(px > 0, px, 1), 0).astype(np.int64)
+        ranked = rules.allocation == "ranked"
+        info: dict[int, dict] = {}
+        if ranked:
+            order, info = self._rank(b, px, q0, est, held_sym, lim)
+        else:
+            order = list(buys)                                         # registry order
+        q_of = dict(zip(buys, (int(x) for x in q0)))
+        earlier = "higher-ranked" if ranked else "earlier"
+        new_in_sym: dict[int, int] = {}
+        for i in order:
+            s = int(r.sym[i])
+            d = info.get(i, {})
+            q = int(d["q"]) if ranked else q_of[i]
+            p = float(close[s])
+            need = q * p * (1 + rules.cost_buffer)
+            why, kind = "", "rejected"
+            if d.get("why"):
+                why = d["why"]
+            elif q <= 0:
                 why = "price above trade size"
-            elif self.rules:
-                s = r.sym[i]
-                lim = eq / 100
-                if self.halted_day:
-                    why = "daily loss limit reached"
-                elif n_pos >= self.rules.max_positions:
-                    why = f"max {self.rules.max_positions} positions"
-                elif (self.cash - self.reserved) / 100 < need:
-                    why = "not enough free cash"
-                elif held_sym[s] + res_sym[s] + need > self.rules.max_symbol_pct * lim:
-                    why = f"symbol exposure above {self.rules.max_symbol_pct:.0%}"
-                elif gross + need > self.rules.max_gross_pct * lim:
-                    why = f"gross exposure above {self.rules.max_gross_pct:.0%}"
+            elif self.halted_day:
+                why = "daily loss limit reached"
+            elif ranked and new_in_sym.get(s, 0) >= self.cfg_alloc.max_new_per_symbol:
+                why, kind = "redundant: a higher-ranked configuration already entered this symbol this minute", "deferred"
+            else:
+                checks = (("max_positions", n_pos >= rules.max_positions, start[1] >= rules.max_positions, f"max {rules.max_positions} positions"),
+                          ("cash", free < need, start[0] < need, "not enough free cash"),
+                          ("symbol", held_sym[s] + res_sym[s] + need > rules.max_symbol_pct * lim,
+                           start[2][s] + need > rules.max_symbol_pct * lim, f"symbol exposure above {rules.max_symbol_pct:.0%}"),
+                          ("gross", gross + need > rules.max_gross_pct * lim, start[3] + need > rules.max_gross_pct * lim,
+                           f"gross exposure above {rules.max_gross_pct:.0%}"))
+                for _, now_fails, before_fails, text in checks:
+                    if now_fails:
+                        if before_fails:
+                            why = text
+                        else:
+                            why, kind = f"{text} after {earlier} signals this minute", "deferred"
+                        break
+            expl = d["explain"] if ranked else "registry order (first come)"
             if why:
-                out.append({"config": i, "side": side, "decided": minute_em, "status": "rejected", "qty": q, "reason": why})
+                out.append(self._buy_rec(i, minute_em, "rejected", q, why, kind, expl, d.get("score")))
                 continue
             e.pend[i], e.pend_key[i] = 1, minute_em
             self._reset_order(i)
             self.pend_qty[i] = self.pend_req[i] = q
             self.pend_ttl[i] = self.cfg.entry_ttl_minutes if self.cfg else 0
-            if self.rules:
-                res = to_paise(need)
-                self.ord_res[i] = res
-                self.reserved += res
-                res_sym[r.sym[i]] += need
-                gross += need
-                n_pos += 1
-            out.append({"config": i, "side": side, "decided": minute_em, "status": "pending", "qty": q, "reason": ""})
+            res = to_paise(need)
+            self.ord_res[i] = res
+            self.reserved += res
+            free -= need
+            res_sym[s] += need
+            gross += need
+            n_pos += 1
+            new_in_sym[s] = new_in_sym.get(s, 0) + 1
+            self.alloc.record_entry(i, float(est["p_win"][i]))
+            out.append(self._buy_rec(i, minute_em, "pending", q, "", "accepted", expl, d.get("score")))
         return out
 
+    @property
+    def cfg_alloc(self) -> AllocatorConfig:
+        return self.alloc.cfg
+
+    @staticmethod
+    def _buy_rec(i, em, status, q, reason, alloc, explain=None, score=None) -> dict:
+        return {"config": int(i), "side": "BUY", "decided": em, "status": status, "qty": int(q), "reason": reason, "alloc": alloc,
+                "alloc_reason": reason or explain or "", "score": None if score is None else round(float(score), 3)}
+
+    def _rank(self, b: np.ndarray, px: np.ndarray, q0: np.ndarray, est: dict, held_sym: np.ndarray, lim: float):
+        """Order this minute's BUY candidates best-first. Uses only state at the decision minute."""
+        e, r, a, c = self.e, self.e.reg, self.alloc, self.alloc.cfg
+        sym = r.sym[b]
+        vol = a.ewma_vol[sym]
+        ttl = self.cfg.entry_ttl_minutes if self.cfg else 1
+        part = self.cfg.participation if self.cfg else 1.0
+        cap = np.floor(part * vol * ttl).astype(np.int64)
+        q = np.minimum(q0, cap)
+        impact_bps = (self.cfg.impact_bps if self.cfg else 0.0) * np.sqrt(q / np.maximum(vol, 1.0)) * 2      # in and out
+        rel = a.reliability()
+        mu_bps = est["mu"][b] * 1e4
+        corr = a.correlation(held_sym)[sym]
+        sym_share = held_sym[sym] / max(self.rules.max_symbol_pct * lim, 1e-9)
+        open_fam = np.bincount(r.fam[e.pos == 1], minlength=int(r.fam.max()) + 1)
+        fam_share = open_fam[r.fam[b]] / max(open_fam.sum(), 1)
+        score = rel * mu_bps - impact_bps - c.corr_bps * np.maximum(corr, 0) - c.conc_bps * sym_share - c.family_bps * fam_share
+        qual = est["qualified"][b]
+        idx = sorted(range(len(b)), key=lambda j: (not qual[j], -score[j], int(b[j])))
+        info = {}
+        for rank, j in enumerate(idx, 1):
+            i = int(b[j])
+            note = "" if q[j] >= q0[j] else f"; size cut from {int(q0[j])} to {int(q[j])} shares by liquidity"
+            exp_net = rel * mu_bps[j] - impact_bps[j]
+            why = "no liquidity: recent volume too low" if q[j] <= 0 < q0[j] else ""
+            if not why and c.reject_negative and a.ev_n[i] >= c.min_trades and exp_net < 0:
+                why = f"expected net return after costs {exp_net:.1f} bps over {int(a.ev_n[i])} forward trades"
+            info[i] = {"q": int(q[j]), "score": float(score[j]), "why": why,
+                       "explain": (f"rank {rank}/{len(b)}{' (qualified)' if qual[j] else ''}: score {score[j]:.1f} bps = "
+                                   f"expected net {rel * mu_bps[j]:.1f} (from {int(a.ev_n[i])} trades, confidence {est['confidence'][i]:.2f}) "
+                                   f"- impact {impact_bps[j]:.1f} - correlation {c.corr_bps * max(corr[j], 0):.1f} "
+                                   f"- concentration {c.conc_bps * sym_share[j] + c.family_bps * fam_share[j]:.1f}{note}")}
+        return [int(b[j]) for j in idx], info
+
     def _reset_order(self, i: int) -> None:
-        for k in ("ord_val", "ord_brk", "ord_ch", "ord_fill", "ord_cost", "ord_res", "ord_real"):
+        for k in ("ord_val", "ord_brk", "ord_ch", "ord_fill", "ord_cost", "ord_res", "ord_real", "ord_basis"):
             getattr(self, k)[i] = 0
 
     # ------------------------------------------------------------------ fills
@@ -274,6 +370,7 @@ class Executor:
             alloc = int(e.entry_ch[i] * q // held) if q < held else int(e.entry_ch[i])
             realized = int((to_paise(px) - to_paise(e.entry_px[i])) * q - alloc - ch.total)
             self.ord_real[i] += realized
+            self.ord_basis[i] += to_paise(e.entry_px[i]) * q
             e.qty[i] = held - q
             e.entry_ch[i] -= alloc
             self.cash += val - ch.total
@@ -290,6 +387,8 @@ class Executor:
             self.reserved -= int(self.ord_res[i])
             self.ord_res[i] = 0
         filled = int(self.ord_fill[i])
+        if side == "SELL" and self.ord_basis[i] > 0:                 # a round trip finished: forward evidence for ranking
+            self.alloc.record_round_trip(i, float(self.ord_real[i]) / float(self.ord_basis[i]))
         rec = {"config": i, "side": side, "decided": int(e.pend_key[i]), "status": status, "reason": reason, "filled_qty": filled,
                "requested_qty": int(self.pend_req[i]) if self.cfg or self.rules else filled,
                "avg_price": (self.ord_cost[i] / filled / 100) if filled else None, "charges_paise": int(self.ord_ch[i]),
@@ -312,18 +411,25 @@ class Executor:
                 "gross_exposure_inr": float(by_sym.sum()), "top_symbols": [{"symbol": r.symbols[s], "value_inr": round(float(by_sym[s]), 2),
                                                                              "pct_equity": round(float(by_sym[s]) / max(eq / 100, 1), 4)}
                                                                             for s in top if by_sym[s] > 0],
-                "rules": self.rules.to_dict() if self.rules else None, "execution": self.cfg.to_dict() if self.cfg else None}
+                "rules": self.rules.to_dict() if self.rules else None, "execution": self.cfg.to_dict() if self.cfg else None,
+                "allocation": {"method": self.rules.allocation if self.rules else "none", "settings": self.alloc.cfg.to_dict(),
+                               "configs_with_evidence": int((self.alloc.ev_n > 0).sum()), "round_trips": int(self.alloc.ev_n.sum()),
+                               "qualified_configs": int(self.alloc.estimates(self.group)["qualified"].sum()),
+                               "calibration": self.alloc.calibration()}}
 
     def state(self) -> dict:
         st = {f"x_{k}": getattr(self, k) for k in self.STATE}
         st["x_scalars"] = np.array([self.cash, self.reserved, self.day, self.day_start, int(self.halted_day)], dtype=np.int64)
         st["x_mode"] = np.array([int(self.cfg is not None), int(self.rules is not None)])
+        st.update(self.alloc.state())
         return st
 
     def load(self, st: dict) -> None:
         if "x_mode" in st and tuple(int(x) for x in st["x_mode"]) != (int(self.cfg is not None), int(self.rules is not None)):
             raise ValueError("checkpoint was taken with a different execution model / portfolio setting")
         for k in self.STATE:
-            setattr(self, k, np.array(st[f"x_{k}"]))
+            v = st.get(f"x_{k}")
+            setattr(self, k, np.array(v) if v is not None else np.zeros(len(self.e.reg), dtype=np.int64))   # older checkpoints
+        self.alloc.load(st)
         self.cash, self.reserved, self.day, self.day_start, h = (int(x) for x in np.asarray(st["x_scalars"]))
         self.halted_day = bool(h)

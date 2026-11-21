@@ -112,6 +112,7 @@ class ScreeningEngine:
         res.fills, res.done = self.x.fill(ts, has_bar, open_px, vol)
         # 2. features
         res.closed = fe.update(ts, sel, o, h, lo, c, v)
+        self.x.alloc.observe(has_bar, fe.last_close, vol)                # recent returns and volume, for ranking entries
         # 3. eligibility
         rule = np.zeros(len(r), dtype=bool)
         for tf in res.closed:

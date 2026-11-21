@@ -21,13 +21,14 @@ export default function Screening() {
   const [sigOff, setSigOff] = useState(0);
   const [cfgOff, setCfgOff] = useState(0);
   const [decision, setDecision] = useState("");
+  const [alloc, setAlloc] = useState("");
   const [jobId, setJobId] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const { job, running } = useJob(jobId);
   const status = useApi<any>("/screening/status", 10000);
   const started = status.data?.started;
   const summary = useApi<any>(started ? "/screening/summary" : null, 10000);
-  const signals = useApi<any>(started ? `/screening/signals?horizon=${hz}&decision=${decision}&limit=${PAGE}&offset=${sigOff}` : null, 10000);
+  const signals = useApi<any>(started ? `/screening/signals?horizon=${hz}&decision=${decision}&alloc_status=${alloc}&limit=${PAGE}&offset=${sigOff}` : null, 10000);
   const configs = useApi<any>(started ? `/screening/configs?horizon=${hz}&limit=${PAGE}&offset=${cfgOff}` : null);
   const orders = useApi<any>(started ? `/screening/orders?horizon=${hz}&status=filled&limit=${PAGE}` : null, 10000);
   const cycles = useApi<any>(started ? "/screening/cycles?limit=30" : null, 10000);
@@ -68,6 +69,7 @@ export default function Screening() {
           <KV items={[
             ["Execution", pf.data.execution ? `realistic: ≤${(pf.data.execution.participation * 100).toFixed(0)}% of each bar's volume, ${pf.data.execution.half_spread_bps} bps half-spread + impact, entries time out after ${pf.data.execution.entry_ttl_minutes} min` : "simple: whole order at the next open"],
             ["Limits", pf.data.rules ? `${(pf.data.rules.per_trade_pct * 100).toFixed(0)}% of equity per trade · ≤${(pf.data.rules.max_symbol_pct * 100).toFixed(0)}% per symbol · ≤${(pf.data.rules.max_gross_pct * 100).toFixed(0)}% gross · stop new entries at −${(pf.data.rules.daily_loss_pct * 100).toFixed(0)}% on the day` : "none (each configuration has its own Rs 1,00,000)"],
+            ["Allocation", pf.data.allocation ? `${pf.data.allocation.method === "ranked" ? "ranked by forward evidence, costs, liquidity, correlation and concentration" : pf.data.allocation.method === "first_come" ? "first come (registry order)" : "none"} · ${num(pf.data.allocation.round_trips, 0)} forward round trips · ${num(pf.data.allocation.qualified_configs, 0)} qualified configurations${pf.data.allocation.calibration?.brier != null ? ` · Brier ${pf.data.allocation.calibration.brier} vs base rate ${pf.data.allocation.calibration.base_rate_brier}` : ""}` : "—"],
             ["Signals refused", Object.keys(pf.data.refused_signals || {}).length ? Object.entries(pf.data.refused_signals).map(([k, v]: any) => `${k}: ${num(v, 0)}`).join(" · ") : "none"],
             ["Largest holdings", (pf.data.top_symbols || []).map((x: any) => `${x.symbol} ${(x.pct_equity * 100).toFixed(1)}%`).join(" · ") || "none"],
           ] as [string, React.ReactNode][]} />
@@ -80,11 +82,18 @@ export default function Screening() {
         </Card>
         <Card title="Decisions" right={<select aria-label="Filter decisions" value={decision} onChange={(e) => { setDecision(e.target.value); setSigOff(0); }}>
           <option value="">BUY + EXIT</option><option value="BUY">BUY</option><option value="EXIT">EXIT</option></select>}>
+          <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }} role="group" aria-label="Allocation outcome">
+            {[["", "All outcomes"], ["accepted", "Accepted"], ["deferred", "Deferred"], ["rejected", "Rejected"]].map(([k, l]) =>
+              <button key={k} className={alloc === k ? "primary" : ""} aria-pressed={alloc === k} onClick={() => { setAlloc(k); setSigOff(0); }}>{l}
+                {sm?.buy_allocation && k ? ` (${num(sm.buy_allocation[k] || 0, 0)} BUY)` : ""}</button>)}
+          </div>
           <Err e={signals.error} />
           <DataTable maxHeight={420} rows={signals.data?.rows || []} cols={[
             { key: "bar_ts", label: "bar close", f: (r: any) => r.bar_ts.replace("T", " ") }, { key: "symbol", label: "symbol" },
             { key: "horizon", label: "horizon" }, { key: "decision", label: "decision", f: (r: any) => <Badge s={r.decision} tone={r.decision === "BUY" ? "good" : "warn"} /> },
             { key: "reason", label: "why" }, { key: "price", label: "close", r: true, f: (r: any) => num(r.price, 2) },
+            { key: "alloc_status", label: "allocation", f: (r: any) => r.alloc_status ? <Badge s={r.alloc_status} tone={r.alloc_status === "accepted" ? "good" : r.alloc_status === "deferred" ? "warn" : "crit"} /> : <span className="dim">not recorded</span> },
+            { key: "alloc_reason", label: "allocation reason", f: (r: any) => <span style={{ fontSize: 12 }}>{r.alloc_reason || ""}</span> },
             { key: "config_id", label: "configuration", f: (r: any) => <span className="mono">{r.config_id}</span> }]} />
           <Pager total={signals.data?.total || 0} offset={sigOff} set={setSigOff} />
         </Card>

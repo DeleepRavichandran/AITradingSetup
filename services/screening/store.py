@@ -5,7 +5,8 @@
                   (first value wins). Bars that arrive after their minute was processed are stored
                   with late=1 and not applied either.
     cycles        one row per processed minute: latency, freshness, eligible/evaluated counts, gaps.
-    signals       actionable decisions (BUY / EXIT ...), keyed (config_id, bar_ts).
+    signals       actionable decisions (BUY / EXIT ...), keyed (config_id, bar_ts), with the allocator's outcome
+                  (accepted / rejected / deferred), its reason and the ranking score.
     paper_orders  the FORWARD PAPER LEDGER of the screening loop, keyed (config_id, decided_at, side).
                   Separate from the backtest ledgers (historical research) and the paper-session
                   journals; nothing here is ever sent to a broker.
@@ -71,6 +72,7 @@ class ScreeningStore:
         self.db.execute("PRAGMA synchronous=NORMAL")
         self.db.executescript(SCHEMA)
         for table, col, typ in (("paper_orders", "requested_qty", "INTEGER"), ("paper_orders", "reason", "TEXT"),
+                                ("signals", "alloc_status", "TEXT"), ("signals", "alloc_reason", "TEXT"), ("signals", "alloc_score", "REAL"),
                                 ("cycles", "equity_inr", "REAL"), ("cycles", "cash_inr", "REAL"), ("cycles", "halted", "INTEGER")):
             cols = {r[1] for r in self.db.execute(f"PRAGMA table_info({table})")}
             if col not in cols:                                  # runs created before these columns existed
@@ -129,7 +131,8 @@ class ScreeningStore:
                         "closed, eligible, evaluated, skipped_pending, stale_skips, counts, fills, equity_inr, cash_inr, halted) VALUES "
                         "(:minute,:processed_at,:latency_ms,:lag_s,:mode,:status,:symbols_with_data,:symbols_expected,:closed,:eligible,"
                         ":evaluated,:skipped_pending,:stale_skips,:counts,:fills,:equity_inr,:cash_inr,:halted)", cycle)
-            cur.executemany("INSERT OR IGNORE INTO signals VALUES (?,?,?,?,?,?,?)", signals)
+            cur.executemany("INSERT OR IGNORE INTO signals (config_id, bar_ts, horizon, symbol, decision, price, reason, alloc_status, alloc_reason, "
+                            "alloc_score) VALUES (?,?,?,?,?,?,?,?,?,?)", signals)
             cur.executemany("INSERT OR IGNORE INTO paper_orders (order_key, config_id, symbol, side, horizon, decided_at, status, requested_qty, reason) "
                             "VALUES (?,?,?,?,?,?,?,?,?)", orders)
             cur.executemany("INSERT OR IGNORE INTO paper_fills VALUES (?,?,?,?,?,?,?,?,?,?)", fills)
@@ -164,7 +167,7 @@ class ScreeningStore:
 
     @_locked
     def page(self, table: str, *, where: dict | None = None, order: str, limit: int = 50, offset: int = 0) -> dict:
-        allowed = {"signals": {"horizon", "symbol", "decision", "config_id"}, "paper_orders": {"horizon", "symbol", "side", "status", "config_id"},
+        allowed = {"signals": {"horizon", "symbol", "decision", "config_id", "alloc_status"}, "paper_orders": {"horizon", "symbol", "side", "status", "config_id"},
                    "paper_fills": {"symbol", "side", "config_id", "order_key"}, "portfolio_events": {"event"}, "refusals": {"reason"},
                    "cycles": {"status"}, "configs": {"horizon", "family", "timeframe", "symbol", "status"}}
         if table not in allowed:

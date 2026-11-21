@@ -186,7 +186,10 @@ class MinuteScheduler:
         hz = lambda i: "intraday" if r.intraday[i] else "swing"
         iso_em = lambda em: _iso(pd.Timestamp(int(em) * 60_000_000_000))
         okey = lambda i, decided, side: f"{r.ids[i]}|{iso_em(decided)}|{side}"
-        signals = [(str(r.ids[i]), minute, hz(i), r.symbols[r.sym[i]], d, p, why) for i, d, p, why in res.signals]
+        alloc = {o["config"]: o for o in res.orders}
+        sig_alloc = lambda i: (alloc.get(i, {}).get("alloc", "rejected" if i in alloc else None), alloc.get(i, {}).get("alloc_reason") or alloc.get(i, {}).get("reason"),
+                               alloc.get(i, {}).get("score"))
+        signals = [(str(r.ids[i]), minute, hz(i), r.symbols[r.sym[i]], d, p, why, *sig_alloc(i)) for i, d, p, why in res.signals]
         orders = [(okey(o["config"], o["decided"], o["side"]), str(r.ids[o["config"]]), r.symbols[r.sym[o["config"]]], o["side"],
                    hz(o["config"]), iso_em(o["decided"]), o["status"], o["qty"], o["reason"]) for o in res.orders if o["status"] != "rejected"]
         # a refused BUY is already in `signals` (what the strategy wanted); store only counts per reason, not a row each
