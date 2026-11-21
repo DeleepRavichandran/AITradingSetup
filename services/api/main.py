@@ -1151,6 +1151,16 @@ def create_app() -> FastAPI:
         return _page("paper_orders", "decided_at DESC, order_key", {"horizon": horizon, "status": status, "symbol": symbol, "side": side,
                                                                     "config_id": config_id}, limit, offset)
 
+    news_desk: dict = {}
+
+    @api.get("/news")
+    def news(limit: int = 30, topic: str = "", refresh: bool = False):
+        """World and market headlines from public RSS feeds (fetched by this machine, cached 10 minutes)."""
+        from nseql.data.news import NewsDesk
+        if "desk" not in news_desk:
+            news_desk["desk"] = NewsDesk(st.exp_dir)
+        return clean(news_desk["desk"].headlines(min(max(limit, 1), 100), topic or None, refresh))
+
     @api.get("/screening/fills")
     def screening_fills(symbol: str = "", side: str = "", config_id: str = "", order_key: str = "", limit: int = 50, offset: int = 0):
         return _page("paper_fills", "ts DESC, fill_key", {"symbol": symbol, "side": side, "config_id": config_id, "order_key": order_key}, limit, offset)
