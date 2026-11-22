@@ -1,5 +1,23 @@
 # Test report
 
+## 2026-11-22 (Master Prompt V6)
+
+- Python as root: **378 passed** (479 s): 356 before V6 plus 22 new (planning maths against closed forms,
+  AMFI layouts and idempotent import, Strategy Universe summary/paging/dossier, Command Center, platform
+  status, every Vega copilot question, planning and fund routes). Re-run after the final capability-list
+  change: acceptance, universe/copilot, screening API and Windows-guard suites pass.
+- Web: parser 5/5; e2e **48/48** (Chromium, mocked API: safety flows, Command Center provenance, status-bar
+  emergency stop, universe map filter and dossier, copilot drawer, Vega via copilot, planner and empty
+  funds states; axe serious/critical in light and dark on 6 pages; 360/768/1280 px without horizontal
+  scroll); `tsc --noEmit` clean; `next build` OK.
+- Visual regression (opt-in, not CI): 6/6 against baselines made on this machine; a planted 6.29%
+  change was detected.
+- Not run this round: the unprivileged-user Python run (the V6 changes add no privilege-dependent code;
+  the last run showed only the CA-bundle environment failures); branded Chrome/Edge; any real data.
+- Defects found and fixed: goal planner solved on a rounded value (missed the target by about ₹22 on
+  ₹16 lakh); planner tabs shared one input state; histogram labels illegible when scaled; two axe
+  findings; Strategy Universe summary at 50k configurations took ~1 s per minute (now ~0.26 s).
+
 ## 2026-11-21 (independent review follow-up)
 
 | Suite | Tests |

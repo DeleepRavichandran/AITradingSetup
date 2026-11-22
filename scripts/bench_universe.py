@@ -21,7 +21,6 @@ import time
 from pathlib import Path
 
 import pandas as pd
-
 from nseql.screening import universe
 from nseql.screening.scheduler import MinuteScheduler
 from nseql.screening.synthetic import minute_stream, symbols

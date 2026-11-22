@@ -63,3 +63,83 @@ Screenshots: `docs/screenshots/v6/before/` (Chromium, dark scheme, 1440/820/390 
   pages were not covered by automated checks.
 - No duplicate backend modules found. `components/common.tsx` and `components/ui.tsx` overlap slightly
   (metric tiles), acceptable.
+
+---
+
+# After V6 (2026-11-22)
+
+## What changed
+
+| Stage | Delivered |
+|---|---|
+| A audit | This file; before screenshots; test baseline |
+| B design system | `app/globals.css` tokens (dark-first, light toggle), `components/ui.tsx` (Panel + evidence footer, Metric, StatusGrid, Unavailable, Skeleton, Segmented, Funnel, Spark, windowed VirtualTable), grouped workspace shell with a persistent status strip and one-click Emergency stop |
+| C Command Center | `/api/command-center` + rebuilt `/`: lab state, platform status (data, session, broker, workers, sandbox, paper, risk, live orders), strategy, AI and portfolio intelligence, readiness, policy versions; every panel states source, period, update time and data quality |
+| D Strategy Universe | `/api/universe/*` + `/universe`: family x timeframe map, validation funnel, return distribution, server-paged windowed table, linkable dossier |
+| E Vega | `/api/copilot/ask`: evidence-grounded answers to the V6 question list (with links and what was not read); drawer on every page (Ctrl K); Vega page moved into the shell, reactor replaced by a compact voice-state meter; confirmations, emergency stop, refusals and permissions unchanged |
+| F multi-asset | `nseql.analytics.planning` (SIP, step-up, lump sum, SWP, STP, goals, XIRR, historical SIP on NAVs); `nseql.data.funds` (AMFI NAV layouts, store, `nseql import-amfi`); `/planner` and `/funds` workspaces |
+| G verification | see below |
+
+## Capability matrix (after)
+
+Only changed rows are listed; everything else is as in the "before" table.
+
+| Area | Before | After |
+|---|---|---|
+| SIP / step-up SIP / SWP / STP / lump sum | absent | **working** (projections at user-assumed returns, checked against closed forms) |
+| Goal-based planning, XIRR | absent | **working** |
+| Mutual funds | absent | **unverified**: NAV data contract, importer, analytics and historical SIP work on the documented AMFI layouts; no real AMFI file imported (host unreachable from this environment) |
+| Strategy universe exploration | partial | **working**: aggregation, server-side paging, dossier (historical backtest per configuration not linked) |
+| Vega | partial | **working**: grounded copilot on every page; voice optional |
+| Portfolio intelligence | partial | partial: Command Center shows capital, deployment, drawdown, concentration, accepted/deferred/rejected signals; stress scenarios, margin/leverage across products and multi-asset portfolios are not built |
+| Positional, long-term equity, ETF, futures, options workspaces | absent / partial | **unchanged**: not built in V6 (no real data for them; no empty pages added) |
+| Fundamentals, macro, sector research | absent | **unchanged** |
+| Bonds, REITs, InvITs | absent | **unchanged** |
+
+Workspaces from the V6 list that exist and work: Command Center, Market Intelligence (existing),
+Strategy Universe, Intraday & Swing Lab, AI Research Brain, Strategy Factory, Backtesting / Walk-Forward,
+Portfolio Intelligence (existing simulation page), Paper Trading, Risk Control, Data Quality, Operations,
+Configuration & Audit, Mutual Funds, SIP & Goal Planner, Vega. Not built (no working journey yet):
+Long-Term Investment Intelligence, Futures Intelligence, Options Intelligence, ETF Explorer, a separate
+Swing/Positional lab.
+
+## Tests (after)
+
+| Suite | Result |
+|---|---|
+| Python, as root | see TEST_REPORT.md (2026-11-22) |
+| Web parser (`node:test`) | 5 / 5 |
+| Web e2e (Playwright Chromium, mocked API) | 48 / 48: safety flows, new workspaces, copilot, axe (serious/critical) in light and dark on 6 pages, no horizontal scroll at 360/768/1280 px |
+| Visual regression (`npm run test:visual`, opt-in, machine-specific baselines) | 6 / 6; a planted change of 6.29% of pixels was caught |
+
+Accessibility fixes found by axe this round: map-cell text contrast, in-text links distinguished by
+underline. Keyboard: skip link, visible focus ring, Ctrl K for Vega, Escape closes it, Enter opens a
+table row. Browsers: Chromium only (branded Chrome and Edge not tested).
+
+## Performance (docs/benchmarks/universe_api_2026-11-22.json; SYNTHETIC; in-process timing)
+
+| Configurations | Summary after a new minute | Summary cached | 500-row page | Dossier |
+|---:|---:|---:|---:|---:|
+| 1,000 | 25 ms | 19 ms | 22 ms | 8 ms |
+| 10,000 | 73 ms | 22 ms | 16 ms | 7 ms |
+| 50,000 | 263 ms | 36 ms | 29 ms | 11 ms |
+
+The browser never receives more than 500 rows at a time and renders only the visible ones.
+
+## Screenshots
+
+`docs/screenshots/v6/after/` (Chromium, dark, against a real API running a synthetic replay and one
+research run): Command Center, Strategy Universe and dossier, Vega, planner, funds, Learning Brain,
+Intraday & Swing Lab, at desktop, tablet and phone widths.
+
+## Remaining blockers and next milestones
+
+1. **Real data.** Every strategy figure is from synthetic data. Angel One verification (`nseql
+   angel-verify`) and a real AMFI import must be run by the operator.
+2. **Futures and options workspaces** need licensed historical contract data (option chains, IV) before
+   a volatility surface or options analytics can be honest.
+3. **Fundamentals and macro** need a licensed source; nothing is scraped.
+4. **Per-configuration historical backtests and walk-forward** should be linked into the dossier
+   (the backtester supports `screened_config`; wiring a job per configuration is next).
+5. **Portfolio stress scenarios and multi-asset portfolios** (equity + funds) are not built.
+6. **Learning**: the infrastructure exists; out-of-sample improvement is still not demonstrated.
