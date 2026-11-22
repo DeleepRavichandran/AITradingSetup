@@ -16,7 +16,7 @@ import shutil
 import threading
 import time
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 import numpy as np
@@ -1266,6 +1266,141 @@ def create_app() -> FastAPI:
                          "live": screening.get("live")},
             "recovery": sch.recovery, "readiness": _readiness(),
         })
+
+    # ------------------------------------------------------------------ V6: platform status, Command Center, Strategy Universe
+    from nseql.analytics import planning as plan_mod
+    from nseql.api import views
+    from nseql.data.funds import FundStore
+    from nseql.research import copilot as copilot_mod
+    from nseql.screening import universe as uni
+
+    @api.get("/platform/status")
+    def platform_status(request: Request):
+        sch = _screening_open()
+        rd = _readiness()
+        return clean({"data_source": sch.provenance() if sch is not None else {"kind": "none", "label": "No market data attached", "live": False},
+                      "market": views.market_session(_calendar()), "kill_switch": {"engaged": st.kill.engaged, "reason": st.kill.reason},
+                      "live_trading_enabled": st.settings.live_trading_enabled, "role": request.state.role, "auth_required": not insecure_local,
+                      "modules": {"ready": sum(m["status"] == "ready" for m in rd), "total": len(rd),
+                                  "attention": [m["module"] for m in rd if m["status"] in ("blocked", "degraded", "engaged", "unavailable")]},
+                      "version": code_version()})
+
+    @api.get("/command-center")
+    def command_center():
+        sch = _screening_open()
+        try:
+            bstate = brain.versions.state()
+        except Exception:  # noqa: BLE001 - the page renders without the brain section
+            bstate = {}
+        return clean(views.command_center(st=st, sch=sch, reg=reg, brain_status=_brain_status(), brain_state=bstate, readiness=_readiness(),
+                                          calendar=_calendar(), universe_summary=uni.summary(sch) if sch is not None else None,
+                                          sandbox_status=sandbox.isolation_status()))
+
+    @api.get("/universe/summary")
+    def universe_summary():
+        return clean(uni.summary(_need_screening(), reg))
+
+    @api.get("/universe/configs")
+    def universe_configs(family: str = "", timeframe: str = "", horizon: str = "", symbol: str = "", stage: str = "", q: str = "",
+                         sort: str = "trades", desc: bool = True, limit: int = 100, offset: int = 0):
+        if stage and stage not in uni.STAGES:
+            raise HTTPException(400, f"stage must be one of {', '.join(uni.STAGES)}")
+        return clean(uni.page(_need_screening(), family=family, timeframe=timeframe, horizon=horizon, symbol=symbol, stage=stage, q=q,
+                              sort=sort, desc=desc, limit=min(max(limit, 1), 500), offset=max(offset, 0)))
+
+    @api.get("/universe/configs/{config_id}")
+    def universe_dossier(config_id: str):
+        d = uni.dossier(_need_screening(), config_id, reg)
+        if d is None:
+            raise HTTPException(404, f"no configuration {config_id} in the current screening run")
+        return clean(d)
+
+    class _CopilotCtx:
+        reg = st.registry
+        sch = staticmethod(_screening_open)
+        readiness = staticmethod(_readiness)
+        brain_status = staticmethod(_brain_status)
+        features = staticmethod(lambda: FEATURES)
+
+    @api.get("/copilot/ask")
+    def copilot_ask(q: str, page: str = ""):
+        if not q.strip() or len(q) > 500:
+            raise HTTPException(400, "ask a question of 1-500 characters")
+        out = copilot_mod.answer(q, _CopilotCtx)
+        return clean({**out, "question": q, "page": page})
+
+    @api.get("/copilot/suggestions")
+    def copilot_suggestions():
+        return {"questions": [q for _, q in copilot_mod.SUPPORTED]}
+
+    # ------------------------------------------------------------------ V6: investment planning (projections at user-assumed returns)
+    def _pv(fn, *a, **k):
+        try:
+            return clean(fn(*a, **k))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @api.get("/planning/sip")
+    def planning_sip(monthly: float, years: float, annual_return: float, step_up: float = 0.0):
+        return _pv(plan_mod.project_sip, monthly, int(round(years * 12)), annual_return, step_up=step_up)
+
+    @api.get("/planning/lumpsum")
+    def planning_lumpsum(amount: float, years: float, annual_return: float):
+        return _pv(plan_mod.project_lumpsum, amount, years, annual_return)
+
+    @api.get("/planning/swp")
+    def planning_swp(corpus: float, monthly: float, annual_return: float, step_up: float = 0.0, years: float = 50):
+        return _pv(plan_mod.project_swp, corpus, monthly, annual_return, months=int(round(years * 12)), step_up=step_up)
+
+    @api.get("/planning/stp")
+    def planning_stp(corpus: float, monthly: float, source_return: float, target_return: float):
+        return _pv(plan_mod.project_stp, corpus, monthly, source_return, target_return)
+
+    @api.get("/planning/goal")
+    def planning_goal(target_today: float, years: float, annual_return: float, inflation: float = 0.06, existing: float = 0.0, step_up: float = 0.0):
+        return _pv(plan_mod.goal_plan, target_today, years, annual_return, inflation, existing=existing, step_up=step_up)
+
+    # ------------------------------------------------------------------ V6: mutual funds (daily NAVs, AMFI files)
+    funds = FundStore(st.data_dir)
+
+    @api.get("/funds/status")
+    def funds_status():
+        return clean({**funds.status(), "source": "AMFI NAV files imported by the operator",
+                      "how": "nseql import-amfi <NAVAll.txt or NAV history files>, or POST /api/funds/import with the file text"})
+
+    @api.get("/funds/schemes")
+    def funds_schemes(q: str = "", category: str = "", plan: str = "", limit: int = 50, offset: int = 0):
+        return clean(funds.search(q, category, plan, min(max(limit, 1), 200), max(offset, 0)))
+
+    @api.get("/funds/schemes/{code}")
+    def funds_scheme(code: str, start: str | None = None, end: str | None = None):
+        sc = funds.scheme(code)
+        if sc is None:
+            raise HTTPException(404, f"no scheme {code}")
+        d, v = funds.series(code, start, end)
+        step = max(1, len(d) // 600)
+        return clean({"scheme": sc, "analytics": plan_mod.nav_analytics(d, v), "series": {"dates": [x.isoformat() for x in d[::step]], "nav": v[::step]},
+                      "provenance": {"source": "AMFI published NAV", "points": len(d), "period": [d[0].isoformat(), d[-1].isoformat()] if d else None}})
+
+    @api.get("/funds/schemes/{code}/sip")
+    def funds_sip(code: str, monthly: float, start: str, end: str, day: int = 1, step_up: float = 0.0, exit_load: float = 0.0):
+        d, v = funds.series(code)
+        if not d:
+            raise HTTPException(404, f"no NAVs for scheme {code}")
+        return _pv(plan_mod.sip_on_nav, d, v, monthly, date.fromisoformat(start), date.fromisoformat(end), day=day, step_up=step_up, exit_load=exit_load)
+
+    class FundImportIn(BaseModel):
+        text: str = Field(max_length=60_000_000)
+        file: str = "upload"
+
+    @api.post("/funds/import")
+    def funds_import(body: FundImportIn):
+        try:
+            out = funds.import_text(body.text, file=body.file)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        reg.audit("operator", "FUNDS_IMPORT", file=body.file, **{k: out[k] for k in ("schemes", "rows", "new_navs", "skipped")})
+        return out
 
     def _page(table: str, order: str, where: dict, limit: int, offset: int):
         try:

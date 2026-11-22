@@ -27,6 +27,8 @@ def main(argv: list[str] | None = None) -> int:
     tv = sub.add_parser("import-tradingview", help="import CSV files exported from TradingView charts (manual export)")
     tv.add_argument("dataset_id"); tv.add_argument("files", nargs="+", help="e.g. 'NSE_RELIANCE, 1D.csv'"); tv.add_argument("--licence", required=True)
     tv.add_argument("--interval", help="override the interval read from the file names (1d, 5m, ...)")
+    am = sub.add_parser("import-amfi", help="import mutual-fund NAVs from AMFI files you downloaded (NAVAll.txt or NAV history reports)")
+    am.add_argument("files", nargs="+")
     sub.add_parser("angel-check", help="test the Angel One login from .env (automatic TOTP) and fetch one candle")
     av = sub.add_parser("angel-verify", help="verify the Angel One adapter against the real service; writes experiments/angel_verification.json")
     av.add_argument("--symbol", help="symbol to test with (default: first of the watchlist)")
@@ -125,6 +127,12 @@ def main(argv: list[str] | None = None) -> int:
         if ds.intervals() == ["1d"] and scan_dataset(ds):
             print(f"WARNING: price drops that look like splits/bonuses; see `nseql corporate-actions {ds.id}`")
         print("next: nseql quality", ds.id)
+    elif a.cmd == "import-amfi":
+        from nseql.data.funds import FundStore
+        fs = FundStore(s.data_dir)
+        for f in a.files:
+            out = fs.import_text(Path(f).read_text(encoding="utf-8", errors="replace"), file=Path(f).name)
+            print(f"{f}: {out['layout']} layout, {out['schemes']} schemes, {out['new_navs']} new NAVs ({out['duplicates']} already stored, {out['skipped']} skipped)")
     elif a.cmd == "angel-verify":
         from nseql.data.adapters.angel_verify import verify
         rep = verify(s.experiments_dir, symbol=a.symbol)
@@ -134,7 +142,7 @@ def main(argv: list[str] | None = None) -> int:
         from datetime import datetime as _dt
         from datetime import timedelta as _td
 
-        from nseql.data.adapters.angelone import AngelError, AngelHistorical, missing_credentials, resolve  # noqa: I001
+        from nseql.data.adapters.angelone import AngelError, AngelHistorical, missing_credentials, resolve
         miss = missing_credentials()
         if miss:
             print("missing in .env:", ", ".join(miss)); return 2
@@ -262,7 +270,8 @@ def main(argv: list[str] | None = None) -> int:
 
         from nseql.brain.service import BrainService
         from nseql.data.store import Dataset
-        from nseql.evaluation import cache as cache_mod, context_test
+        from nseql.evaluation import cache as cache_mod
+        from nseql.evaluation import context_test
         from nseql.evaluation.vector import side_cost
         from nseql.research.loop import get_partition
         from nseql.research.registry import Registry
