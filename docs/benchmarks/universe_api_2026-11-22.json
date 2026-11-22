@@ -1,0 +1,44 @@
+{
+  "generated": "2026-11-22T23:11:14+05:30",
+  "machine": "x86_64 x86_64",
+  "python": "3.13.18",
+  "data": "SYNTHETIC one-session stream; in-process call timing, not HTTP",
+  "rows": [
+    {
+      "configurations": 1000,
+      "symbols": 6,
+      "replay_one_session_s": 2.5,
+      "with_trades": 195,
+      "summary_first_call_ms": 47.5,
+      "summary_after_new_minute_ms_median": 25.3,
+      "summary_cached_ms_median": 18.63,
+      "page_500_sorted_ms_median": 21.8,
+      "search_ms_median": 14.4,
+      "dossier_ms_median": 7.9
+    },
+    {
+      "configurations": 10000,
+      "symbols": 59,
+      "replay_one_session_s": 11.4,
+      "with_trades": 321,
+      "summary_first_call_ms": 80.7,
+      "summary_after_new_minute_ms_median": 73.4,
+      "summary_cached_ms_median": 21.5,
+      "page_500_sorted_ms_median": 16.1,
+      "search_ms_median": 15.0,
+      "dossier_ms_median": 7.3
+    },
+    {
+      "configurations": 50000,
+      "symbols": 293,
+      "replay_one_session_s": 54.3,
+      "with_trades": 327,
+      "summary_first_call_ms": 313.0,
+      "summary_after_new_minute_ms_median": 263.4,
+      "summary_cached_ms_median": 36.39,
+      "page_500_sorted_ms_median": 29.3,
+      "search_ms_median": 20.4,
+      "dossier_ms_median": 10.5
+    }
+  ]
+}

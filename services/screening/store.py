@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS portfolio_events (ts TEXT, event TEXT, detail TEXT, P
 CREATE TABLE IF NOT EXISTS configs (id TEXT PRIMARY KEY, idx INTEGER, symbol TEXT, timeframe TEXT, horizon TEXT, family TEXT,
   params TEXT, stop_pct REAL, status TEXT NOT NULL DEFAULT 'active');
 CREATE INDEX IF NOT EXISTS ix_configs_h ON configs(horizon, family);
+CREATE INDEX IF NOT EXISTS ix_orders_cfg ON paper_orders(config_id, side, realized_paise, charges_paise);
 """
 
 
@@ -77,6 +78,8 @@ class ScreeningStore:
             cols = {r[1] for r in self.db.execute(f"PRAGMA table_info({table})")}
             if col not in cols:                                  # runs created before these columns existed
                 self.db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+        # Strategy Universe reads per-configuration signal counts; this index answers them without a table scan
+        self.db.execute("CREATE INDEX IF NOT EXISTS ix_signals_cfg ON signals(decision, config_id, alloc_status)")
 
     # ------------------------------------------------------------------ events
     @_locked

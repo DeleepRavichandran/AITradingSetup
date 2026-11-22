@@ -38,6 +38,31 @@ def _rule_name(fam: str, p: dict) -> str:
     return f"RSI{p['n']} {p['buy']}/{p['sell']}"
 
 
+_static_cache: dict = {}
+
+
+def _static(r) -> dict:
+    """Columns that never change for a registry (ids, names, families): built once, not every minute."""
+    if _static_cache.get("key") != id(r):
+        fam = np.array(FAMILIES, dtype=object)[r.fam]
+        tf = np.array(TF_NAMES, dtype=object)[r.tf]
+        hz = np.array([HORIZON[t] for t in TF_NAMES], dtype=object)[r.tf]
+        _static_cache.update(key=id(r), cols={
+            "idx": np.arange(len(r)), "id": np.array([str(x) for x in r.ids], dtype=object),
+            "symbol": np.array(r.symbols, dtype=object)[r.sym], "family": fam, "timeframe": tf, "horizon": hz,
+            "rule": np.array([_rule_name(f, p) for f, p in zip(fam, r.params)], dtype=object), "stop_pct": r.stop})
+    return _static_cache["cols"]
+
+
+def _lookup(ids: np.ndarray, d: dict, div: float = 1.0) -> np.ndarray:
+    out = np.zeros(len(ids))
+    if d:
+        pos = pd.Index(ids).get_indexer(list(d))
+        ok = pos >= 0
+        out[pos[ok]] = np.array([v or 0 for v in d.values()], dtype=float)[ok] / div
+    return out
+
+
 def frame(sch) -> pd.DataFrame:
     """One row per registered configuration. Cached until the next processed minute."""
     key = (id(sch), sch.watermark, int(sch.engine.x.alloc.ev_n.sum()))
@@ -51,20 +76,18 @@ def frame(sch) -> pd.DataFrame:
         chg = dict(db.execute("SELECT config_id, SUM(charges_paise) FROM paper_orders GROUP BY config_id").fetchall())
         buys = dict(db.execute("SELECT config_id, COUNT(*) FROM signals WHERE decision='BUY' GROUP BY config_id").fetchall())
         acc = dict(db.execute("SELECT config_id, COUNT(*) FROM signals WHERE decision='BUY' AND alloc_status='accepted' GROUP BY config_id").fetchall())
-    ids = [str(x) for x in r.ids]
+    static = _static(r)
+    ids = static["id"]
     n = a.ev_n
     mean = np.divide(a.ev_sum, n, out=np.full(len(n), np.nan), where=n > 0)
     stage = np.where(e.evals == 0, 0, np.where(n == 0, 1, np.where(n < a.cfg.min_trades, 2, np.where(est["mu"] > 0, 3, 4))))
-    fam = [FAMILIES[f] for f in r.fam]
-    tf = [TF_NAMES[t] for t in r.tf]
     df = pd.DataFrame({
-        "idx": np.arange(len(r)), "id": ids, "symbol": [r.symbols[s] for s in r.sym], "family": fam, "timeframe": tf,
-        "horizon": [HORIZON[t] for t in tf], "rule": [_rule_name(f, p) for f, p in zip(fam, r.params)], "stop_pct": r.stop,
+        **static,
         "evaluations": e.evals, "trades": n.astype(int), "wins": a.ev_w.astype(int),
         "mean_net_bps": mean * 1e4, "shrunk_bps": est["mu"] * 1e4, "confidence": est["confidence"],
         "stage": [STAGES[k] for k in stage], "position": np.where(e.pos == 1, "open", np.where(e.pend != 0, "working", "flat")),
-        "realised_inr": [real.get(i, 0) / 100 for i in ids], "charges_inr": [(chg.get(i) or 0) / 100 for i in ids],
-        "buy_signals": [buys.get(i, 0) for i in ids], "accepted": [acc.get(i, 0) for i in ids],
+        "realised_inr": _lookup(ids, real, 100), "charges_inr": _lookup(ids, chg, 100),
+        "buy_signals": _lookup(ids, buys), "accepted": _lookup(ids, acc),
     })
     _cache.update(key=key, df=df)
     return df

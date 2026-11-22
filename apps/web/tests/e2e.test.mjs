@@ -9,44 +9,13 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { chromium } from "playwright";
+import { fixtures, resolve, SOURCE } from "./fixtures.mjs";
 
 const require = createRequire(import.meta.url);
 const AXE = require.resolve("axe-core/axe.min.js");
 const PORT = 3999 + Math.floor(Math.random() * 500);
 const BASE = `http://127.0.0.1:${PORT}`;
 let server, browser;
-
-const SOURCE = { kind: "synthetic_replay", label: "Synthetic replay (made-up prices)", live: false, verified: false, synthetic: true,
-  delay_seconds: null, freshness_seconds: null, stale: false, market_open: false, detail: "replayed from stored synthetic 1-minute bars" };
-function fixtures(state) {
-  return {
-    "/system": () => ({ live_trading_enabled: false, kill_switch: { engaged: state.kill }, counts: { jobs_running: 0 }, code_version: "test",
-      sandbox: { network_namespace: false }, llm: { configured: false } }),
-    "/screening/status": () => ({ started: true, data_source: SOURCE, mode: "realistic", feed: "replay of fixture", registered: 342, symbols: 2,
-      watermark: "2026-11-20T15:29:00+05:30", live: null, signals: 10, live_trading: false }),
-    "/screening/portfolio": () => ({ shared_capital: true, mode: "realistic", equity_inr: 1000000, day_start_equity_inr: 1000000, cash_inr: 900000,
-      reserved_inr: 0, open_positions: 1, working_orders: 0, gross_exposure_inr: 100000, halted_today: false, refused_signals: { symbol_cap: 3 },
-      top_symbols: [{ symbol: "AAA", pct_equity: 0.1 }], rules: { max_positions: 50, per_trade_pct: 0.02, max_symbol_pct: 0.1, max_gross_pct: 1, daily_loss_pct: 0.02 },
-      execution: { participation: 0.1, half_spread_bps: 5, entry_ttl_minutes: 5 }, note: "simulated" }),
-    "/screening/summary": () => ({ horizons: { intraday: { evaluated_last_minute: 171, evaluated_ever: 171, open_positions: 1, pending_orders: 0 } },
-      paper: { intraday: { filled: 4, realized_inr: 120, charges_inr: 40 } }, latency_ms_recent: { p99: 3.2 }, note: "simulated" }),
-    "/screening/signals": () => ({ total: 1, rows: [{ bar_ts: "2026-11-20T10:00:00", symbol: "AAA", horizon: "intraday", decision: "BUY", reason: "close above SMA", price: 101.5, config_id: "abc123" }] }),
-    "/screening/configs": () => ({ total: 1, rows: [{ id: "abc123", symbol: "AAA", timeframe: "5m", horizon: "intraday", family: "sma", params: { n: 20 }, stop_pct: 0.01 }] }),
-    "/screening/orders": () => ({ total: 0, rows: [] }),
-    "/screening/cycles": () => ({ total: 1, rows: [{ minute: "2026-11-20T10:00:00", status: "processed", symbols_with_data: 2, symbols_expected: 2, closed: ["1m"], eligible: 171, evaluated: 171, latency_ms: 2.1 }] }),
-    "/readiness": () => ({ modules: [{ module: "API", status: "ready", detail: "up" }, { module: "Research sandbox", status: "blocked", detail: "no namespace" },
-      { module: "Live order routing", status: "disabled", detail: "LIVE_TRADING_ENABLED=false" }], note: "derived at request time" }),
-    "/screening/overview": () => ({ data_source: SOURCE, feed_health: null,
-      configurations: { registered: 342, evaluated_last_cycle: 171, evaluated_ever: 342, qualified: 0, with_forward_evidence: 4, unverified: 342, qualified_rule: "at least 5 forward round trips" },
-      cycles: { by_status: { processed: 10 }, missed_minutes: 0, overruns: 0, latency_ms: { p50: 1, p99: 3.2, max: 4 }, lag_s: null },
-      signals: { by_decision: { BUY: 6, EXIT: 4 }, buy_allocation: { accepted: 3, deferred: 2, rejected: 1 }, refusal_reasons: { "max 50 positions": 1 } },
-      capital: { equity_inr: 1000000, starting_capital_inr: 1000000, cash_inr: 900000, reserved_inr: 0, gross_exposure_inr: 100000, utilisation_pct: 10, open_positions: 1, halted_today: false },
-      paper_performance: { equity_change_inr: 0, realised_after_charges_inr: 80, charges_paid_inr: 40, note: "simulated fills on Replay of SYNTHETIC data; not real trading results" },
-      allocation: { method: "ranked" }, learning_brain: { verdict: "not benchmarked yet" },
-      failures: { feed_status: null, feed_errors: {}, event_conflicts: 0, late_events: 0, portfolio_events: [], live: null }, recovery: { checkpoint: null, seconds: 0 }, readiness: [] }),
-    "/news": () => ({ items: [{ title: "Test headline", source: "Fixture Wire", link: "https://example.invalid/a", published: "2026-11-20T09:00:00Z" }], errors: {} }),
-  };
-}
 
 /* Fake Web Speech API: window.__say(text, confidence) or window.__speechError(code) drive the last recogniser. */
 const FAKE_SPEECH = `
@@ -80,7 +49,7 @@ async function open(path, { deny = false, consent = true, viewport = { width: 12
       if (p === "/risk/kill") state.kill = true;
       return route.fulfill({ json: { ok: true, id: "job-1", answer: "fixture answer" } });
     }
-    const h = fx[p];
+    const h = resolve(fx, p);
     return h ? route.fulfill({ json: h() }) : route.fulfill({ status: 404, json: { detail: `no fixture for ${p}` } });
   });
   const page = await ctx.newPage();
@@ -225,7 +194,7 @@ describe("Command Deck safety", () => {
     await page.getByTestId("camera-video").waitFor();
     await page.getByTestId("talk").click();                       // mic level meter opens a stream
     await page.waitForFunction(() => window.__tracks.length >= 2);
-    await page.getByRole("link", { name: "Exit deck" }).click();  // client-side navigation unmounts the deck
+    await page.getByRole("link", { name: "Command Center" }).click();  // client-side navigation unmounts the Vega page
     await page.waitForURL(BASE + "/");
     await page.waitForFunction(() => window.__tracks.every((t) => t.readyState === "ended"));
     assert.ok(await page.evaluate(() => window.__rec.aborted) >= 1, "speech recognition aborted");
@@ -234,7 +203,7 @@ describe("Command Deck safety", () => {
 });
 
 describe("Accessibility and layout", () => {
-  for (const path of ["/deck", "/screening"]) for (const colorScheme of ["light", "dark"]) {
+  for (const path of ["/", "/deck", "/screening", "/universe", "/planner", "/funds"]) for (const colorScheme of ["light", "dark"]) {
     test(`${path} (${colorScheme}): no serious or critical axe violations`, async () => {
       const { page, ctx } = await open(path, { colorScheme });
       await page.waitForLoadState("networkidle");
@@ -245,7 +214,7 @@ describe("Accessibility and layout", () => {
       await ctx.close();
     });
   }
-  for (const path of ["/deck", "/screening"]) {
+  for (const path of ["/", "/deck", "/screening", "/universe", "/planner", "/funds"]) {
     for (const width of [360, 768, 1280]) {
       test(`${path} at ${width}px: no horizontal scroll, key controls visible`, async () => {
         const { page, ctx, errors } = await open(path, { viewport: { width, height: 800 } });
@@ -254,7 +223,8 @@ describe("Accessibility and layout", () => {
           .some((el) => el.scrollWidth > el.clientWidth + 1));
         assert.equal(overflow, false);
         if (path === "/deck") assert.ok(await page.getByTestId("emergency-stop").isVisible());
-        else assert.ok(await page.getByText("Synthetic replay (made-up prices)").first().isVisible());
+        else assert.ok(await page.getByTestId("strip-estop").isVisible(), "status-bar emergency stop reachable");
+        assert.ok(await page.getByRole("heading", { level: 1 }).isVisible());
         assert.deepEqual(errors, []);
         await ctx.close();
       });
@@ -281,5 +251,76 @@ describe("Accessibility and layout", () => {
     const s = await open("/screening");
     await s.page.getByText("Synthetic data says nothing about real markets").waitFor();
     await s.ctx.close();
+  });
+
+  test("Command Center shows API figures with provenance, never invented ones", async () => {
+    const { page, ctx, errors } = await open("/");
+    await page.getByTestId("lede").filter({ hasText: "342 configurations" }).waitFor();
+    await page.getByTestId("lede").filter({ hasText: "synthetic replay (made-up prices)" }).waitFor();
+    await page.getByText("−₹20,890").first().waitFor();                                 // 979,110 - 1,000,000, sign before the rupee
+    assert.ok(await page.getByTestId("prov").count() >= 5, "every panel has an evidence footer");
+    await page.getByRole("heading", { name: "Platform status" }).waitFor();
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  });
+
+  test("status-bar emergency stop acts at once from any page", async () => {
+    const { page, ctx, state } = await open("/universe");
+    await page.getByTestId("strip-estop").click();
+    await page.waitForFunction(() => true);
+    await page.getByTestId("strip-kill").filter({ hasText: "engaged" }).waitFor();
+    const k = state.posts.filter((x) => x.path === "/risk/kill");
+    assert.equal(k.length, 1);
+    assert.match(k[0].body.operator, /status bar emergency stop/);
+    await ctx.close();
+  });
+
+  test("Strategy Universe: map filters the server query; a row opens the dossier", async () => {
+    const { page, ctx, errors } = await open("/universe");
+    const seen = [];
+    page.on("request", (r) => { if (r.url().includes("/api/universe/configs?")) seen.push(r.url()); });
+    await page.getByRole("button", { name: /^rsi 5m:/ }).click();
+    await page.waitForFunction(() => true);
+    await new Promise((r) => setTimeout(r, 400));
+    assert.ok(seen.some((u) => u.includes("family=rsi") && u.includes("timeframe=5m")), "map click becomes a server-side filter");
+    await page.getByTestId("vtable").getByText("0123456789abcdef").click();
+    await page.getByTestId("dossier").waitFor();
+    await page.getByTestId("dossier").getByText("All evidence comes from SYNTHETIC data").waitFor();
+    assert.ok(page.url().includes("config=0123456789abcdef"), "dossier is linkable");
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  });
+
+  test("Vega copilot (Ctrl K) answers with evidence links on any page", async () => {
+    const { page, ctx } = await open("/planner");
+    await page.keyboard.press("Control+k");
+    await page.getByTestId("copilot").waitFor();
+    await page.getByRole("button", { name: "Which strategies have the strongest validated evidence?" }).click();
+    await page.getByTestId("copilot-answer").filter({ hasText: "No screening configuration is qualified yet" }).waitFor();
+    await page.getByTestId("copilot-answer").getByText("Did not read: live market prices").waitFor();
+    await page.getByTestId("copilot-answer").getByRole("link", { name: /configuration 0123456789abcdef/ }).click();
+    await page.waitForURL(/\/universe\?config=0123456789abcdef/);
+    await ctx.close();
+  });
+
+  test("Vega page sends free-form questions to the grounded copilot", async () => {
+    const { page, ctx, state } = await open("/deck");
+    await type(page, "which strategies have the strongest validated evidence?");
+    await lastVega(page).filter({ hasText: "No screening configuration is qualified yet" }).waitFor();
+    await lastVega(page).getByRole("link", { name: /configuration 0123456789abcdef/ }).waitFor();
+    assert.equal(state.posts.filter((x) => x.path === "/chat").length, 0);
+    await ctx.close();
+  });
+
+  test("planner labels projections as assumptions; funds page says when no NAVs exist", async () => {
+    const p = await open("/planner");
+    await p.page.getByTestId("plan-result").getByText("₹27,416").waitFor();
+    await p.page.getByText("Projections, not forecasts.").waitFor();
+    await p.page.getByText("an illustration of compounding, not a forecast").waitFor();
+    await p.ctx.close();
+    const f = await open("/funds");
+    await f.page.getByText("No NAV data imported yet").waitFor();
+    assert.equal(await f.page.getByTestId("scheme").count(), 0);
+    await f.ctx.close();
   });
 });

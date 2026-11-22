@@ -16,7 +16,7 @@ const PAGE = 500;
 const cellColor = (bps: number | null) => {
   if (bps == null) return "var(--raised)";
   const a = Math.min(Math.abs(bps) / 40, 1);
-  return `color-mix(in oklab, ${bps >= 0 ? "var(--good)" : "var(--crit)"} ${Math.round(12 + a * 48)}%, var(--raised))`;
+  return `color-mix(in oklab, ${bps >= 0 ? "var(--good)" : "var(--crit)"} ${Math.round(10 + a * 30)}%, var(--raised))`;   // capped so text keeps 4.5:1
 };
 
 function Histogram({ h }: { h: any }) {
