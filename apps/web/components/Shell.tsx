@@ -1,16 +1,21 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import React, { useEffect, useState } from "react";
-import { api, setToken, useApi } from "@/lib/api";
-import { Badge } from "./ui";
+import React, { useCallback, useEffect, useState } from "react";
+import { api, post, setToken, useApi } from "@/lib/api";
+import Copilot from "./Copilot";
+import { provKind } from "./ui";
 
+/* Workspaces: only pages that exist and work are listed. Planned workspaces without a working journey are
+   tracked in docs/AUDIT_V6.md, not shown as empty pages. */
 const NAV: [string, [string, string][]][] = [
-  ["Overview", [["/deck", "Command Deck (voice)"], ["/", "Command Center"], ["/market", "Market Explorer"], ["/data", "Data Quality & Coverage"]]],
-  ["Research", [["/screening", "Strategy Monitor (1-minute)"], ["/learning", "Learning Brain"], ["/agents", "AI Research Agents"], ["/factory", "Strategy Factory"], ["/code", "Strategy Code"], ["/memory", "Experiment Memory"], ["/chat", "AI Analyst Chat"]]],
-  ["Testing", [["/backtest", "Backtesting Studio"], ["/replay", "Trade Replay"], ["/walkforward", "Walk-Forward Testing"], ["/compare", "Strategy Comparison"], ["/portfolio", "Portfolio Simulation"]]],
-  ["Trading", [["/paper", "Paper Trading Terminal"], ["/brokers", "Broker Connections"], ["/risk", "Risk Control Center"]]],
-  ["Operations", [["/system", "System Monitoring"], ["/settings", "Settings & Audit Logs"]]],
+  ["Overview", [["/", "Command Center"], ["/deck", "Vega"], ["/market", "Market Intelligence"], ["/data", "Data Quality"]]],
+  ["Strategies", [["/universe", "Strategy Universe"], ["/screening", "Intraday & Swing Lab"], ["/factory", "Strategy Factory"], ["/code", "Strategy Code"],
+    ["/backtest", "Backtesting Studio"], ["/walkforward", "Walk-Forward"], ["/compare", "Comparison"], ["/replay", "Trade Replay"]]],
+  ["AI research", [["/learning", "AI Research Brain"], ["/agents", "Research Agents"], ["/memory", "Experiment Memory"], ["/chat", "Analyst Chat"]]],
+  ["Portfolio & trading", [["/portfolio", "Portfolio Intelligence"], ["/paper", "Paper Trading"], ["/risk", "Risk Control"], ["/brokers", "Broker Connections"]]],
+  ["Investing", [["/funds", "Mutual Funds"], ["/planner", "SIP & Goal Planner"]]],
+  ["Operations", [["/system", "Operations"], ["/settings", "Configuration & Audit"]]],
 ];
 
 function Login({ onDone }: { onDone: () => void }) {
@@ -32,43 +37,76 @@ function Login({ onDone }: { onDone: () => void }) {
   );
 }
 
+const themeStore = {
+  get: () => { try { return window.localStorage.getItem("nseql_theme"); } catch { return null; } },
+  set: (v: string) => { try { window.localStorage.setItem("nseql_theme", v); } catch { /* private mode */ } },
+};
+
 export default function Shell({ children }: { children: React.ReactNode }) {
   const path = usePathname();
   const [open, setOpen] = useState(false);
   const [locked, setLocked] = useState(false);
-  const sys = useApi<any>(locked ? null : "/system", 15000);
+  const [vega, setVega] = useState(false);
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [stopMsg, setStopMsg] = useState<string | null>(null);
+  const ps = useApi<any>(locked ? null : "/platform/status", 15000);
   useEffect(() => {
     const h = () => setLocked(true);
     window.addEventListener("nseql-unauthorized", h);
-    return () => window.removeEventListener("nseql-unauthorized", h);
+    const t = themeStore.get() === "light" ? "light" : "dark";
+    setTheme(t);
+    document.documentElement.dataset.theme = t;
+    const k = (e: KeyboardEvent) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setVega((x) => !x); } };
+    window.addEventListener("keydown", k);
+    return () => { window.removeEventListener("nseql-unauthorized", h); window.removeEventListener("keydown", k); };
   }, []);
   useEffect(() => setOpen(false), [path]);
+  const flip = () => { const t = theme === "dark" ? "light" : "dark"; setTheme(t); themeStore.set(t); document.documentElement.dataset.theme = t; };
+  const s = ps.data;
+  const kill = !!s?.kill_switch?.engaged;
+  const viewer = s?.role === "viewer";
+  const estop = useCallback(async () => {
+    setStopMsg(null);
+    try { await post("/risk/kill", { operator: "operator (status bar emergency stop)", reason: "manual emergency stop button" }); await ps.reload(); }
+    catch (e: any) { setStopMsg(`Emergency stop failed: ${e.message}. Use the Risk Control page.`); }
+  }, [ps]);
   if (locked) return <Login onDone={() => { setLocked(false); window.location.reload(); }} />;
-  const s = sys.data;
+  const ds = s?.data_source, k = provKind(ds);
   return (
     <div className="shell">
-      <aside className={`side ${open ? "open" : ""}`}>
-        <div className="brand">NSE AI Quant Lab<small>research &amp; paper trading</small></div>
+      <a href="#content" className="skip">Skip to content</a>
+      <aside className={`side ${open ? "open" : ""}`} aria-label="Workspaces">
+        <div className="brand"><span className="mark" aria-hidden="true">Q</span><span><b>NSE AI Quant Lab</b><small>research &amp; paper trading</small></span></div>
         <nav className="nav">
           {NAV.map(([g, items]) => (
             <div key={g}><div className="navg">{g}</div>
-              {items.map(([href, label]) => <Link key={href} href={href} className={path === href ? "on" : ""}>{label}</Link>)}</div>))}
+              {items.map(([href, label]) => <Link key={href} href={href} className={path === href ? "on" : ""} aria-current={path === href ? "page" : undefined}>{label}</Link>)}</div>))}
         </nav>
       </aside>
-      <main className="main">
-        <div className="top" style={{ marginBottom: 10 }}>
-          <button className="menu" onClick={() => setOpen(!open)} aria-label="Menu">☰ Menu</button>
-          <span className="sp" />
-          {sys.error && <Badge s="API unreachable" tone="crit" />}
-          {s && <>
-            <Badge s={s.live_trading_enabled ? "LIVE FLAG ON" : "live trading off"} tone={s.live_trading_enabled ? "crit" : "good"} />
-            <Badge s={s.kill_switch.engaged ? "kill switch ENGAGED" : "kill switch clear"} tone={s.kill_switch.engaged ? "crit" : "good"} />
-            {s.counts.jobs_running > 0 && <Badge s={`${s.counts.jobs_running} job running`} tone="info" />}
-            <span className="dim mono">v{s.code_version}</span>
-          </>}
+      <header className="strip" aria-label="Platform status">
+        <button className="menu" onClick={() => setOpen(!open)} aria-expanded={open} aria-label="Open navigation">Menu</button>
+        <div className="chips">
+        {ps.error && <span className="chip crit"><i />API unreachable</span>}
+        {s && <>
+          <span className={`chip ${k.q === "live" ? "good" : k.q === "synthetic" || k.q === "unverified" ? "warn" : "info"}`} title={ds?.label} data-testid="strip-data"><i />{ds?.label}</span>
+          <span className={`chip ${s.market.open ? "good" : "info"}`} title={`IST ${s.market.ist_time}`}><i />Market {s.market.state}</span>
+          <span className={`chip ${kill ? "crit" : "good"}`} data-testid="strip-kill"><i />{kill ? "Kill switch engaged" : "Kill switch clear"}</span>
+          <span className={`chip ${s.live_trading_enabled ? "crit" : "good"}`}><i />{s.live_trading_enabled ? "Live flag ON" : "Live orders off"}</span>
+          {s.modules.attention.length > 0 && <Link href="/" className="chip warn"><i />{s.modules.attention.length} module{s.modules.attention.length > 1 ? "s" : ""} need attention</Link>}
+        </>}
         </div>
+        <div className="acts">
+        <button className="ghost theme" onClick={flip} aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}>{theme === "dark" ? "Light" : "Dark"}</button>
+        <button onClick={() => setVega(true)} aria-haspopup="dialog" data-testid="open-vega">Ask Vega <span className="dim kbd">Ctrl K</span></button>
+        {path !== "/deck" && <button className="estop" onClick={estop} disabled={!s || kill || viewer} data-testid="strip-estop"
+          title={viewer ? "Read-only token: the operator token is needed" : "Halts all paper trading at once; no confirmation"}>{kill ? "Halted" : "Emergency stop"}</button>}
+        </div>
+      </header>
+      <main className="main" id="content" tabIndex={-1}>
+        {stopMsg && <div className="banner crit" role="alert">{stopMsg}</div>}
         {children}
       </main>
+      {vega && <Copilot onClose={() => setVega(false)} page={path} />}
     </div>
   );
 }

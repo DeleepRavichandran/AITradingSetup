@@ -1,5 +1,5 @@
 "use client";
-/* Command Deck: a voice-driven, full-screen view of the lab.
+/* Vega: voice and typed commands for the lab, inside the shared shell.
 
    Safety: commands are parsed by lib/vega.ts (unit-tested). Anything that changes state (kill switch, replay,
    research) asks for confirmation - say "confirm" or press Confirm within 10 seconds - and low-confidence
@@ -15,12 +15,12 @@ import { api, post } from "@/lib/api";
 import { CONFIRM_WINDOW_MS, describeOperational, OPERATIONAL, parse, type Intent } from "@/lib/vega";
 import styles from "./deck.module.css";
 
-type Line = { who: "you" | "vega"; text: string; at: string };
+type Line = { who: "you" | "vega"; text: string; at: string; links?: { label: string; href: string }[] };
 type Perm = "granted" | "denied" | "prompt" | "unsupported" | "unknown";
 const NAME = "Vega";
 const VOICE_CONSENT_KEY = "nseql_voice_consent";
 const istNow = () => new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
-const inr = (x: number | null | undefined) => (x == null ? "—" : `₹${Math.round(x).toLocaleString("en-IN")}`);
+const inr = (x: number | null | undefined) => (x == null ? "—" : `${x < 0 ? "−" : ""}₹${Math.abs(Math.round(x)).toLocaleString("en-IN")}`);
 const store = { get: (k: string) => { try { return window.localStorage.getItem(k); } catch { return null; } },
   set: (k: string, v: string) => { try { window.localStorage.setItem(k, v); } catch { /* private mode */ } } };
 
@@ -40,49 +40,16 @@ function usePermission(name: "camera" | "microphone"): Perm {
   return p;
 }
 
-/* ------------------------------------------------------------------ the reactor */
-function Reactor({ level, mode }: { level: number; mode: "idle" | "listening" | "speaking" | "alert" | "confirm" }) {
-  const ref = useRef<HTMLCanvasElement>(null);
-  const lv = useRef(level);
-  lv.current = level;
-  useEffect(() => {
-    const c = ref.current!;
-    const g = c.getContext("2d");
-    if (!g) return;
-    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    let raf = 0, t = 0;
-    const draw = () => {
-      const dpr = window.devicePixelRatio || 1;
-      const w = c.clientWidth, h = c.clientHeight;
-      if (c.width !== w * dpr) { c.width = w * dpr; c.height = h * dpr; }
-      g.setTransform(dpr, 0, 0, dpr, 0, 0);
-      g.clearRect(0, 0, w, h);
-      const cx = w / 2, cy = h / 2, R = Math.min(w, h) * 0.42;
-      const hue = mode === "alert" ? "255,77,94" : mode === "speaking" || mode === "confirm" ? "255,181,71" : "95,227,255";
-      const pulse = 1 + lv.current * 0.18;
-      t += reduce ? 0 : 0.006 + lv.current * 0.04;
-      const ring = (r: number, segs: number, gap: number, width: number, alpha: number, rot: number) => {
-        g.lineWidth = width; g.strokeStyle = `rgba(${hue},${alpha})`;
-        for (let i = 0; i < segs; i++) { const a0 = rot + (i / segs) * Math.PI * 2; g.beginPath(); g.arc(cx, cy, r, a0, a0 + (Math.PI * 2) / segs - gap); g.stroke(); }
-      };
-      ring(R * pulse, 3, 0.5, 1.5, 0.35, t * 0.6);
-      ring(R * 0.86, 48, 0.07, 6, 0.55, -t);
-      ring(R * 0.74, 6, 0.35, 2, 0.8, t * 1.7);
-      ring(R * 0.62, 24, 0.12, 10, 0.25 + lv.current * 0.5, -t * 0.5);
-      const core = g.createRadialGradient(cx, cy, 0, cx, cy, R * 0.48 * pulse);
-      core.addColorStop(0, `rgba(${hue},0.95)`); core.addColorStop(0.35, `rgba(${hue},0.35)`); core.addColorStop(1, `rgba(${hue},0)`);
-      g.fillStyle = core; g.beginPath(); g.arc(cx, cy, R * 0.5 * pulse, 0, Math.PI * 2); g.fill();
-      for (let i = 0; i < 60; i++) {
-        const a = (i / 60) * Math.PI * 2 + t * 0.15, r0 = R * 1.04, r1 = R * (i % 5 ? 1.08 : 1.13);
-        g.strokeStyle = `rgba(${hue},${i % 5 ? 0.25 : 0.6})`; g.lineWidth = 1;
-        g.beginPath(); g.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0); g.lineTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1); g.stroke();
-      }
-      raf = requestAnimationFrame(draw);
-    };
-    draw();
-    return () => cancelAnimationFrame(raf);
-  }, [mode]);
-  return <canvas ref={ref} className={styles.reactor} aria-hidden="true" data-testid="reactor" />;
+/* ------------------------------------------------------------------ voice state (compact; no decorative reactor) */
+const MODE_TEXT = { idle: "Ready", listening: "Listening", speaking: "Speaking", alert: "Kill switch engaged", confirm: "Waiting for your confirmation" };
+function VoiceState({ level, mode }: { level: number; mode: "idle" | "listening" | "speaking" | "alert" | "confirm" }) {
+  return (
+    <div className={styles.voice} data-mode={mode} data-testid="voice-state">
+      <span className={styles.vdot} aria-hidden="true" />
+      <span className={styles.vtext} aria-live="polite">{MODE_TEXT[mode]}</span>
+      <span className={styles.vbar} aria-hidden="true"><i style={{ width: `${Math.round(Math.min(1, level) * 100)}%` }} /></span>
+    </div>
+  );
 }
 
 /* ------------------------------------------------------------------ camera */
@@ -129,14 +96,13 @@ function Camera({ onPresence }: { onPresence: (motion: number) => void }) {
     };
   }, [on, onPresence]);
   return (
-    <section className={`${styles.panel} ${styles.cam}`} aria-labelledby="cam-h">
-      <header><h2 id="cam-h">Camera</h2><button onClick={() => { setErr(null); setOn(!on); }} disabled={perm === "unsupported"} aria-pressed={on}>{on ? "Turn off" : "Turn on"}</button></header>
+    <section className="panel" aria-labelledby="cam-h">
+      <div className="ph"><h2 id="cam-h">Camera</h2><span style={{ flex: 1 }} /><button onClick={() => { setErr(null); setOn(!on); }} disabled={perm === "unsupported"} aria-pressed={on}>{on ? "Turn off" : "Turn on"}</button></div>
       <div className={styles.camview}>
-        {on ? <video ref={video} muted playsInline aria-label="Camera preview" data-testid="camera-video" /> : <p className={styles.dim}>Off. When on, {NAME} notices when you sit down. Video stays in this browser: only a motion level is calculated, nothing is uploaded or recorded.</p>}
-        {on && <div className={styles.scan} />}
+        {on ? <video ref={video} muted playsInline aria-label="Camera preview" data-testid="camera-video" /> : <p className="dim">Off. When on, {NAME} notices when you sit down. Video stays in this browser: only a motion level is calculated, nothing is uploaded or recorded.</p>}
       </div>
-      <p className={styles.dim} data-testid="camera-permission">Camera permission: {perm === "unknown" ? "checking" : perm === "prompt" ? "not asked yet" : perm}{perm === "denied" ? ". Re-enable it from the camera icon in the address bar." : ""}</p>
-      {err && <p className={styles.warn} role="alert">{err}</p>}
+      <p className="dim" style={{ fontSize: 13, marginTop: 8 }} data-testid="camera-permission">Camera permission: {perm === "unknown" ? "checking" : perm === "prompt" ? "not asked yet" : perm}{perm === "denied" ? ". Re-enable it from the camera icon in the address bar." : ""}</p>
+      {err && <p className="down" style={{ fontSize: 13 }} role="alert">{err}</p>}
       {on && <div className={styles.meter}><span style={{ width: `${Math.min(100, motion * 400)}%` }} /><em>motion {Math.round(motion * 100)}%</em></div>}
     </section>
   );
@@ -210,9 +176,9 @@ export default function Deck() {
     return () => clearTimeout(id);
   }, [pending]);
 
-  const say = useCallback((text: string) => {
+  const say = useCallback((text: string, links?: { label: string; href: string }[]) => {
     if (!mounted.current) return;
-    setLog((l) => [...l.slice(-30), { who: "vega", text, at: istNow() }]);
+    setLog((l) => [...l.slice(-30), { who: "vega", text, at: istNow(), links }]);
     const synth = window.speechSynthesis;
     if (!synth || typeof SpeechSynthesisUtterance === "undefined") return;
     synth.cancel();
@@ -291,7 +257,11 @@ export default function Deck() {
           return say(`Paper equity ${inr(pf.equity_inr)}. Free cash ${inr(pf.cash_inr - pf.reserved_inr)}. ${pf.open_positions} open positions${top ? `, largest ${top}` : ""}.`);
         }
         case "open": { say(`Opening ${intent.name}.`); setTimeout(() => mounted.current && router.push(intent.path), 600); return; }
-        case "ask": { const r = await post("/chat", { question: intent.text }); return say(String(r.answer || "I don't have an answer for that.").replace(/\s+/g, " ").slice(0, 700)); }
+        case "ask": {                                                   // grounded answer from the lab's records, with evidence links
+          const r = await api(`/copilot/ask?q=${encodeURIComponent(intent.text)}&page=/deck`);
+          const extra = r.suggestions?.length ? ` For example: ${r.suggestions.slice(0, 3).join(" ")}` : "";
+          return say(String(r.answer + extra).replace(/\s+/g, " ").slice(0, 700), r.evidence);
+        }
         default: return;
       }
     } catch (e: any) { return say(`That didn't work: ${e.message}`); }
@@ -360,30 +330,70 @@ export default function Deck() {
   const items = news?.items || [];
   const ds = scr?.data_source;
   return (
-    <div className={styles.deck}>
-      <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500&family=Chakra+Petch:wght@400;600&display=swap" />
-      <header className={styles.top}>
-        <Link href="/" className={styles.exit}>Exit deck</Link>
-        <div className={styles.ident}><b>{NAME}</b><span>NSE AI Quant Lab</span></div>
-        <div className={styles.chips}>
-          <span className={sys?.live_trading_enabled ? styles.bad : styles.good}>{sys ? (sys.live_trading_enabled ? "Live flag on" : "Live trading off") : "…"}</span>
-          <span className={kill ? styles.bad : styles.good} data-testid="kill-state">{kill ? "Kill switch engaged" : "Kill switch clear"}</span>
-          <time>{clock} IST</time>
-          <button className={styles.estop} onClick={() => emergencyStop("operator (Command Deck emergency stop button)", "manual emergency stop button")}
-            disabled={kill || estop === "Stopping…"} data-testid="emergency-stop">{kill ? "Halted" : "Emergency stop"}</button>
-        </div>
-      </header>
-      {estop && estop !== "Stopping…" && <p className={styles.alert} role="alert">{estop}</p>}
-      {apiErr && <p className={styles.alert} role="alert">The lab's back end isn't answering ({apiErr}). Start it with scripts\windows\start.ps1, or check experiments\logs\api.log.</p>}
+    <>
+      <div className="top"><h1>Vega</h1><span className="sp" />
+        <span className={`chip ${sys?.live_trading_enabled ? "crit" : "good"}`}><i />{sys ? (sys.live_trading_enabled ? "Live flag on" : "Live trading off") : "…"}</span>
+        <span className={`chip ${kill ? "crit" : "good"}`} data-testid="kill-state"><i />{kill ? "Kill switch engaged" : "Kill switch clear"}</span>
+        <time className="ink2 num" style={{ fontSize: 14 }}>{clock} IST</time>
+        <button className="estop" onClick={() => emergencyStop("operator (Command Deck emergency stop button)", "manual emergency stop button")}
+          disabled={kill || estop === "Stopping…"} data-testid="emergency-stop">{kill ? "Halted" : "Emergency stop"}</button>
+      </div>
+      <p className="sub">Talk or type to {NAME}. Questions are answered from the lab's own records; actions that change anything ask for confirmation; the Emergency stop acts at once. Ask from any page with Ctrl K.</p>
+      {estop && estop !== "Stopping…" && <div className="banner crit" role="alert">{estop}</div>}
+      {apiErr && <div className="banner crit" role="alert">The lab's back end isn't answering ({apiErr}). Start it with scripts\windows\start.ps1, or check experiments\logs\api.log.</div>}
 
-      <main className={styles.grid}>
-        <section className={`${styles.panel} ${styles.sys}`} aria-labelledby="sys-h">
-          <header><h2 id="sys-h">Systems</h2></header>
-          <dl>
-            <div><dt>Market data</dt><dd data-testid="data-source" className={ds?.stale ? styles.warnTxt : ""}>{ds?.label || "—"}</dd></div>
+      <div className={styles.layout}>
+        <div className="stack">
+        <section className="panel" aria-label="Voice and typed commands">
+          <div className="ph"><h2>Conversation</h2><span style={{ flex: 1 }} /><VoiceState level={level} mode={kill ? "alert" : mode} /></div>
+          {pending && (
+            <div className={styles.confirm} role="alertdialog" aria-labelledby="confirm-t" data-testid="confirm-box">
+              <p id="confirm-t">Confirm: {describeOperational(pending.intent.kind)}?</p>
+              <button className="primary" onClick={() => handle("confirm")} data-testid="confirm-yes">Confirm</button>
+              <button onClick={() => handle("cancel")}>Cancel</button>
+            </div>
+          )}
+          {consent === "ask" && (
+            <div className={styles.confirm} role="dialog" aria-labelledby="consent-t">
+              <p id="consent-t">Voice uses your browser's speech service (Google for Chrome, Microsoft for Edge): your audio is sent to them while {NAME} is listening. The microphone is only on after you press Talk.</p>
+              <button className="primary" onClick={() => { store.set(VOICE_CONSENT_KEY, "yes"); setConsent("yes"); }}>Allow voice</button>
+              <button onClick={() => setConsent("no")}>Not now</button>
+            </div>
+          )}
+          <ol className={styles.log} aria-live="polite" data-testid="log">
+            {log.slice(-8).map((l, i) => <li key={i} className={l.who === "you" ? styles.you : styles.vega}><time>{l.at}</time>{l.text}
+              {l.links?.length ? <span className={styles.links}>{l.links.map((x, j) => <Link key={j} href={x.href} className="chip info"><i />{x.label}</Link>)}</span> : null}</li>)}
+            {!log.length && <li className="dim">Try “give me a status report”, “which strategies have the strongest validated evidence?” or “what's the world news”.</li>}
+          </ol>
+          <form className={styles.ask} onSubmit={(e) => { e.preventDefault(); const t = typed; setTyped(""); handle(t); }}>
+            <input value={typed} onChange={(e) => setTyped(e.target.value)} placeholder={`Ask ${NAME}: status, news, portfolio, run replay, open risk…`} aria-label="Type a command" />
+            <button className="primary" onClick={listen} type="button" disabled={!voiceOk || mode === "listening" || micPerm === "denied"} data-testid="talk">
+              {mode === "listening" ? "Listening…" : !voiceOk ? "Voice needs Chrome or Edge" : micPerm === "denied" ? "Microphone blocked" : "Talk"}
+            </button>
+          </form>
+          <p className="dim" style={{ fontSize: 13, margin: "6px 0 0" }} data-testid="mic-permission">Microphone: {micPerm === "unknown" ? "checking" : micPerm === "prompt" ? "not asked yet" : micPerm}
+            {micPerm === "denied" ? ". Re-enable it from the microphone icon in the address bar; typing still works." : ". Press Talk or the space bar to speak."}</p>
+        </section>
+
+        <section className="panel" aria-labelledby="news-h">
+          <div className="ph"><h2 id="news-h">World and markets</h2><span style={{ flex: 1 }} /><button onClick={() => loadNews(true)}>Refresh</button></div>
+          <ul className={`list ${styles.news}`}>
+            {items.map((n: any, i: number) => (
+              <li key={i}><a href={n.link} target="_blank" rel="noreferrer">{n.title}</a><div className="d">{n.source}{n.published ? ` · ${String(n.published).slice(11, 16)}` : ""}</div></li>))}
+            {!items.length && <li className="dim">{news ? "No headlines loaded. Is this computer online?" : "Loading headlines…"}</li>}
+          </ul>
+          <div className="prov"><span><b>Source</b> public RSS feeds</span>{news?.errors && Object.keys(news.errors).length > 0 && <span>unavailable: {Object.keys(news.errors).join(", ")}</span>}<span>for reading only; no strategy uses headlines</span></div>
+        </section>
+
+        </div>
+        <div className="stack">
+        <section className="panel" aria-labelledby="sys-h">
+          <div className="ph"><h2 id="sys-h">Systems</h2></div>
+          <dl className={styles.dl}>
+            <div><dt>Market data</dt><dd data-testid="data-source" className={ds?.stale ? "down" : ""}>{ds?.label || "—"}</dd></div>
             {ds?.delay_seconds != null && <div><dt>Delay</dt><dd>≈ {ds.delay_seconds >= 120 ? `${Math.round(ds.delay_seconds / 60)} min` : `${ds.delay_seconds} s`}</dd></div>}
             {ds?.freshness_seconds != null && <div><dt>Last bar</dt><dd>{Math.round(ds.freshness_seconds)} s ago</dd></div>}
-            <div><dt>Screening</dt><dd>{scr?.started ? `${scr.registered?.toLocaleString("en-IN")} strategies · ${scr.symbols} symbols` : "not started"}</dd></div>
+            <div><dt>Screening</dt><dd>{scr?.started ? `${scr.registered?.toLocaleString("en-IN")} configurations · ${scr.symbols} symbols` : "not started"}</dd></div>
             <div><dt>Last minute</dt><dd>{scr?.watermark ? String(scr.watermark).replace("T", " ").slice(0, 16) : "—"}</dd></div>
             <div><dt>Sandbox</dt><dd>{sys ? (sys.sandbox?.network_namespace ? "isolated" : "unavailable (research off)") : "—"}</dd></div>
             <div><dt>Analyst</dt><dd>{sys?.llm?.configured ? "Claude connected" : "rule-based (no API key)"}</dd></div>
@@ -393,71 +403,33 @@ export default function Deck() {
             {ready && <div><dt>Modules</dt><dd data-testid="readiness">{ready.modules.filter((m: any) => m.status === "ready").length} of {ready.modules.length} ready
               {ready.modules.some((m: any) => ["blocked", "degraded", "engaged", "unavailable"].includes(m.status)) ? ` · attention: ${ready.modules.filter((m: any) => ["blocked", "degraded", "engaged", "unavailable"].includes(m.status)).map((m: any) => m.module).join(", ")}` : ""}</dd></div>}
           </dl>
-          <header className={styles.sub}><h2>Paper portfolio</h2></header>
-          {pf ? <dl>
+          <h3>Paper portfolio</h3>
+          {pf ? <dl className={styles.dl}>
             <div><dt>Equity</dt><dd className={styles.big}>{inr(pf.equity_inr)}</dd></div>
             <div><dt>Free cash</dt><dd>{inr(pf.cash_inr - pf.reserved_inr)}</dd></div>
             <div><dt>Open positions</dt><dd>{pf.open_positions} of {pf.rules?.max_positions ?? "—"}</dd></div>
-            <div><dt>Today</dt><dd className={pf.halted_today ? styles.warnTxt : ""}>{pf.halted_today ? "loss limit hit, entries halted" : "within limits"}</dd></div>
-          </dl> : <p className={styles.dim}>No portfolio yet. Say “run replay”, or set up Angel One for live data.</p>}
+            <div><dt>Today</dt><dd className={pf.halted_today ? "down" : ""}>{pf.halted_today ? "loss limit hit, entries halted" : "within limits"}</dd></div>
+          </dl> : <p className="dim">No portfolio yet. Say “run replay”, or set up Angel One for live data.</p>}
+          <div className="prov"><span><b>Source</b> /api/system, /api/screening/*</span><span><b>Data</b> {ds?.label || "none"}</span></div>
         </section>
 
-        <section className={styles.core} aria-label="Voice assistant">
-          <Reactor level={level} mode={kill ? "alert" : mode} />
-          {pending && (
-            <div className={styles.confirm} role="alertdialog" aria-labelledby="confirm-t" data-testid="confirm-box">
-              <p id="confirm-t">Confirm: {describeOperational(pending.intent.kind)}?</p>
-              <button onClick={() => handle("confirm")} data-testid="confirm-yes">Confirm</button>
-              <button onClick={() => handle("cancel")}>Cancel</button>
-            </div>
-          )}
-          {consent === "ask" && (
-            <div className={styles.confirm} role="dialog" aria-labelledby="consent-t">
-              <p id="consent-t">Voice uses your browser's speech service (Google for Chrome, Microsoft for Edge): your audio is sent to them while {NAME} is listening. The microphone is only on after you press Talk.</p>
-              <button onClick={() => { store.set(VOICE_CONSENT_KEY, "yes"); setConsent("yes"); }}>Allow voice</button>
-              <button onClick={() => setConsent("no")}>Not now</button>
-            </div>
-          )}
-          <button className={styles.mic} onClick={listen} disabled={!voiceOk || mode === "listening" || micPerm === "denied"} data-testid="talk">
-            {mode === "listening" ? "Listening…" : !voiceOk ? "Voice needs Chrome or Edge" : micPerm === "denied" ? "Microphone blocked" : "Talk (or press space)"}
-          </button>
-          <p className={styles.dim} data-testid="mic-permission">Microphone: {micPerm === "unknown" ? "checking" : micPerm === "prompt" ? "not asked yet" : micPerm}
-            {micPerm === "denied" ? ". Re-enable it from the microphone icon in the address bar; typing still works." : ""}</p>
-          <form className={styles.ask} onSubmit={(e) => { e.preventDefault(); const t = typed; setTyped(""); handle(t); }}>
-            <input value={typed} onChange={(e) => setTyped(e.target.value)} placeholder={`Ask ${NAME}: status, news, portfolio, run replay, open risk…`} aria-label="Type a command" />
-          </form>
-          <ol className={styles.log} aria-live="polite" data-testid="log">
-            {log.slice(-6).map((l, i) => <li key={i} className={l.who === "you" ? styles.you : styles.vega}><time>{l.at}</time>{l.text}</li>)}
-            {!log.length && <li className={styles.dim}>Try “give me a status report” or “what's the world news”.</li>}
-          </ol>
-        </section>
-
-        <section className={`${styles.panel} ${styles.news}`} aria-labelledby="news-h">
-          <header><h2 id="news-h">World and markets</h2><button onClick={() => loadNews(true)}>Refresh</button></header>
-          <ul>
-            {items.map((n: any, i: number) => (
-              <li key={i}><a href={n.link} target="_blank" rel="noreferrer">{n.title}</a><small>{n.source}{n.published ? ` · ${String(n.published).slice(11, 16)}` : ""}</small></li>))}
-            {!items.length && <li className={styles.dim}>{news ? "No headlines loaded. Is this computer online?" : "Loading headlines…"}</li>}
-          </ul>
-          {news?.errors && Object.keys(news.errors).length > 0 && <p className={styles.dim}>Unavailable: {Object.keys(news.errors).join(", ")}</p>}
-          <p className={styles.dim}>Headlines are for reading only; no strategy uses them.</p>
-        </section>
-
-        <section className={`${styles.panel} ${styles.actions}`} aria-labelledby="act-h">
-          <header><h2 id="act-h">Actions</h2><label className={styles.toggle}><input type="checkbox" checked={greet} onChange={(e) => setGreet(e.target.checked)} /> Greet me when the camera sees me</label></header>
+        <section className="panel" aria-labelledby="act-h">
+          <div className="ph"><h2 id="act-h">Actions</h2></div>
           <div className={styles.btns}>
             <button onClick={() => handle("status report")}>Status report</button>
             <button onClick={() => handle("read the headlines")}>Read the headlines</button>
             <button onClick={() => handle("portfolio")}>Portfolio summary</button>
             <button onClick={() => handle("run replay")}>Run a replay</button>
             <button onClick={() => handle("run research")}>Run research</button>
-            <button onClick={() => router.push("/screening")}>Open Strategy Monitor</button>
+            <button onClick={() => router.push("/universe")}>Open Strategy Universe</button>
           </div>
-          <p className={styles.dim}>Replay and research ask for confirmation, by voice or by button. The Emergency stop at the top acts at once. Real orders are disabled, and safety resets need a named person on the Risk page.</p>
+          <label className={styles.toggle}><input type="checkbox" checked={greet} onChange={(e) => setGreet(e.target.checked)} /> Greet me when the camera sees me</label>
+          <p className="dim" style={{ fontSize: 13 }}>Replay and research ask for confirmation, by voice or by button. The Emergency stop acts at once. Real orders are disabled, and safety resets need a named person on the Risk page.</p>
         </section>
 
         <Camera onPresence={onPresence} />
-      </main>
-    </div>
+        </div>
+      </div>
+    </>
   );
 }

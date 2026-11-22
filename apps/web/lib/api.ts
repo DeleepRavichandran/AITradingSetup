@@ -68,6 +68,6 @@ export function useQuery(): URLSearchParams {
 const nf = (d: number) => new Intl.NumberFormat("en-IN", { minimumFractionDigits: d, maximumFractionDigits: d });
 export const num = (x: any, d = 2) => (x === null || x === undefined || Number.isNaN(x) ? "—" : nf(d).format(x));
 export const pct = (x: any, d = 1) => (x === null || x === undefined ? "—" : `${nf(d).format(x * 100)}%`);
-export const inr = (x: any, d = 0) => (x === null || x === undefined ? "—" : `₹${nf(d).format(x)}`);
+export const inr = (x: any, d = 0) => (x === null || x === undefined ? "—" : x < 0 ? `−₹${nf(d).format(-x)}` : `₹${nf(d).format(x)}`);
 export const short = (s: any, n = 10) => (s ? String(s).slice(0, n) : "—");
 export const day = (s: any) => (s ? String(s).slice(0, 10) : "—");
