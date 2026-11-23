@@ -1495,6 +1495,31 @@ def create_app() -> FastAPI:
     def screening_fills(symbol: str = "", side: str = "", config_id: str = "", order_key: str = "", limit: int = 50, offset: int = 0):
         return _page("paper_fills", "ts DESC, fill_key", {"symbol": symbol, "side": side, "config_id": config_id, "order_key": order_key}, limit, offset)
 
+    @api.get("/screening/positions")
+    def screening_positions():
+        """Open paper positions now: one row per configuration holding shares, marked at the last close."""
+        sch = _need_screening()
+        e, r, x = sch.engine, sch.reg, sch.engine.x
+        from nseql.screening.registry import FAMILIES, TF_NAMES
+        from nseql.screening.universe import _rule_name
+        rows = []
+        for i in np.flatnonzero(e.pos == 1):
+            i = int(i)
+            last = float(e.fe.last_close[r.sym[i]])
+            q, entry = int(e.qty[i]), float(e.entry_px[i])
+            ch = int(e.entry_ch[i]) / 100
+            pnl = (last - entry) * q - ch
+            rows.append({"config_id": str(r.ids[i]), "symbol": r.symbols[r.sym[i]], "rule": _rule_name(FAMILIES[r.fam[i]], r.params[i]),
+                         "timeframe": TF_NAMES[r.tf[i]], "horizon": "intraday" if r.intraday[i] else "swing", "qty": q, "entry_price": round(entry, 2),
+                         "last_price": round(last, 2), "stop_price": round(float(e.stop_px[i]), 2), "value_inr": round(last * q, 2),
+                         "unrealised_inr": round(pnl, 2), "unrealised_pct": round((last / entry - 1) * 100, 3) if entry else None,
+                         "exit_pending": bool(e.pend[i] < 0)})
+        rows.sort(key=lambda z: -z["value_inr"])
+        return clean({"rows": rows, "total_value_inr": round(sum(z["value_inr"] for z in rows), 2),
+                      "total_unrealised_inr": round(sum(z["unrealised_inr"] for z in rows), 2), "working_orders": int((e.pend != 0).sum()),
+                      "as_of": sch.watermark, "data_source": sch.provenance(),
+                      "note": "simulated positions; unrealised P&L at the last 1-minute close, after entry charges, before exit charges"})
+
     @api.get("/screening/portfolio")
     def screening_portfolio():
         sch = _need_screening()

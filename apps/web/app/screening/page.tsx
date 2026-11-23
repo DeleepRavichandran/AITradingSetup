@@ -33,6 +33,7 @@ export default function Screening() {
   const orders = useApi<any>(started ? `/screening/orders?horizon=${hz}&status=filled&limit=${PAGE}` : null, 10000);
   const cycles = useApi<any>(started ? "/screening/cycles?limit=30" : null, 10000);
   const pf = useApi<any>(started ? "/screening/portfolio" : null, 10000);
+  const pos = useApi<any>(started ? "/screening/positions" : null, 10000);
   const ov = useApi<any>(started ? "/screening/overview" : null, 15000);
   const ready = useApi<any>("/readiness", 30000);
   const s = status.data, sm = summary.data, o = ov.data;
@@ -98,6 +99,17 @@ export default function Screening() {
           ] as [string, React.ReactNode][]} />
           <p className="dim" style={{ marginTop: 6 }}>{pf.data.note}</p>
         </Card>}
+        <Card title={`Open paper positions (${pos.data?.rows?.length ?? 0})`} right={pos.data && <span className="dim">value {inr(pos.data.total_value_inr)} · unrealised <span className={pos.data.total_unrealised_inr >= 0 ? "up" : "down"}>{inr(pos.data.total_unrealised_inr)}</span></span>}>
+          <Err e={pos.error} />
+          <DataTable maxHeight={360} rows={pos.data?.rows || []} empty="No open positions right now." cols={[
+            { key: "symbol", label: "symbol" }, { key: "rule", label: "rule" }, { key: "timeframe", label: "tf" }, { key: "horizon", label: "horizon" },
+            { key: "qty", label: "qty", r: true }, { key: "entry_price", label: "entry", r: true, f: (r: any) => num(r.entry_price, 2) },
+            { key: "last_price", label: "last", r: true, f: (r: any) => num(r.last_price, 2) }, { key: "stop_price", label: "stop", r: true, f: (r: any) => num(r.stop_price, 2) },
+            { key: "unrealised_inr", label: "unrealised", r: true, f: (r: any) => <span className={r.unrealised_inr >= 0 ? "up" : "down"}>{inr(r.unrealised_inr)} ({num(r.unrealised_pct, 2)}%)</span> },
+            { key: "exit_pending", label: "", f: (r: any) => (r.exit_pending ? <Badge s="exiting" tone="warn" /> : null) },
+            { key: "config_id", label: "configuration", f: (r: any) => <a href={`/universe?config=${r.config_id}`} className="mono">{r.config_id}</a> }]} />
+          <p className="dim" style={{ marginTop: 6 }}>{pos.data?.note}{pos.data?.as_of ? ` · as of ${String(pos.data.as_of).replace("T", " ").slice(0, 16)}` : ""}</p>
+        </Card>
         <Card title="Forward paper ledger (simulated)">
           <KV items={Object.entries(sm?.paper || {}).filter(([k]) => !hz || k === hz).map(([k, v]: any) =>
             [k, `${num(v.filled, 0)} fills · realised ${inr(v.realized_inr)} after charges ${inr(v.charges_inr)}`] as [string, React.ReactNode])} />
