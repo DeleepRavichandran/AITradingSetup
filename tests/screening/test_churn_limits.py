@@ -51,7 +51,7 @@ def test_live_rules_are_versioned_and_off_by_default():
     from nseql.screening.execution import LIVE_RULES_VERSION
     d = PortfolioRules()
     assert (d.cooldown_minutes, d.max_entries_per_symbol_day, d.max_entries_per_config_day, d.max_open_per_symbol, d.group_gate_trades) == (0, 0, 0, 0, 0)
-    assert LIVE_RULES_VERSION == "1.1" and LIVE.capital == 100_000 and LIVE.cooldown_minutes == 15 and LIVE.max_open_per_symbol == 1
+    assert LIVE_RULES_VERSION == "1.2" and LIVE.capital == 100_000 and LIVE.per_trade_pct == 0.10 and LIVE.max_positions == 8 and LIVE.cooldown_minutes == 15 and LIVE.max_open_per_symbol == 1
 
 
 def test_limits_cut_trading_and_every_limit_holds(limited, unlimited):

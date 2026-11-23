@@ -216,12 +216,25 @@ def test_unattended_api_start_with_angel_one(data_dir, tmp_path, monkeypatch):
     assert st["started"] and st["mode"] == "live" and st["symbols"] == 5 and st["live"]["not_found"] == ["NOTREAL"]   # index: context, not traded
     assert st["feed"].startswith("Angel One") and st["running"] is True and st["live_trading"] is False
     assert st["live"]["history"].startswith("dataset angel_daily")
-    assert st["portfolio"]["equity_inr"] == 1_000_000 and st["live"]["account"] == "live_angelone_r2_v11"
+    assert st["portfolio"]["equity_inr"] == 1_000_000 and st["live"]["account"] == "live_angelone_r2_v12"
     assert st["portfolio"]["rules"]["cooldown_minutes"] == 15 and st["portfolio"]["rules"]["max_open_per_symbol"] == 1
     # a different starting capital is a separate paper account, starting from scratch.
     # A slow login opens the race seen on 2026-11-23: dashboard requests during start-up must not reopen the
     # previous account read-only and hide the live bot.
     monkeypatch.setattr(FakeAngel, "ensure_login", lambda self: time.sleep(1.5))
+    # an earlier account of the same capital series that traded and ended flat: its money continues (no fresh start)
+    from nseql.screening.carry import carry_state
+    from nseql.screening.execution import PortfolioRules
+    from nseql.screening.scheduler import MinuteScheduler
+    from nseql.screening.synthetic import minute_stream as syn_stream, symbols as syn_symbols
+    prev_root = tmp_path / "exp" / "screening" / "live_angelone_100000_r2"
+    ps = MinuteScheduler(prev_root, syn_symbols(4), portfolio=PortfolioRules(capital=100_000))
+    for ts, bars in syn_stream(4, ["2026-11-16"], seed=5):
+        ps.ingest(bars)
+        ps.run_cycle(ts + pd.Timedelta(seconds=6))
+    (prev_root / "live.json").write_text('{"capital": 100000}')
+    carried = carry_state(prev_root)
+    assert carried["round_trips"] > 0 and carried["cash_inr"] != 100_000
     monkeypatch.setenv("NSEQL_PAPER_CAPITAL", "100000")
     config.get_settings.cache_clear()
     c2 = TestClient(create_app(), headers={"Authorization": "Bearer angel-live-test-operator-token-1"})
@@ -233,10 +246,12 @@ def test_unattended_api_start_with_angel_one(data_dir, tmp_path, monkeypatch):
             break
         time.sleep(0.2)
     assert st2["live"]["state"] == "running", st2["live"].get("error")
-    assert st2["live"]["account"] == "live_angelone_100000_r2_v11" and st2["portfolio"]["rules"]["capital"] == 100_000
+    assert st2["live"]["account"] == "live_angelone_100000_r2_v12" and st2["portfolio"]["rules"]["capital"] == pytest.approx(carried["cash_inr"])
     assert st2["feed"].startswith("Angel One") and st2["running"] is True                    # the live bot, not a read-only copy
-    assert st2["portfolio"]["cash_inr"] == 100_000 and st2["paper_orders"] == 0             # fresh: no inherited cash, positions or orders
-    assert (tmp_path / "exp" / "screening" / "live_angelone_r2_v11").exists()                    # the old account is kept, untouched
+    assert st2["portfolio"]["cash_inr"] == pytest.approx(carried["cash_inr"]) and st2["paper_orders"] == 0   # same money, no inherited orders
+    td = c2.get("/api/today").json()
+    assert td["account"]["starting_capital"] == 100_000                                       # "since the start" counts from the original money
+    assert (tmp_path / "exp" / "screening" / "live_angelone_r2_v12").exists()                    # the old account is kept, untouched
     monkeypatch.setenv("NSEQL_PAPER_CAPITAL", "5000")
     config.get_settings.cache_clear()
     c3 = TestClient(create_app(), headers={"Authorization": "Bearer angel-live-test-operator-token-1"})

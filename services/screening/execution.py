@@ -81,12 +81,16 @@ class PortfolioRules:
 
     @classmethod
     def live(cls, capital: float) -> "PortfolioRules":
-        """Rules for the live paper account (version LIVE_RULES_VERSION)."""
-        return cls(capital=capital, cooldown_minutes=15, max_entries_per_symbol_day=4, max_entries_per_config_day=1,
+        """Rules for the live paper account (version LIVE_RULES_VERSION).
+        1.1 (2026-11-23): churn limits. 1.2 (operator choice A, 2026-11-23): fewer, larger trades - 10% of equity
+        per buy (about Rs 10,000 on Rs 1 lakh, so stocks above Rs 2,000 become buyable), at most 8 positions,
+        12% per stock (one 10% buy plus the cost buffer)."""
+        return cls(capital=capital, per_trade_pct=0.10, max_positions=8, max_symbol_pct=0.12,
+                   cooldown_minutes=15, max_entries_per_symbol_day=4, max_entries_per_config_day=1,
                    max_open_per_symbol=1, group_gate_trades=30)
 
 
-LIVE_RULES_VERSION = "1.1"
+LIVE_RULES_VERSION = "1.2"
 
 
 def _tick(px: float, tick: float, up: bool) -> float:

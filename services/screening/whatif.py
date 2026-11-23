@@ -49,7 +49,7 @@ def what_if(account: Path, day: str, out: Path, progress=print) -> dict:
     if not any(str(b["ts"])[:10] == day for b in bars):
         raise ValueError(f"account {account.name} has no stored bars for {day}")
     runs = {"rules 1.0 (as traded)": (PortfolioRules(capital=capital), syms),
-            "rules 1.1 (churn limits, index not traded)": (PortfolioRules.live(capital), [s for s in syms if s not in INDEX])}
+            "rules 1.2 (churn limits, 10% per trade, max 8 positions, index not traded)": (PortfolioRules.live(capital), [s for s in syms if s not in INDEX])}
     res = {}
     for k, (name, (rules, ss)) in enumerate(runs.items()):
         root = out / f"run{k}"

@@ -1029,7 +1029,7 @@ def create_app() -> FastAPI:
         try:                                        # a live account keeps its own starting capital
             screening["sch"] = MinuteScheduler(Path(m["root"]), m["symbols"], m["configs"], kill=st.kill, mode=m["mode"], feed=feed,
                                                experiments_dir=st.exp_dir,
-                                               portfolio=(PortfolioRules.live(m["capital"]) if m.get("rules_version") else PortfolioRules(capital=m["capital"]))
+                                               portfolio=(PortfolioRules.live(m.get("start_cash") or m["capital"]) if m.get("rules_version") else PortfolioRules(capital=m["capital"]))
                                                if m.get("capital") else True)
         except ValueError as e:                     # saved with another strategy list: report it, do not break every endpoint
             if "registry" not in str(e):
@@ -1127,16 +1127,39 @@ def create_app() -> FastAPI:
             lf = root / "live.json"
             first = not lf.exists()
             live_from = json.loads(lf.read_text())["live_from"] if not first else datetime.now().strftime("%Y-%m-%dT%H:%M:00")
+            # a new rules version continues the same money and track record (operator: "continue with same money")
+            carried = None
+            if first and not os.environ.get("NSEQL_LIVE_RUN"):
+                from nseql.screening.carry import CarryError, carry_state, find_previous
+                prev = find_previous(st.exp_dir / "screening", name)
+                if prev is not None:
+                    try:
+                        carried = carry_state(prev)
+                    except CarryError as e:
+                        raise RuntimeError(str(e)) from None
+            old = {} if first else json.loads(lf.read_text())
+            start_cash = float(carried["cash_inr"]) if carried else float(old.get("start_cash") or capital)
+            original = float((carried or {}).get("original_capital") or old.get("original_capital") or capital)
             syms = [x["symbol"] for x in tokens]
             if not first and json.loads(lf.read_text()).get("capital", PortfolioRules.capital) != capital:
                 raise RuntimeError(f"paper account '{name}' was started with a different capital; set NSEQL_LIVE_RUN to a new name to start fresh")
             sch = MinuteScheduler(root, syms, None, feed=BrokerMinutePoller(tokens, _angel_api), kill=st.kill, mode="live",
-                                  calendar=_calendar(), live_from=live_from, experiments_dir=st.exp_dir, portfolio=PortfolioRules.live(capital))
+                                  calendar=_calendar(), live_from=live_from, experiments_dir=st.exp_dir, portfolio=PortfolioRules.live(start_cash))
             if first:
-                lf.write_text(json.dumps({"live_from": live_from, "symbols": syms, "not_found": missing, "capital": capital, "account": name}))
+                lf.write_text(json.dumps({"live_from": live_from, "symbols": syms, "not_found": missing, "capital": capital, "account": name,
+                                          "start_cash": start_cash, "original_capital": original,
+                                          "carried_from": {k: v for k, v in (carried or {}).items() if k != "evidence"} or None}))
+                if carried:
+                    from nseql.screening.carry import apply_evidence
+                    n_ev = apply_evidence(sch, carried["evidence"])
+                    log(f"continuing from {carried['from_account']}: cash {start_cash:,.2f} (as of {carried['as_of']}), "
+                        f"track record of {carried['round_trips']} round trips for {n_ev} strategies; original capital {original:,.0f}")
+                    reg.audit("system", "LIVE_ACCOUNT_CONTINUED", account=name, from_account=carried["from_account"], cash_inr=start_cash,
+                              round_trips=carried["round_trips"], strategies=n_ev)
                 screening["live"]["warm_up"] = warm_up(sch, api, tokens, days=5)
             meta = {"root": str(root), "symbols": syms, "configs": None, "mode": "live", "broker": "angelone", "live_from": live_from,
-                    "synthetic": False, "not_found": missing, "capital": capital, "account": name, "rules_version": LIVE_RULES_VERSION}
+                    "synthetic": False, "not_found": missing, "capital": capital, "account": name, "rules_version": LIVE_RULES_VERSION,
+                    "start_cash": start_cash, "original_capital": original}
             (st.exp_dir / "screening" / "current.json").write_text(json.dumps(meta))
             sch.news_count = lambda sym, t: (st.news_watch.symbol_count(sym, t) if getattr(st, "news_watch", None) else None)   # journal context
             screening["sch"], screening["meta"] = sch, meta
@@ -1617,7 +1640,7 @@ def create_app() -> FastAPI:
                                               for t in sorted(rc, key=lambda t: str(t["exit_ts"]), reverse=True)[:12]]}
         except Exception as e:      # noqa: BLE001 - shown, never breaks the page
             charts["rca"] = {"error": f"{type(e).__name__}: {e}"}
-        start_cap = x.rules.capital if x.rules else None
+        start_cap = (screening.get("meta") or {}).get("original_capital") or (x.rules.capital if x.rules else None)
         age = None
         if last:
             age = (datetime.now(views.IST).replace(tzinfo=None) - pd.Timestamp(last[0]).to_pydatetime()).total_seconds()

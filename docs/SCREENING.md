@@ -261,11 +261,18 @@ replays keep the old defaults (all limits off) so earlier benchmarks stay compar
 | Buys per strategy per day | 1 | `daily cap: this strategy already bought 1x today` |
 | Buys per stock per day | 4 | `daily cap: this stock already bought 4x today` |
 | Positions or working buys per stock | 1 | `one at a time: already holding or buying this stock` |
+| Trade size (1.2) | 10% of equity per buy, max 8 positions, 12% per stock | `price above trade size` only above ~Rs 10,000 on Rs 1 lakh |
 | Strategy-type cost gate | 30 round trips | `strategy type losing after costs (...)`: a rule family x timeframe whose raw mean net return across all stocks is below zero after 30 round trips gets no new capital |
 
 Counters reset at the day boundary and are part of the checkpoint (a restart reproduces the same ledger;
 tested). Indices (NIFTY 50) are never traded. New rules open a new account folder
-(`live_angelone_<capital>_r2_v11`); the old account is kept for review.
+(`live_angelone_<capital>_r2_v12` for rules 1.2); the old account is kept for review.
+
+**Continuing the same money.** A new rules version opens a new folder, but the first start of that folder
+continues the most recent account of the same capital series that traded (`services/screening/carry.py`):
+its last cash, its original capital ("since the start" keeps counting from it) and the forward evidence of
+every strategy that still exists. Only when that account holds no open positions; otherwise start-up stops
+with the reason. `NSEQL_LIVE_RUN=<name>` starts a separate fresh account instead.
 
 `nseql what-if --account <folder> --day YYYY-MM-DD` (on Windows, where Application Control may block the
 `nseql.exe` launcher: `.venv\Scripts\python.exe -m nseql.cli what-if ...`) replays an account's stored bars for that day under
