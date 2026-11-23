@@ -171,8 +171,11 @@ textarea { width: 100%; font-family: var(--mono); font-size: 12.5px; } label { f
 @media (max-width: 1100px) { .hero { grid-template-columns: minmax(0, 1fr); } .g4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 900px) {
   .shell { grid-template-columns: minmax(0, 1fr); } .side { display: none; position: fixed; z-index: 30; width: 260px; box-shadow: 0 0 40px rgba(0,0,0,.5); } .side.open { display: block; }
-  .menu { display: inline-block; } .main { padding: 16px 16px 60px; } .strip { padding: 8px 16px; flex-wrap: nowrap; }
-  .strip .chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; flex: 1; } .strip .chips::-webkit-scrollbar { display: none; }
+  .menu { display: inline-block; } .main { padding: 16px 16px 60px; } .strip { padding: 8px 16px; flex-wrap: wrap; row-gap: 6px; }
+  /* narrow screens: buttons (menu, Vega, emergency stop) on the first row; the status chips get their own full-width row,
+     paper mode first and fully legible, the rest scroll sideways */
+  .strip .acts { order: 1; } .strip .chips { order: 2; flex: 1 0 100%; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .strip .chips::-webkit-scrollbar { display: none; } .strip .chips .chip { flex: none; }
   .strip .acts .kbd, .strip .acts .theme { display: none; }
   .g2, .g3, .g4, .g21, .g12 { grid-template-columns: minmax(0, 1fr); } .metric .v { font-size: 28px; } h1 { font-size: 23px; }
   .funnel .fr { grid-template-columns: 110px minmax(0, 1fr) 56px; }

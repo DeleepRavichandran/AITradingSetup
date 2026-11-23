@@ -53,9 +53,7 @@ export default function MissionControl() {
         <h1 className={s.title}>Mission <span>Control</span></h1>
         <div className={s.meta}>
           <span className={s.chip}><b>{clock || "—"}</b></span>
-          <span className={s.chip}>Market <b>{d?.market?.state || "—"}</b></span>
-          <span className={s.chip} data-testid="hud-source">Prices: <b>{d?.data_source?.label || "no market data"}</b></span>
-          <span className={s.chip}>Real-money orders <b>off</b></span>
+          <span className={s.dim} style={{ fontSize: 12.5 }} data-testid="hud-source">mode, session, last candle and feed: see the status bar</span>
         </div>
       </div>
 
@@ -112,20 +110,20 @@ export default function MissionControl() {
             <circle cx={C} cy={C} r={196} fill="url(#glow)" />
             {Array.from({ length: 75 }, (_, i) => {
               const ang = (i / 75) * 2 * Math.PI, [x0, y0] = polar(186, ang), [x1, y1] = polar(i % 5 ? 191 : 196, ang);
-              return <line key={i} x1={x0} y1={y0} x2={x1} y2={y1} stroke="#5cc8ff" strokeOpacity={i / 75 <= sessionShare ? 0.85 : 0.18} strokeWidth={i % 5 ? 1 : 2} />;
+              return <line key={i} x1={x0} y1={y0} x2={x1} y2={y1} style={{ stroke: "var(--cyan)" }} strokeOpacity={i / 75 <= sessionShare ? 0.85 : 0.18} strokeWidth={i % 5 ? 1 : 2} />;
             })}
-            <circle cx={C} cy={C} r={160} fill="none" stroke="#5cc8ff" strokeOpacity="0.12" strokeWidth="14" />
+            <circle cx={C} cy={C} r={160} fill="none" style={{ stroke: "var(--cyan)" }} strokeOpacity="0.12" strokeWidth="14" />
             <path d={arc(160, 0, Math.max(-Math.PI, Math.min(Math.PI, (dayRet / 0.03) * Math.PI)))} fill="none"
-              stroke={dayRet >= 0 ? "#39d98a" : "#ff6b85"} strokeWidth="14" strokeLinecap="round" />
-            <circle cx={C} cy={C} r={132} fill="none" stroke="#ffb547" strokeOpacity="0.12" strokeWidth="8" />
-            <path d={arc(132, 0, exposure * 2 * Math.PI * 0.9999)} fill="none" stroke="#ffb547" strokeWidth="8" strokeLinecap="round" />
+              style={{ stroke: dayRet >= 0 ? "var(--green)" : "var(--red)" }} strokeWidth="14" strokeLinecap="round" />
+            <circle cx={C} cy={C} r={132} fill="none" style={{ stroke: "var(--amber)" }} strokeOpacity="0.12" strokeWidth="8" />
+            <path d={arc(132, 0, exposure * 2 * Math.PI * 0.9999)} fill="none" style={{ stroke: "var(--amber)" }} strokeWidth="8" strokeLinecap="round" />
             <g className={s.sweep}><path d={`M ${C} ${C} L ${C} ${C - 118} A 118 118 0 0 1 ${polar(118, 0.5)[0]} ${polar(118, 0.5)[1]} Z`} fill="url(#sw)" opacity="0.35" /></g>
-            <circle cx={C} cy={C} r={112} fill="#08101d" stroke="#5cc8ff" strokeOpacity="0.25" />
-            <text x={C} y={C - 26} textAnchor="middle" fill="#8ea3bf" fontSize="14">Account value</text>
-            <text x={C} y={C + 12} textAnchor="middle" fill="#dce7f5" style={{ font: "600 36px var(--cond)" }}>{a ? inr(a.value_now) : "—"}</text>
-            <text x={C} y={C + 40} textAnchor="middle" fill={dayRet >= 0 ? "#39d98a" : "#ff6b85"} style={{ font: "600 18px var(--cond)" }}>
+            <circle cx={C} cy={C} r={112} style={{ fill: "var(--bg)", stroke: "var(--cyan)" }} strokeOpacity="0.25" />
+            <text x={C} y={C - 26} textAnchor="middle" style={{ fill: "var(--dim)" }} fontSize="14">Account value</text>
+            <text x={C} y={C + 12} textAnchor="middle" style={{ fill: "var(--ink)", font: "600 36px var(--cond)" }}>{a ? inr(a.value_now) : "—"}</text>
+            <text x={C} y={C + 40} textAnchor="middle" style={{ fill: dayRet >= 0 ? "var(--green)" : "var(--red)", font: "600 18px var(--cond)" }}>
               {a ? `${dayRet >= 0 ? "+" : "−"}${Math.abs(dayRet * 100).toFixed(2)}% today` : ""}</text>
-            <text x={C} y={C + 62} textAnchor="middle" fill="#8ea3bf" fontSize="12.5">{a?.starting_capital ? `started with ${inr(a.starting_capital)}` : ""}</text>
+            <text x={C} y={C + 62} textAnchor="middle" style={{ fill: "var(--dim)" }} fontSize="12.5">{a?.starting_capital ? `started with ${inr(a.starting_capital)}` : ""}</text>
           </svg>
           <div className={s.legend}>
             <span><i style={{ background: "#5cc8ff" }} />session done</span>

@@ -275,7 +275,7 @@ describe("Accessibility and layout", () => {
     const { page, ctx, errors } = await open("/hud");
     await page.getByRole("img", { name: /Account value ₹99,820, -0\.18% today, 5% invested/ }).waitFor();
     await page.getByTestId("hud-bot").getByText("Working").waitFor();
-    await page.getByTestId("hud-source").getByText("Live 1-minute candles (adapter not verified)").waitFor();
+    await page.getByTestId("strip-data").waitFor();                               // feed verification lives in the status bar only
     await page.getByTestId("hud-breadth").getByText("12 up").waitFor();
     await page.getByTestId("hud-contest").getByText("The forward contest starts with live screening.").waitFor();
     await page.getByTestId("hud-news").getByText("RBI keeps repo rate unchanged").waitFor();
