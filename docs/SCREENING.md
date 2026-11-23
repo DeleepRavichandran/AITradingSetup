@@ -247,3 +247,26 @@ after the minute. These are simulated-clock numbers; real latency and limits nee
 - Use of the Learning Brain's memory in live screening.
 
 See [PLATFORM_V5_STATUS.md](PLATFORM_V5_STATUS.md).
+
+## Live trading rules 1.1 (from 2026-11-24)
+
+The first live paper day (2026-11-23) made 708 trades by 12:23 on Rs 1 lakh and hit the daily loss limit:
+6,120 independent configurations, fast 1-minute rules, 0.5-1% stops, no cool-down and no daily caps.
+The live paper account now uses `PortfolioRules.live(capital)` (`LIVE_RULES_VERSION = "1.1"`); research
+replays keep the old defaults (all limits off) so earlier benchmarks stay comparable.
+
+| Limit | Value | Refusal reason |
+|---|---|---|
+| Cool-down after any sale of a stock | 15 min | `cool-down: this stock was sold less than 15 min ago` |
+| Buys per strategy per day | 1 | `daily cap: this strategy already bought 1x today` |
+| Buys per stock per day | 4 | `daily cap: this stock already bought 4x today` |
+| Positions or working buys per stock | 1 | `one at a time: already holding or buying this stock` |
+| Strategy-type cost gate | 30 round trips | `strategy type losing after costs (...)`: a rule family x timeframe whose raw mean net return across all stocks is below zero after 30 round trips gets no new capital |
+
+Counters reset at the day boundary and are part of the checkpoint (a restart reproduces the same ledger;
+tested). Indices (NIFTY 50) are never traded. New rules open a new account folder
+(`live_angelone_<capital>_r2_v11`); the old account is kept for review.
+
+`nseql what-if --account <folder> --day YYYY-MM-DD` replays an account's stored bars for that day under
+rules 1.0 and 1.1 side by side (trades, charges, realised P&L, end value, refusals). It replays a day the
+rules were designed from, so it is a sanity check, not evidence: judge 1.1 on the days after.

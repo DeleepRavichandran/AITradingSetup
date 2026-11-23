@@ -182,7 +182,8 @@ def test_unattended_api_start_with_angel_one(data_dir, tmp_path, monkeypatch):
 
         def instruments(self, cache_dir=None):
             return pd.DataFrame([{"token": f"SYN{i:03d}", "symbol": f"SYN{i:03d}-EQ", "name": f"SYN{i:03d}", "exch_seg": "NSE",
-                                  "instrumenttype": "", "tick_size": "5"} for i in range(5)])
+                                  "instrumenttype": "", "tick_size": "5"} for i in range(5)]
+                                + [{"token": "99926000", "symbol": "Nifty 50", "name": "NIFTY", "exch_seg": "NSE", "instrumenttype": "AMXIDX", "tick_size": "5"}])
 
         last_raw: list = []
 
@@ -195,7 +196,7 @@ def test_unattended_api_start_with_angel_one(data_dir, tmp_path, monkeypatch):
 
     monkeypatch.setattr(A, "AngelHistorical", FakeAngel)
     (tmp_path / "exp").mkdir()
-    (tmp_path / "exp" / "watchlist.txt").write_text("# test\nSYN000\nSYN001\nSYN002\nSYN003\nSYN004\nNOTREAL\n")
+    (tmp_path / "exp" / "watchlist.txt").write_text("# test\nSYN000\nSYN001\nSYN002\nSYN003\nSYN004\nNOTREAL\nNIFTY 50\n")
     env = {"NSEQL_DATA_DIR": str(tmp_path / "data"), "NSEQL_EXPERIMENTS_DIR": str(tmp_path / "exp"), "NSEQL_AUTO_FIXTURE": "false",
            "NSEQL_API_TOKEN": "angel-live-test-operator-token-1", "NSEQL_LIVE_SCREENING": "angelone",
            **{k: "x" for k in A.ENV}}
@@ -212,10 +213,11 @@ def test_unattended_api_start_with_angel_one(data_dir, tmp_path, monkeypatch):
             break
         time.sleep(0.2)
     assert st["live"]["state"] == "running", st["live"].get("error")
-    assert st["started"] and st["mode"] == "live" and st["symbols"] == 5 and st["live"]["not_found"] == ["NOTREAL", "NIFTY 50"]
+    assert st["started"] and st["mode"] == "live" and st["symbols"] == 5 and st["live"]["not_found"] == ["NOTREAL"]   # index: context, not traded
     assert st["feed"].startswith("Angel One") and st["running"] is True and st["live_trading"] is False
     assert st["live"]["history"].startswith("dataset angel_daily")
-    assert st["portfolio"]["equity_inr"] == 1_000_000 and st["live"]["account"] == "live_angelone_r2"
+    assert st["portfolio"]["equity_inr"] == 1_000_000 and st["live"]["account"] == "live_angelone_r2_v11"
+    assert st["portfolio"]["rules"]["cooldown_minutes"] == 15 and st["portfolio"]["rules"]["max_open_per_symbol"] == 1
     # a different starting capital is a separate paper account, starting from scratch.
     # A slow login opens the race seen on 2026-11-23: dashboard requests during start-up must not reopen the
     # previous account read-only and hide the live bot.
@@ -231,10 +233,10 @@ def test_unattended_api_start_with_angel_one(data_dir, tmp_path, monkeypatch):
             break
         time.sleep(0.2)
     assert st2["live"]["state"] == "running", st2["live"].get("error")
-    assert st2["live"]["account"] == "live_angelone_100000_r2" and st2["portfolio"]["rules"]["capital"] == 100_000
+    assert st2["live"]["account"] == "live_angelone_100000_r2_v11" and st2["portfolio"]["rules"]["capital"] == 100_000
     assert st2["feed"].startswith("Angel One") and st2["running"] is True                    # the live bot, not a read-only copy
     assert st2["portfolio"]["cash_inr"] == 100_000 and st2["paper_orders"] == 0             # fresh: no inherited cash, positions or orders
-    assert (tmp_path / "exp" / "screening" / "live_angelone_r2").exists()                    # the old account is kept, untouched
+    assert (tmp_path / "exp" / "screening" / "live_angelone_r2_v11").exists()                    # the old account is kept, untouched
     monkeypatch.setenv("NSEQL_PAPER_CAPITAL", "5000")
     config.get_settings.cache_clear()
     c3 = TestClient(create_app(), headers={"Authorization": "Bearer angel-live-test-operator-token-1"})
@@ -270,3 +272,11 @@ def test_pre_open_bars_are_dropped_and_never_block_the_session(tmp_path):
         c = sch.run_cycle(ts + pd.Timedelta(seconds=6))
         assert "error" not in c
     assert sch.watermark == "2026-11-16T09:20:00" and sch.store.counts()["cycles"] == 5
+
+
+def test_suggest_offers_renamed_symbols():
+    from nseql.data.adapters.angelone import suggest
+    m = pd.DataFrame([{"symbol": s + "-EQ", "name": n, "exch_seg": "NSE"} for s, n in
+                      [("TMPV", "TATA MOTORS PASSENGER VEHICLES"), ("TMCV", "TATA MOTORS"), ("TATASTEEL", "TATA STEEL"), ("INFY", "INFOSYS")]])
+    out = suggest(m, "TATAMOTORS")
+    assert "TMPV" in out and "TMCV" in out and "INFY" not in out

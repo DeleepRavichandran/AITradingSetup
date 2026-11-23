@@ -226,7 +226,7 @@ class AngelHistorical:
 
 # Same list as config/watchlist_default.txt (used when that file is not shipped, e.g. a non-editable install).
 DEFAULT_WATCHLIST = ("RELIANCE", "HDFCBANK", "ICICIBANK", "INFY", "TCS", "BHARTIARTL", "SBIN", "ITC", "LT", "KOTAKBANK", "AXISBANK",
-                     "HINDUNILVR", "BAJFINANCE", "MARUTI", "SUNPHARMA", "TITAN", "ULTRACEMCO", "NTPC", "TATAMOTORS", "ASIANPAINT")
+                     "HINDUNILVR", "BAJFINANCE", "MARUTI", "SUNPHARMA", "TITAN", "ULTRACEMCO", "NTPC", "TMPV", "ASIANPAINT")
 
 
 def watchlist(experiments_dir: Path) -> list[str]:
@@ -268,3 +268,21 @@ def resolve(master: pd.DataFrame, wanted: list[str]) -> tuple[list[dict], list[s
         else:
             missing.append(w)
     return found, missing
+
+
+def suggest(master: pd.DataFrame, wanted: str, n: int = 5) -> list[str]:
+    """Close NSE equity matches for a symbol that was not found (renamed or demerged companies),
+    by symbol prefix and by company-name words. Only suggestions: the operator edits the watchlist."""
+    m = master[master["exch_seg"].astype(str).str.upper() == "NSE"]
+    eq = m[m["symbol"].astype(str).str.endswith("-EQ")]
+    key = wanted.strip().upper()
+    sym = eq["symbol"].astype(str).str.upper().str[:-3]
+    name = eq["name"].astype(str).str.upper()
+    hits = list(sym[sym.str.startswith(key[:4])])
+    words = [w for w in (key[:4], key[4:]) if len(w) >= 3]
+    hits += list(sym[name.apply(lambda x: all(w in x.replace(" ", "") for w in words))])
+    out = []
+    for h in hits:
+        if h not in out:
+            out.append(h)
+    return out[:n]

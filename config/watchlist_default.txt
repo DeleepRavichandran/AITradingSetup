@@ -19,5 +19,5 @@ SUNPHARMA
 TITAN
 ULTRACEMCO
 NTPC
-TATAMOTORS
+TMPV  # Tata Motors Passenger Vehicles (Tata Motors was demerged; check the name at Angel One)
 ASIANPAINT

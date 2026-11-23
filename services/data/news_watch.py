@@ -34,7 +34,7 @@ ALIASES = {"RELIANCE": ["reliance"], "HDFCBANK": ["hdfc bank"], "ICICIBANK": ["i
            "TCS": ["tcs", "tata consultancy"], "BHARTIARTL": ["bharti airtel", "airtel"], "SBIN": ["sbi", "state bank of india"],
            "ITC": ["itc"], "LT": ["larsen", "l&t"], "KOTAKBANK": ["kotak"], "AXISBANK": ["axis bank"], "HINDUNILVR": ["hindustan unilever", "hul"],
            "BAJFINANCE": ["bajaj finance"], "MARUTI": ["maruti"], "SUNPHARMA": ["sun pharma"], "TITAN": ["titan"],
-           "ULTRACEMCO": ["ultratech"], "NTPC": ["ntpc"], "TATAMOTORS": ["tata motors"], "ASIANPAINT": ["asian paints"],
+           "ULTRACEMCO": ["ultratech"], "NTPC": ["ntpc"], "TMPV": ["tata motors"], "ASIANPAINT": ["asian paints"],
            "NIFTY50": ["nifty", "sensex"]}
 THEMES = {
     "rates & central banks": ["rbi", "repo rate", "fed ", "federal reserve", "interest rate", "rate cut", "rate hike", "ecb", "powell", "monetary policy"],

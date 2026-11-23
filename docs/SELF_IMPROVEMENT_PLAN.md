@@ -48,6 +48,7 @@ Honest limit: steps 2-6 need weeks of real paper trades; one day is too few trad
 | CI failed once on Ctrl K test | Key pressed before the page was interactive (slow CI) | Test waits for the page and retries |
 | `npm` blocked in PowerShell | Windows script policy blocks `npm.ps1` | Use `npm.cmd` |
 | Dashboard too technical | Built for analysis first | Added "My trading (simple)" page |
-| NIFTY 50 treated as a tradable stock | The index is in the watchlist for context but is screened like a stock | To fix after the close (needs a fresh account / registry version) |
-| TATAMOTORS not found | Symbol no longer listed under that name at Angel One | Verify the current symbol(s) and update the watchlist |
+| NIFTY 50 treated as a tradable stock | The index was screened like a stock | Fixed (rules 1.1): indices are never traded |
+| TATAMOTORS not found | Tata Motors was demerged; the old symbol is gone | Watchlist now has TMPV (unverified at Angel One from here); the log lists close matches for any symbol not found |
+| 708 trades by 12:23, daily loss limit hit | 6,120 independent strategies, fast 1-minute rules, tight stops, no cool-down or caps | Rules 1.1: 15-min cool-down, 1 buy per strategy and 4 per stock per day, one position per stock, strategy-type cost gate; `nseql what-if` to compare; judge on later days |
 | After an 11:47 restart the money cards showed a fresh ₹1,00,000 and "no new prices" | On Windows the checkpoint save called fsync on a read-only file, which Windows refuses, so no checkpoint was saved; the restart rebuilt the account by replaying every stored minute | Fixed: fsync on the writing handle (test simulates Windows); cycle errors now go to `api.log`; the reopen path keeps the account's capital |

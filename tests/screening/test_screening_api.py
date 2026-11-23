@@ -65,6 +65,9 @@ def test_replay_lists_filters_and_restart(boot):
     td = c.get("/api/today").json()
     assert td["started"] and td["account"]["starting_capital"] == 1_000_000 and len(td["holdings"]) == pf["open_positions"]
     assert td["bot"]["state"] in ("ok", "waiting", "off", "stale") and all(t["action"] in ("Bought", "Sold") for t in td["recent_trades"])
+    ch = td["charts"]
+    assert ch["rules_version"] == "1.0" and len(ch["most_active"]) <= 5 and all(m["trades"] > 0 for m in ch["most_active"])
+    assert all(x["value"] > 0 for x in ch["limited"])
     assert pf["shared_capital"] and pf["mode"] == "realistic" and pf["cash_inr"] - pf["reserved_inr"] >= 0
     buys = c.get("/api/screening/signals?decision=BUY&limit=1").json()["total"]
     assert sum(pf["refused_signals"].values()) + c.get("/api/screening/orders?side=BUY&limit=1").json()["total"] == buys

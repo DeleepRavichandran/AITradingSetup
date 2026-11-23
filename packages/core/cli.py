@@ -65,6 +65,9 @@ def main(argv: list[str] | None = None) -> int:
     hd.add_argument("file", nargs="?", help="CSV with a Date column (e.g. 26-Jan-2026) and optionally a Description column")
     hd.add_argument("--source", help="where the list came from, e.g. the NSE circular number and date")
     hd.add_argument("--show", action="store_true", help="print the loaded list")
+    wi = sub.add_parser("what-if", help="replay a paper account's stored day under the current and the new live rules, side by side")
+    wi.add_argument("--account", required=True, help="folder name under experiments/screening, e.g. live_angelone_100000_r2")
+    wi.add_argument("--day", required=True, help="YYYY-MM-DD"); wi.add_argument("--out", default=None, help="empty folder for the replays")
     sub.add_parser("brain-verify", help="verify the episodic memory hash chain and the correctness probes")
     v = sub.add_parser("serve", help="start the API server"); v.add_argument("--host", default="127.0.0.1"); v.add_argument("--port", type=int, default=8000)
     a = ap.parse_args(argv)
@@ -133,6 +136,17 @@ def main(argv: list[str] | None = None) -> int:
         for f in a.files:
             out = fs.import_text(Path(f).read_text(encoding="utf-8", errors="replace"), file=Path(f).name)
             print(f"{f}: {out['layout']} layout, {out['schemes']} schemes, {out['new_navs']} new NAVs ({out['duplicates']} already stored, {out['skipped']} skipped)")
+    elif a.cmd == "what-if":
+        import json as _json
+        from datetime import datetime as _dt
+
+        from nseql.screening.whatif import what_if
+        src = s.experiments_dir / "screening" / a.account
+        out = Path(a.out) if a.out else s.experiments_dir / "screening" / "what_if" / f"{a.account}_{a.day}_{_dt.now():%H%M%S}"
+        rep = what_if(src, a.day, out)
+        (out / "report.json").write_text(_json.dumps(rep, indent=2))
+        print(_json.dumps(rep, indent=2))
+        return 0
     elif a.cmd == "angel-verify":
         from nseql.data.adapters.angel_verify import verify
         rep = verify(s.experiments_dir, symbol=a.symbol)

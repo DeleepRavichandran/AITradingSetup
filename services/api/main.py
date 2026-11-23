@@ -1028,7 +1028,9 @@ def create_app() -> FastAPI:
         from nseql.screening.execution import PortfolioRules
         try:                                        # a live account keeps its own starting capital
             screening["sch"] = MinuteScheduler(Path(m["root"]), m["symbols"], m["configs"], kill=st.kill, mode=m["mode"], feed=feed,
-                                               experiments_dir=st.exp_dir, portfolio=PortfolioRules(capital=m["capital"]) if m.get("capital") else True)
+                                               experiments_dir=st.exp_dir,
+                                               portfolio=(PortfolioRules.live(m["capital"]) if m.get("rules_version") else PortfolioRules(capital=m["capital"]))
+                                               if m.get("capital") else True)
         except ValueError as e:                     # saved with another strategy list: report it, do not break every endpoint
             if "registry" not in str(e):
                 raise
@@ -1094,10 +1096,19 @@ def create_app() -> FastAPI:
                 raise RuntimeError(f"Angel One credentials missing in .env: {', '.join(missing_credentials())}")
             api = _angel_api()
             api.ensure_login()
-            tokens, missing = angel_resolve(api.instruments(st.exp_dir), [*_watchlist(), "NIFTY 50"])
+            master = api.instruments(st.exp_dir)
+            tokens, missing = angel_resolve(master, _watchlist())
+            index = [t for t in tokens if t.get("kind") == "INDEX"]
+            tokens = [t for t in tokens if t.get("kind") != "INDEX"]       # an index is context, never a tradable paper position
+            if index:
+                log(f"not traded (index, context only): {', '.join(t['symbol'] for t in index)}")
+            if missing:
+                from nseql.data.adapters.angelone import suggest
+                for w in missing:
+                    log(f"not found at Angel One: {w}; close matches: {', '.join(suggest(master, w)) or 'none'} (edit the watchlist)")
             if not tokens:
                 raise RuntimeError(f"none of the watchlist symbols were found at Angel One: {missing}")
-            from nseql.screening.execution import PortfolioRules
+            from nseql.screening.execution import LIVE_RULES_VERSION, PortfolioRules
             capital = float(os.environ.get("NSEQL_PAPER_CAPITAL") or PortfolioRules.capital)
             if capital < 10_000:
                 raise RuntimeError(f"NSEQL_PAPER_CAPITAL must be at least 10000 (got {capital:g})")
@@ -1105,8 +1116,10 @@ def create_app() -> FastAPI:
             # another account's cash or positions; NSEQL_LIVE_RUN names a fresh account explicitly
             from nseql.screening.registry import REGISTRY_VERSION
             # a new strategy list (registry version) also opens a fresh account: old checkpoints cannot be resumed
+            # ... and so does a new set of live trading rules (1.1: churn limits, index not traded)
             name = os.environ.get("NSEQL_LIVE_RUN") or ("live_angelone" + ("" if capital == PortfolioRules.capital else f"_{int(capital)}")
-                                                        + ("" if REGISTRY_VERSION == 1 else f"_r{REGISTRY_VERSION}"))
+                                                        + ("" if REGISTRY_VERSION == 1 else f"_r{REGISTRY_VERSION}")
+                                                        + f"_v{LIVE_RULES_VERSION.replace('.', '')}")
             if not name.replace("_", "").replace("-", "").isalnum():
                 raise RuntimeError("NSEQL_LIVE_RUN may contain only letters, digits, '-' and '_'")
             root = st.exp_dir / "screening" / name
@@ -1118,19 +1131,20 @@ def create_app() -> FastAPI:
             if not first and json.loads(lf.read_text()).get("capital", PortfolioRules.capital) != capital:
                 raise RuntimeError(f"paper account '{name}' was started with a different capital; set NSEQL_LIVE_RUN to a new name to start fresh")
             sch = MinuteScheduler(root, syms, None, feed=BrokerMinutePoller(tokens, _angel_api), kill=st.kill, mode="live",
-                                  calendar=_calendar(), live_from=live_from, experiments_dir=st.exp_dir, portfolio=PortfolioRules(capital=capital))
+                                  calendar=_calendar(), live_from=live_from, experiments_dir=st.exp_dir, portfolio=PortfolioRules.live(capital))
             if first:
                 lf.write_text(json.dumps({"live_from": live_from, "symbols": syms, "not_found": missing, "capital": capital, "account": name}))
                 screening["live"]["warm_up"] = warm_up(sch, api, tokens, days=5)
             meta = {"root": str(root), "symbols": syms, "configs": None, "mode": "live", "broker": "angelone", "live_from": live_from,
-                    "synthetic": False, "not_found": missing, "capital": capital, "account": name}
+                    "synthetic": False, "not_found": missing, "capital": capital, "account": name, "rules_version": LIVE_RULES_VERSION}
             (st.exp_dir / "screening" / "current.json").write_text(json.dumps(meta))
             screening["sch"], screening["meta"] = sch, meta
             sch.start()
             screening["live"].update(state="running", symbols=len(syms), live_from=live_from, not_found=missing, capital=capital, account=name)
-            log(f"running: {len(syms)} symbols, {len(sch.reg):,} configurations, paper account {name} (capital {capital:,.0f}), "
+            log(f"running: {len(syms)} symbols, {len(sch.reg):,} configurations, paper account {name} (capital {capital:,.0f}, rules {LIVE_RULES_VERSION}), "
                 f"paper orders from {live_from}" + (f"; not found: {', '.join(missing)}" if missing else ""))
-            reg.audit("system", "LIVE_SCREENING_STARTED", broker="angelone", symbols=len(syms), live_from=live_from)
+            reg.audit("system", "LIVE_SCREENING_STARTED", broker="angelone", symbols=len(syms), live_from=live_from, account=name,
+                      rules_version=LIVE_RULES_VERSION, rules=PortfolioRules.live(capital).to_dict())
         except Exception as e:                      # reported, never crashes the API
             screening["live"].update(state="error", error=f"{type(e).__name__}: {e}")
             log(f"ERROR: could not start: {type(e).__name__}: {e}")
@@ -1554,6 +1568,10 @@ def create_app() -> FastAPI:
                                "AND substr(fill_ts,1,10)=?", (curve_day or day,)).fetchall()
             hours = db.execute("SELECT substr(fill_ts,12,2), side, COUNT(*) FROM paper_orders WHERE status IN ('filled','partial') AND substr(fill_ts,1,10)=? "
                                "GROUP BY 1, 2", (curve_day or day,)).fetchall()
+            busy = db.execute("SELECT config_id, symbol, COUNT(*), COALESCE(SUM(CASE WHEN side='SELL' THEN realized_paise END),0) FROM paper_orders "
+                              "WHERE status IN ('filled','partial') AND substr(fill_ts,1,10)=? GROUP BY 1, 2 ORDER BY 3 DESC, 4 LIMIT 5",
+                              (curve_day or day,)).fetchall()
+            refused = db.execute("SELECT reason, SUM(n) FROM refusals WHERE substr(minute,1,10)=? GROUP BY 1", (curve_day or day,)).fetchall()
         from nseql.screening.registry import FAMILIES
         from nseql.screening.universe import _rule_name
         idx = {str(i): k for k, i in enumerate(sch.reg.ids)}
@@ -1582,6 +1600,12 @@ def create_app() -> FastAPI:
                   + [{"label": "Free cash", "value": round(snap["cash_inr"] - snap["reserved_inr"], 2)}],
                   "pnl_by_family": [{"label": k, "value": round(v, 2)} for k, v in sorted(fam_pnl.items(), key=lambda z: z[1])],
                   "wins": int(wins), "losses": int(losses), "trades_by_hour": [per_hour[h] for h in sorted(per_hour)]}
+        LIMITS = (("cool-down", "cool-down after a sale"), ("daily cap", "daily cap reached"), ("one at a time", "already holding that stock"),
+                  ("strategy type losing", "strategy type losing after costs"), ("daily loss limit", "today's loss limit"))
+        limited = {label: int(sum(n for why, n in refused if str(why).startswith(key))) for key, label in LIMITS}
+        charts["most_active"] = [{"strategy": rule(cid), "symbol": sym, "trades": int(n), "profit": rp / 100} for cid, sym, n, rp in busy]
+        charts["limited"] = [{"label": k, "value": v} for k, v in limited.items() if v]
+        charts["rules_version"] = (screening.get("meta") or {}).get("rules_version") or "1.0"
         start_cap = x.rules.capital if x.rules else None
         age = None
         if last:

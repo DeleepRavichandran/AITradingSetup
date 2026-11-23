@@ -126,7 +126,8 @@ class Allocator:
         mu = (self.ev_sum + c.k_config * g_mu[group]) / (self.ev_n + c.k_config)
         p = (self.ev_w + c.k_config * g_p[group]) / (self.ev_n + c.k_config)
         conf = self.ev_n / (self.ev_n + c.k_config)
-        return {"mu": mu, "p_win": p, "confidence": conf, "qualified": (self.ev_n >= c.min_trades) & (mu > 0)}
+        return {"mu": mu, "p_win": p, "confidence": conf, "qualified": (self.ev_n >= c.min_trades) & (mu > 0),
+                "group_n": gn, "group_mu": gs / np.maximum(gn, 1)}
 
     def reliability(self) -> float:
         n, sse, wins = self.calib

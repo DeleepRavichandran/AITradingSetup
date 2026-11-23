@@ -175,6 +175,24 @@ function Charts({ c, ds }: { c: any; ds: any }) {
           {prov}
         </section>
       </div>
+      <section className="panel" style={{ marginBottom: 14 }} aria-labelledby="busy-h" data-testid="chart-busy">
+        <H id="busy-h" icon="bars" color="var(--s8)">Busiest strategies today</H>
+        {(c.most_active || []).length ? <ul className="list" style={{ margin: 0 }}>
+          {c.most_active.map((m: any) => (
+            <li key={m.strategy + m.symbol} style={{ display: "flex", gap: 10, alignItems: "baseline", padding: "6px 0", flexWrap: "wrap" }}>
+              <b style={{ minWidth: 92 }}>{m.symbol}</b><span className="ink2" style={{ flex: 1, minWidth: 160 }}>{m.strategy}</span>
+              <span className="num">{m.trades} trades</span>
+              <span className={`num ${m.profit >= 0 ? "up" : "down"}`} style={{ minWidth: 80, textAlign: "right" }}>{signed(m.profit)}</span>
+            </li>))}
+        </ul> : <p className="dim" style={{ margin: 0 }}>No trades yet today.</p>}
+        <p className="ink2" style={{ margin: "10px 0 0" }} data-testid="limited">
+          Trading rules {c.rules_version}.{" "}
+          {(c.limited || []).length
+            ? <>Buys held back today: {c.limited.map((x: any) => `${x.label} ${x.value.toLocaleString("en-IN")}`).join(" · ")}.</>
+            : "No buys were held back by the trading limits today."}
+        </p>
+        {prov}
+      </section>
     </>
   );
 }

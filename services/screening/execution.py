@@ -67,9 +67,26 @@ class PortfolioRules:
     daily_loss_pct: float = 0.02
     cost_buffer: float = 0.003          # cash reserved above the order value for slippage and charges
     allocation: str = "ranked"          # "ranked" (allocator.py) or "first_come" (registry order, the old baseline)
+    # churn limits (0 = off). Off by default so research replays stay comparable; the live paper account turns
+    # them on (see LIVE_RULES_VERSION / live()). Learned on 2026-11-23: 708 trades by 12:23 on Rs 1 lakh.
+    cooldown_minutes: int = 0           # no new entry in a symbol for this many minutes after any exit in it
+    max_entries_per_symbol_day: int = 0
+    max_entries_per_config_day: int = 0
+    max_open_per_symbol: int = 0        # positions + working entries per symbol at a time
+    group_gate_trades: int = 0          # refuse a strategy type (family x timeframe, all symbols) whose round trips
+                                        # reach this count with an expected net return after costs below zero
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+    @classmethod
+    def live(cls, capital: float) -> "PortfolioRules":
+        """Rules for the live paper account (version LIVE_RULES_VERSION)."""
+        return cls(capital=capital, cooldown_minutes=15, max_entries_per_symbol_day=4, max_entries_per_config_day=1,
+                   max_open_per_symbol=1, group_gate_trades=30)
+
+
+LIVE_RULES_VERSION = "1.1"
 
 
 def _tick(px: float, tick: float, up: bool) -> float:
@@ -81,7 +98,9 @@ class Executor:
     """Owns the order and cash state; mutates the engine's position arrays."""
 
     STATE = ("pend_qty", "pend_req", "pend_ttl", "ord_val", "ord_brk", "ord_ch", "ord_fill", "ord_cost", "ord_res", "ord_real", "ord_last",
-             "ord_basis")
+             "ord_basis", "cfg_day_n")
+    SYM_STATE = ("sym_exit", "sym_day_n")                    # per symbol: minute of the last exit, entries today
+    NO_EXIT = -(10 ** 12)
 
     def __init__(self, eng, cfg: ExecConfig | None, rules: PortfolioRules | None, alloc_cfg: AllocatorConfig | None = None):
         self.e, self.cfg, self.rules = eng, cfg, rules
@@ -92,6 +111,8 @@ class Executor:
         self.alloc = Allocator(n, len(eng.reg.symbols), 16 * 16, alloc_cfg)
         for k in self.STATE:
             setattr(self, k, np.zeros(n, dtype=np.int64))
+        self.sym_exit = np.full(len(eng.reg.symbols), self.NO_EXIT, dtype=np.int64)
+        self.sym_day_n = np.zeros(len(eng.reg.symbols), dtype=np.int64)
         self.cash = to_paise(rules.capital) if rules else 0
         self.reserved = 0
         self.day = -1
@@ -116,6 +137,8 @@ class Executor:
         d = ts.toordinal()
         if d != self.day:
             self.day, self.day_start, self.halted_day = d, self.equity(), False
+            self.sym_day_n[:] = 0
+            self.cfg_day_n[:] = 0
 
     def check_loss(self, ts) -> dict | None:
         if not self.rules or self.halted_day:
@@ -190,6 +213,7 @@ class Executor:
         q_of = dict(zip(buys, (int(x) for x in q0)))
         earlier = "higher-ranked" if ranked else "earlier"
         new_in_sym: dict[int, int] = {}
+        open_sym = np.bincount(r.sym, weights=((e.pos == 1) | (e.pend == 1)).astype(float), minlength=len(r.symbols))
         for i in order:
             s = int(r.sym[i])
             d = info.get(i, {})
@@ -203,6 +227,14 @@ class Executor:
                 why = "price above trade size"
             elif self.halted_day:
                 why = "daily loss limit reached"
+            elif rules.cooldown_minutes and minute_em - self.sym_exit[s] < rules.cooldown_minutes:
+                why = f"cool-down: this stock was sold less than {rules.cooldown_minutes} min ago"
+            elif rules.max_entries_per_config_day and self.cfg_day_n[i] >= rules.max_entries_per_config_day:
+                why = f"daily cap: this strategy already bought {rules.max_entries_per_config_day}x today"
+            elif rules.max_entries_per_symbol_day and self.sym_day_n[s] >= rules.max_entries_per_symbol_day:
+                why = f"daily cap: this stock already bought {rules.max_entries_per_symbol_day}x today"
+            elif rules.max_open_per_symbol and open_sym[s] >= rules.max_open_per_symbol:
+                why = "one at a time: already holding or buying this stock"
             elif ranked and new_in_sym.get(s, 0) >= self.cfg_alloc.max_new_per_symbol:
                 why, kind = "redundant: a higher-ranked configuration already entered this symbol this minute", "deferred"
             else:
@@ -235,6 +267,9 @@ class Executor:
             gross += need
             n_pos += 1
             new_in_sym[s] = new_in_sym.get(s, 0) + 1
+            open_sym[s] += 1
+            self.sym_day_n[s] += 1
+            self.cfg_day_n[i] += 1
             self.alloc.record_entry(i, float(est["p_win"][i]))
             out.append(self._buy_rec(i, minute_em, "pending", q, "", "accepted", expl, d.get("score")))
         return out
@@ -275,6 +310,11 @@ class Executor:
             why = "no liquidity: recent volume too low" if q[j] <= 0 < q0[j] else ""
             if not why and c.reject_negative and a.ev_n[i] >= c.min_trades and exp_net < 0:
                 why = f"expected net return after costs {exp_net:.1f} bps over {int(a.ev_n[i])} forward trades"
+            gg = self.rules.group_gate_trades
+            if not why and gg and est["group_n"][self.group[i]] >= gg:
+                g_net = rel * est["group_mu"][self.group[i]] * 1e4 - impact_bps[j]
+                if g_net < 0:
+                    why = "strategy type losing after costs (this rule family and timeframe, all stocks)"
             info[i] = {"q": int(q[j]), "score": float(score[j]), "why": why,
                        "explain": (f"rank {rank}/{len(b)}{' (qualified)' if qual[j] else ''}: score {score[j]:.1f} bps = "
                                    f"expected net {rel * mu_bps[j]:.1f} (from {int(a.ev_n[i])} trades, confidence {est['confidence'][i]:.2f}) "
@@ -373,6 +413,7 @@ class Executor:
             e.qty[i] = held - q
             e.entry_ch[i] -= alloc
             self.cash += val - ch.total
+            self.sym_exit[r.sym[i]] = int(ts.value // 60_000_000_000)
             if e.qty[i] == 0:
                 e.pos[i], e.entry_px[i], e.entry_ch[i], e.stop_px[i] = 0, 0.0, 0, 0.0
         self.ord_last[i] = int(ts.value // 60_000_000_000)
@@ -417,7 +458,7 @@ class Executor:
                                "calibration": self.alloc.calibration()}}
 
     def state(self) -> dict:
-        st = {f"x_{k}": getattr(self, k) for k in self.STATE}
+        st = {f"x_{k}": getattr(self, k) for k in (*self.STATE, *self.SYM_STATE)}
         st["x_scalars"] = np.array([self.cash, self.reserved, self.day, self.day_start, int(self.halted_day)], dtype=np.int64)
         st["x_mode"] = np.array([int(self.cfg is not None), int(self.rules is not None)])
         st.update(self.alloc.state())
@@ -429,6 +470,10 @@ class Executor:
         for k in self.STATE:
             v = st.get(f"x_{k}")
             setattr(self, k, np.array(v) if v is not None else np.zeros(len(self.e.reg), dtype=np.int64))   # older checkpoints
+        for k in self.SYM_STATE:
+            v = st.get(f"x_{k}")
+            if v is not None:
+                setattr(self, k, np.array(v, dtype=np.int64))
         self.alloc.load(st)
         self.cash, self.reserved, self.day, self.day_start, h = (int(x) for x in np.asarray(st["x_scalars"]))
         self.halted_day = bool(h)

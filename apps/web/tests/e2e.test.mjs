@@ -260,7 +260,8 @@ describe("Accessibility and layout", () => {
     await page.getByRole("heading", { name: "What you own now (1)" }).waitFor();
     await page.getByText("2 shares · bought at ₹812.50 · now ₹815.10").waitFor();
     await page.getByText("loss ₹41").waitFor();
-    for (const id of ["chart-curve", "chart-alloc", "chart-wins", "chart-family", "chart-hours"]) await page.getByTestId(id).waitFor();
+    for (const id of ["chart-curve", "chart-alloc", "chart-wins", "chart-family", "chart-hours", "chart-busy"]) await page.getByTestId(id).waitFor();
+    await page.getByTestId("limited").getByText("Trading rules 1.1. Buys held back today: cool-down after a sale 12 · already holding that stock 30.").waitFor();
     await page.getByRole("img", { name: "1 winning and 1 losing exits today" }).waitFor();
     await page.getByTestId("chart-alloc").getByText("Free cash", { exact: true }).waitFor();
     assert.deepEqual(errors, []);
