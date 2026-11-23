@@ -1,0 +1,19 @@
+FROM python:3.13-slim
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+# The strategy sandbox needs unshare, mount, pivot_root and setpriv: all part of util-linux, which the
+# Debian base image already contains. The build fails here if a future base image drops them.
+RUN command -v unshare mount pivot_root setpriv sh >/dev/null
+WORKDIR /app
+COPY pyproject.toml ./
+COPY packages ./packages
+COPY services ./services
+COPY agents ./agents
+COPY scripts ./scripts
+RUN pip install --no-cache-dir .
+# The worker process is root inside its container so it can build the namespaces; every job it runs
+# drops to uid 65534 with no capabilities, no network and a private read-only filesystem.
+RUN mkdir -p /data/datasets /data/artifacts
+ENV NSEQL_DATA_DIR=/data/datasets NSEQL_SANDBOX_ARTIFACTS=/data/artifacts LIVE_TRADING_ENABLED=false
+EXPOSE 8100
+HEALTHCHECK --interval=30s --timeout=5s CMD python -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8100/health')"
+CMD ["uvicorn", "nseql.research.sandbox_service:app_factory", "--factory", "--host", "0.0.0.0", "--port", "8100"]

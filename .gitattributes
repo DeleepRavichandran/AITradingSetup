@@ -1,0 +1,5 @@
+* text=auto eol=lf
+*.parquet binary
+*.png binary
+*.sqlite binary
+package-lock.json linguist-generated=true -diff

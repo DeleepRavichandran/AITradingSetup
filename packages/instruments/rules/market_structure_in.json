@@ -1,0 +1,36 @@
+{
+  "_readme": [
+    "Dated structural events in Indian equity markets that change what a backtest can assume.",
+    "This is a curated reference list, NOT a complete history and NOT a news archive.",
+    "verified=false means the entry was written from memory and must be checked against the cited",
+    "primary source (NSE / SEBI circular) before it is relied upon. Add or correct entries here;",
+    "the engine and the research agents read this file at run time."
+  ],
+  "events": [
+    {"date": "1994-11-03", "category": "venue", "title": "NSE cash (capital market) segment begins screen-based trading", "effect": "No NSE equity backtest can start earlier.", "min_start_for": ["EQ"], "verified": false, "source": "NSE history"},
+    {"date": "1996-04-22", "category": "index", "title": "NIFTY 50 index launched (base date 1995-11-03 = 1000)", "effect": "Index values before launch are back-computed.", "verified": false, "source": "NSE Indices"},
+    {"date": "1996-11-08", "category": "settlement", "title": "Dematerialised settlement begins (NSDL)", "effect": "Earlier settlement was physical-certificate based; liquidity and costs are not comparable.", "verified": false, "source": "NSDL"},
+    {"date": "2000-06-12", "category": "derivatives", "title": "Index futures (NIFTY 50) launched", "effect": "No NSE futures backtest can start earlier.", "min_start_for": ["FUT"], "verified": false, "source": "NSE F&O history"},
+    {"date": "2001-06-04", "category": "derivatives", "title": "Index options launched", "effect": "No NSE options backtest can start earlier.", "min_start_for": ["OPT"], "verified": false, "source": "NSE F&O history"},
+    {"date": "2001-07-02", "category": "derivatives", "title": "Single-stock options launched", "verified": false, "source": "NSE F&O history", "effect": "Stock options unavailable earlier."},
+    {"date": "2001-11-09", "category": "derivatives", "title": "Single-stock futures launched", "verified": false, "source": "NSE F&O history", "effect": "Stock futures unavailable earlier."},
+    {"date": "2003-04-01", "category": "settlement", "title": "T+2 rolling settlement", "effect": "Settlement cycle shortened from T+3.", "verified": false, "source": "SEBI"},
+    {"date": "2004-10-01", "category": "tax", "title": "Securities Transaction Tax introduced", "effect": "No STT before this date; the charge schedule in charges_in.json does not cover this period.", "verified": false, "source": "Finance (No.2) Act 2004"},
+    {"date": "2005-06-13", "category": "derivatives", "title": "BANKNIFTY derivatives launched", "verified": false, "source": "NSE", "effect": "BANKNIFTY F&O unavailable earlier."},
+    {"date": "2008-08-29", "category": "derivatives", "title": "Currency futures (USDINR) launched on NSE", "verified": false, "source": "NSE", "effect": "Currency derivatives unavailable earlier."},
+    {"date": "2010-10-18", "category": "microstructure", "title": "Pre-open call auction session introduced", "effect": "Opening prices before/after are formed differently; open-based strategies see a structural break.", "verified": false, "source": "SEBI / NSE circular"},
+    {"date": "2016-05-27", "category": "derivatives", "title": "BANKNIFTY weekly options introduced", "effect": "Weekly-expiry option strategies impossible earlier.", "verified": false, "source": "NSE circular"},
+    {"date": "2019-02-11", "category": "derivatives", "title": "NIFTY weekly options introduced", "effect": "Weekly-expiry NIFTY option strategies impossible earlier.", "verified": false, "source": "NSE circular"},
+    {"date": "2019-10-01", "category": "settlement", "title": "All stock derivatives physically settled (phased in from July 2018)", "effect": "Expiry risk for stock F&O changes: delivery obligations and higher margins near expiry. The engine approximates with cash settlement and flags it.", "verified": false, "source": "SEBI circular"},
+    {"date": "2020-03-13", "category": "stress", "title": "Market-wide circuit breaker triggered (also 2020-03-23)", "effect": "Trading halts; simulated fills during halts are unrealistic.", "verified": false, "source": "NSE"},
+    {"date": "2020-07-01", "category": "tax", "title": "Uniform stamp duty on securities transactions", "effect": "State-specific duty replaced; modelled from this date in charges_in.json.", "verified": false, "source": "Indian Stamp Act amendment"},
+    {"date": "2020-12-01", "category": "margin", "title": "Peak-margin framework phase 1 (25%), reaching 100% on 2021-09-01", "effect": "Intraday leverage progressively capped (about 5x for equities from Sep 2021). Earlier intraday leverage was far higher.", "verified": false, "source": "SEBI circular"},
+    {"date": "2021-01-11", "category": "derivatives", "title": "FINNIFTY derivatives launched", "verified": false, "source": "NSE", "effect": "FINNIFTY F&O unavailable earlier."},
+    {"date": "2023-01-27", "category": "settlement", "title": "T+1 settlement for all equities", "effect": "Settlement cycle shortened from T+2.", "verified": false, "source": "SEBI / NSE"},
+    {"date": "2023-04-01", "category": "tax", "title": "STT on F&O raised (futures 0.0125%, options 0.0625%)", "effect": "Cost structural break for derivatives.", "verified": true, "source": "Finance Act 2023"},
+    {"date": "2024-10-01", "category": "tax", "title": "STT on F&O raised (futures 0.02%, options 0.1%); NSE moves to uniform transaction charges", "effect": "Cost structural break for derivatives.", "verified": true, "source": "Finance (No.2) Act 2024; NSE circular"},
+    {"date": "2024-11-20", "category": "derivatives", "title": "SEBI index-derivatives framework: one weekly expiry per exchange, larger contract sizes", "effect": "BANKNIFTY/FINNIFTY/MIDCPNIFTY weekly options discontinued; index lot sizes raised. Weekly-expiry strategies on those indices cannot be traded after this date.", "verified": false, "source": "SEBI circular of October 2024"},
+    {"date": "2025-09-01", "category": "derivatives", "title": "NSE index derivatives expiry day moved from Thursday to Tuesday", "effect": "Day-of-week expiry effects change.", "verified": false, "source": "NSE circular"},
+    {"date": "2026-04-01", "category": "tax", "title": "STT on F&O raised (futures 0.05%, options 0.15%, exercise 0.15%)", "effect": "Cost structural break for derivatives.", "verified": true, "source": "Finance Act 2026; press coverage checked 2026-11"}
+  ]
+}

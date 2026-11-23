@@ -1,0 +1,23 @@
+# Default watchlist for live screening when no experiments/watchlist.txt exists.
+# A convenience list of large, liquid NSE stocks chosen for illustration; it is NOT an index's constituent
+# list (those change - use your own list). One NSE symbol per line; edit freely.
+RELIANCE
+HDFCBANK
+ICICIBANK
+INFY
+TCS
+BHARTIARTL
+SBIN
+ITC
+LT
+KOTAKBANK
+AXISBANK
+HINDUNILVR
+BAJFINANCE
+MARUTI
+SUNPHARMA
+TITAN
+ULTRACEMCO
+NTPC
+TMPV  # Tata Motors Passenger Vehicles (Tata Motors was demerged; check the name at Angel One)
+ASIANPAINT
