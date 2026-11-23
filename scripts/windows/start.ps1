@@ -16,7 +16,7 @@ Start-Process powershell -WindowStyle $style -WorkingDirectory $repo -ArgumentLi
     ". '$envScript'; & '$vpy' -m nseql.cli serve --host 127.0.0.1 --port 8000 *>> '$logs\api.log'")
 if (Test-Path (Join-Path $repo "apps\web\.next")) {
     Start-Process powershell -WindowStyle $style -WorkingDirectory (Join-Path $repo "apps\web") -ArgumentList @("-NoExit", "-ExecutionPolicy", "Bypass", "-Command", "npm.cmd run start *>> '$logs\web.log'")
-    if (-not $Hidden) { Start-Sleep -Seconds 6; Start-Process "http://localhost:3000" }
+    if (-not $Hidden) { Start-Sleep -Seconds 6; Start-Process "http://localhost:3000/today" }
 } else {
     Write-Warning "The dashboard is not built (no Node.js?). The API is running at http://127.0.0.1:8000."
 }

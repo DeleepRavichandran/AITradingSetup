@@ -64,6 +64,14 @@ export function fixtures(state) {
       grounding: { read: ["screening forward ledger"], did_not_read: ["live market prices"] }, method: "deterministic query of the lab's own records (no language model)" }),
     "/funds/status": () => ({ schemes: 0, navs: 0, first: null, last: null, imports: [] }),
     "/funds/schemes": () => ({ total: 0, rows: [], categories: [] }),
+    "/today": () => ({ market: { open: true, state: "open" }, data_source: { kind: "live_unverified", label: "Live 1-minute candles (adapter not verified)", live: true },
+      kill_switch: state.kill, live_trading: false, started: true, bot: { state: state.kill ? "stopped" : "ok", message: "Working: checked 6,120 strategies at 10:14." },
+      account: { starting_capital: 100000, value_now: 99820, cash_free: 95000, invested: 4800, since_start: -180, today: -180, today_trades: 3, today_realised: -40, today_charges: 30, halted_today: false },
+      holdings: [{ config_id: "0123456789abcdef", symbol: "SBIN", rule: "Opening range breakout 15 min", timeframe: "1m", horizon: "intraday", qty: 2, entry_price: 812.5,
+        last_price: 815.1, stop_price: 808.4, value_inr: 1630.2, unrealised_inr: 4.6, unrealised_pct: 0.32, exit_pending: false }],
+      recent_trades: [{ time: "2026-11-23 10:14", action: "Bought", symbol: "SBIN", qty: 2, price: 812.5, strategy: "Opening range breakout 15 min", horizon: "intraday", profit: null, charges: 0.6, config_id: "0123456789abcdef" },
+        { time: "2026-11-23 10:02", action: "Sold", symbol: "ITC", qty: 4, price: 410.2, strategy: "VWAP reversion -0.3%", horizon: "intraday", profit: -40.5, charges: 0.9, config_id: "fedcba9876543210" }],
+      signals_today: { accepted: 3, not_taken: 41 } }),
     "/news": () => ({ items: [{ title: "Test headline", source: "Fixture Wire", link: "https://example.invalid/a", published: "2026-11-20T09:00:00Z" }], errors: {} }),
   };
 }

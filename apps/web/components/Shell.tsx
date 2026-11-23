@@ -9,7 +9,7 @@ import { provKind } from "./ui";
 /* Workspaces: only pages that exist and work are listed. Planned workspaces without a working journey are
    tracked in docs/AUDIT_V6.md, not shown as empty pages. */
 const NAV: [string, [string, string][]][] = [
-  ["Overview", [["/", "Command Center"], ["/deck", "Vega"], ["/market", "Market Intelligence"], ["/data", "Data Quality"]]],
+  ["Overview", [["/today", "My trading (simple)"], ["/", "Command Center"], ["/deck", "Vega"], ["/market", "Market Intelligence"], ["/data", "Data Quality"]]],
   ["Strategies", [["/universe", "Strategy Universe"], ["/screening", "Intraday & Swing Lab"], ["/factory", "Strategy Factory"], ["/code", "Strategy Code"],
     ["/backtest", "Backtesting Studio"], ["/walkforward", "Walk-Forward"], ["/compare", "Comparison"], ["/replay", "Trade Replay"]]],
   ["AI research", [["/learning", "AI Research Brain"], ["/agents", "Research Agents"], ["/memory", "Experiment Memory"], ["/chat", "Analyst Chat"]]],

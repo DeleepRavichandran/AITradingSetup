@@ -1520,6 +1520,67 @@ def create_app() -> FastAPI:
                       "as_of": sch.watermark, "data_source": sch.provenance(),
                       "note": "simulated positions; unrealised P&L at the last 1-minute close, after entry charges, before exit charges"})
 
+    @api.get("/today")
+    def today_view():
+        """Plain-language summary for the simple 'My trading' page: money, today's result, what is held, recent trades,
+        whether the bot is working. Simulated (paper) trading only."""
+        sch = _screening_open()
+        ds = sch.provenance() if sch is not None else {"kind": "none", "label": "No market data attached", "live": False}
+        mkt = views.market_session(_calendar())
+        out = {"market": mkt, "data_source": ds, "kill_switch": st.kill.engaged, "live_trading": False, "started": sch is not None}
+        if sch is None:
+            live = screening.get("live") or {}
+            out["bot"] = {"state": "error" if live.get("state") == "error" else "off", "message": live.get("error") or "The bot is not running yet."}
+            return clean(out)
+        x, db = sch.engine.x, sch.store.db
+        snap = x.snapshot()
+        day = datetime.now(views.IST).strftime("%Y-%m-%d")
+        with sch.store._lock:
+            day_start = db.execute("SELECT equity_inr FROM cycles WHERE substr(minute,1,10) < ? AND equity_inr IS NOT NULL ORDER BY minute DESC LIMIT 1", (day,)).fetchone()
+            first_today = db.execute("SELECT equity_inr FROM cycles WHERE substr(minute,1,10) = ? AND equity_inr IS NOT NULL ORDER BY minute LIMIT 1", (day,)).fetchone()
+            fills = [dict(r) for r in db.execute("SELECT o.symbol, o.side, o.qty, o.price, o.fill_ts, o.charges_paise, o.realized_paise, o.config_id, o.horizon "
+                                                 "FROM paper_orders o WHERE o.status IN ('filled','partial') ORDER BY o.fill_ts DESC LIMIT 25")]
+            today_n = db.execute("SELECT COUNT(*), COALESCE(SUM(CASE WHEN side='SELL' THEN realized_paise END),0), COALESCE(SUM(charges_paise),0) "
+                                 "FROM paper_orders WHERE status IN ('filled','partial') AND substr(fill_ts,1,10)=?", (day,)).fetchone()
+            sig = dict(db.execute("SELECT COALESCE(alloc_status,'-'), COUNT(*) FROM signals WHERE decision='BUY' AND substr(bar_ts,1,10)=? GROUP BY 1", (day,)).fetchall())
+            last = db.execute("SELECT minute, evaluated, latency_ms FROM cycles WHERE status='processed' ORDER BY minute DESC LIMIT 1").fetchone()
+        from nseql.screening.registry import FAMILIES
+        from nseql.screening.universe import _rule_name
+        idx = {str(i): k for k, i in enumerate(sch.reg.ids)}
+        def rule(cid):
+            k = idx.get(cid)
+            return _rule_name(FAMILIES[sch.reg.fam[k]], sch.reg.params[k]) if k is not None else "strategy"
+        base = (day_start or first_today or [snap["equity_inr"]])[0]
+        start_cap = x.rules.capital if x.rules else None
+        age = None
+        if last:
+            age = (datetime.now(views.IST).replace(tzinfo=None) - pd.Timestamp(last[0]).to_pydatetime()).total_seconds()
+        working = sch._thread is not None and sch._thread.is_alive()
+        if st.kill.engaged:
+            bot = {"state": "stopped", "message": "Paused by the kill switch: no new paper trades. Reset it on the Risk Control page."}
+        elif not working:
+            bot = {"state": "off", "message": "The bot is not running (replay finished or not started)."}
+        elif not mkt["open"]:
+            bot = {"state": "waiting", "message": f"Market {mkt['state']}. The bot starts checking again when the market opens."}
+        elif age is not None and age > 180:
+            bot = {"state": "stale", "message": f"No new prices for {int(age // 60)} minutes. Check that this laptop is online and awake."}
+        else:
+            bot = {"state": "ok", "message": f"Working: checked {int(last[1] or 0):,} strategies at {str(last[0])[11:16]}." if last else "Working: waiting for the first candle."}
+        out.update({
+            "bot": bot,
+            "account": {"starting_capital": start_cap, "value_now": snap["equity_inr"], "cash_free": round(snap["cash_inr"] - snap["reserved_inr"], 2),
+                        "invested": snap["gross_exposure_inr"], "since_start": round(snap["equity_inr"] - start_cap, 2) if start_cap else None,
+                        "today": round(snap["equity_inr"] - base, 2), "today_trades": today_n[0], "today_realised": today_n[1] / 100,
+                        "today_charges": today_n[2] / 100, "halted_today": snap["halted_today"]},
+            "holdings": screening_positions()["rows"],
+            "recent_trades": [{"time": str(f["fill_ts"]).replace("T", " ")[:16], "action": "Bought" if f["side"] == "BUY" else "Sold", "symbol": f["symbol"],
+                               "qty": f["qty"], "price": f["price"], "strategy": rule(f["config_id"]), "horizon": f["horizon"],
+                               "profit": (f["realized_paise"] or 0) / 100 if f["side"] == "SELL" else None, "charges": (f["charges_paise"] or 0) / 100,
+                               "config_id": f["config_id"]} for f in fills],
+            "signals_today": {"accepted": sig.get("accepted", 0), "not_taken": sig.get("deferred", 0) + sig.get("rejected", 0)},
+        })
+        return clean(out)
+
     @api.get("/screening/portfolio")
     def screening_portfolio():
         sch = _need_screening()

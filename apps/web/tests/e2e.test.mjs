@@ -203,7 +203,7 @@ describe("Command Deck safety", () => {
 });
 
 describe("Accessibility and layout", () => {
-  for (const path of ["/", "/deck", "/screening", "/universe", "/planner", "/funds"]) for (const colorScheme of ["light", "dark"]) {
+  for (const path of ["/", "/today", "/deck", "/screening", "/universe", "/planner", "/funds"]) for (const colorScheme of ["light", "dark"]) {
     test(`${path} (${colorScheme}): no serious or critical axe violations`, async () => {
       const { page, ctx } = await open(path, { colorScheme });
       await page.waitForLoadState("networkidle");
@@ -214,7 +214,7 @@ describe("Accessibility and layout", () => {
       await ctx.close();
     });
   }
-  for (const path of ["/", "/deck", "/screening", "/universe", "/planner", "/funds"]) {
+  for (const path of ["/", "/today", "/deck", "/screening", "/universe", "/planner", "/funds"]) {
     for (const width of [360, 768, 1280]) {
       test(`${path} at ${width}px: no horizontal scroll, key controls visible`, async () => {
         const { page, ctx, errors } = await open(path, { viewport: { width, height: 800 } });
@@ -251,6 +251,17 @@ describe("Accessibility and layout", () => {
     const s = await open("/screening");
     await s.page.getByText("Synthetic data says nothing about real markets").waitFor();
     await s.ctx.close();
+  });
+
+  test("My trading speaks plainly: status light, money, holdings and trades as sentences", async () => {
+    const { page, ctx, errors } = await open("/today");
+    await page.getByTestId("bot-light").getByText("Bot is working").waitFor();
+    await page.getByText("−₹180").first().waitFor();
+    await page.getByRole("heading", { name: "What you own now (1)" }).waitFor();
+    await page.getByText("2 shares · bought at ₹812.50 · now ₹815.10").waitFor();
+    await page.getByText("loss ₹41").waitFor();
+    assert.deepEqual(errors, []);
+    await ctx.close();
   });
 
   test("Command Center shows API figures with provenance, never invented ones", async () => {
