@@ -53,25 +53,25 @@ def client(tmp_path_factory, request):
 def test_universe_summary_counts_add_up(client):
     c, _ = client
     s = c.get("/api/universe/summary").json()
-    assert s["registered"] == 342 and s["rules"] == 19 and s["families"] == 3 and "19 rules" in s["note"]
-    assert sum(s["by_stage"].values()) == 342 and sum(cell["configs"] for cell in s["map"]) == 342
-    assert len(s["map"]) == 3 * 4                                         # 3 families x 4 timeframes
+    assert s["registered"] == 612 and s["rules"] == 36 and s["families"] == 12 and "36 rules" in s["note"]
+    assert sum(s["by_stage"].values()) == 612 and sum(cell["configs"] for cell in s["map"]) == 612
+    assert len(s["map"]) == 12 * 4 - 4                                     # 12 families x 4 timeframes; 4 session families are intraday-only
     f = [x["n"] for x in s["funnel"]]
-    assert f == sorted(f, reverse=True) and f[0] == 342                    # a funnel only narrows
+    assert f == sorted(f, reverse=True) and f[0] == 612                    # a funnel only narrows
 
 
 def test_universe_paging_filters_and_sorting(client):
     c, _ = client
     p1 = c.get("/api/universe/configs?limit=50&offset=0&sort=trades").json()
     p2 = c.get("/api/universe/configs?limit=50&offset=50&sort=trades").json()
-    assert p1["total"] == 342 and len(p1["rows"]) == 50 and not {r["id"] for r in p1["rows"]} & {r["id"] for r in p2["rows"]}
+    assert p1["total"] == 612 and len(p1["rows"]) == 50 and not {r["id"] for r in p1["rows"]} & {r["id"] for r in p2["rows"]}
     t = [r["trades"] for r in p1["rows"]]
     assert t == sorted(t, reverse=True)
     rsi = c.get("/api/universe/configs?family=rsi&timeframe=5m&limit=500").json()
     assert rsi["total"] == 2 * 9 * 2 and all(r["family"] == "rsi" and r["timeframe"] == "5m" for r in rsi["rows"])
     assert c.get("/api/universe/configs?stage=bogus").status_code == 400
     sym = p1["rows"][0]["symbol"]
-    assert c.get(f"/api/universe/configs?q={sym.lower()}&limit=1").json()["total"] == 171
+    assert c.get(f"/api/universe/configs?q={sym.lower()}&limit=1").json()["total"] == 306
 
 
 def test_dossier_is_complete_and_honest(client):
@@ -93,7 +93,7 @@ def test_command_center_and_platform_status(client):
     assert p["data_source"]["kind"] == "synthetic_replay" and "state" in p["market"] and p["risk"]["live_trading_enabled"] is False
     assert {m["module"] for m in p["readiness"]} >= {"API", "Screening loop", "Live order routing"}
     s = cc["strategies"]["screening"]
-    assert s["registered"] == 342 and s["by_asset_class"] == {"cash equity": 342} and s["latency_ms"]["p99"] > 0
+    assert s["registered"] == 612 and s["by_asset_class"] == {"cash equity": 612} and s["latency_ms"]["p99"] > 0
     pf = cc["portfolio"]
     assert pf["starting_capital_inr"] == 1_000_000 and pf["drawdown"]["max_pct"] >= 0 and pf["provenance"]["data"]["synthetic"]
     assert "learning_verdict" in cc["ai"]

@@ -44,7 +44,7 @@ def test_replay_lists_filters_and_restart(boot):
     j = _wait(c, c.post("/api/screening/replay", json={"sessions": 5}).json()["id"])
     assert j["status"] == "done", j
     st = c.get("/api/screening/status").json()
-    assert st["started"] and st["registered"] == 342 and st["live_trading"] is False and "replay" in st["feed"]
+    assert st["started"] and st["registered"] == 612 and st["live_trading"] is False and "replay" in st["feed"]
     sm = c.get("/api/screening/summary").json()
     assert set(sm["horizons"]) == {"intraday", "swing"} and sm["horizons"]["intraday"]["open_positions"] == 0
     page1 = c.get("/api/screening/signals?limit=20&offset=0").json()
@@ -53,7 +53,7 @@ def test_replay_lists_filters_and_restart(boot):
     assert not {(r["config_id"], r["bar_ts"]) for r in page1["rows"]} & {(r["config_id"], r["bar_ts"]) for r in page2["rows"]}
     ex = c.get("/api/screening/signals?horizon=intraday&decision=EXIT&limit=500").json()
     assert 0 < ex["total"] < page1["total"] and all(r["horizon"] == "intraday" and r["decision"] == "EXIT" for r in ex["rows"])
-    assert c.get("/api/screening/configs?horizon=swing&limit=1").json()["total"] == 2 * 19 * 3
+    assert c.get("/api/screening/configs?horizon=swing&limit=1").json()["total"] == 2 * 30 * 3          # 30 rules run on the daily timeframe, 3 stops
     cf = c.get("/api/screening/configs?horizon=intraday&family=rsi&limit=5").json()
     assert cf["total"] == 2 * 3 * 9 * 2 and all(r["family"] == "rsi" and r["horizon"] == "intraday" for r in cf["rows"])
     assert c.get("/api/screening/orders?status=filled&limit=5").json()["total"] > 0
@@ -65,8 +65,8 @@ def test_replay_lists_filters_and_restart(boot):
     fl = c.get("/api/screening/fills?limit=5").json()
     assert fl["total"] >= c.get("/api/screening/orders?status=filled").json()["total"]
     ov = c.get("/api/screening/overview").json()
-    assert ov["data_source"]["kind"] == "synthetic_replay" and ov["configurations"]["registered"] == 342
-    assert ov["configurations"]["qualified"] + ov["configurations"]["unverified"] == 342
+    assert ov["data_source"]["kind"] == "synthetic_replay" and ov["configurations"]["registered"] == 612
+    assert ov["configurations"]["qualified"] + ov["configurations"]["unverified"] == 612
     assert ov["cycles"]["by_status"].get("processed", 0) > 0 and ov["cycles"]["latency_ms"]["p99"] > 0
     assert sum(ov["signals"]["buy_allocation"].values()) == buys and set(ov["signals"]["buy_allocation"]) <= {"accepted", "rejected", "deferred"}
     assert ov["capital"]["starting_capital_inr"] == 1_000_000 and ov["paper_performance"]["note"].startswith("simulated fills on Replay of SYNTHETIC")
@@ -87,6 +87,21 @@ def test_replay_lists_filters_and_restart(boot):
     assert st["data_source"]["kind"] == "synthetic_replay" and st2["data_source"]["kind"] == "synthetic_replay"   # not "none" after a restart
     b = c2.get("/api/brokers").json()["market_data"]
     assert {"Angel One 1-minute polling (screening loop)": "UNVERIFIED"}.items() <= {m["name"]: m["status"] for m in b}.items()
+
+
+def test_a_run_saved_with_another_strategy_list_is_reported_not_crashing(boot, tmp_path):
+    import json
+    c = boot()
+    j = _wait(c, c.post("/api/screening/replay", json={"sessions": 1}).json()["id"])
+    assert j["status"] == "done", j
+    meta = tmp_path / "exp" / "screening" / "current.json"
+    m = json.loads(meta.read_text())
+    m["configs"] = 10                                                    # reopening now builds a different registry
+    meta.write_text(json.dumps(m))
+    c2 = boot()
+    st = c2.get("/api/screening/status").json()
+    assert st["started"] is False and "older strategy list" in st["outdated_run"]
+    assert c2.get("/api/command-center").status_code == 200 and c2.get("/api/universe/summary").status_code == 404
 
 
 def test_replay_needs_minute_bars(boot):

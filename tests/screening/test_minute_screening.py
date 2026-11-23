@@ -115,8 +115,30 @@ def _reference_signals(frames, reg) -> set:
                     enter, ex = gt(f[f"sma{p['fast']}"], f[f"sma{p['slow']}"]), gt(f[f"sma{p['slow']}"], f[f"sma{p['fast']}"])
                 elif fam == "breakout":
                     enter, ex = gt(f["close"], f[f"hh{p['entry']}"]), gt(f[f"ll{p['exit']}"], f["close"])
-                else:
+                elif fam == "rsi":
                     enter, ex = gt(float(p["buy"]), f[f"rsi{p['n']}"]), gt(f[f"rsi{p['n']}"], float(p["sell"]))
+                elif fam == "zscore":
+                    enter, ex = gt(float(p["z_entry"]), f["z20"]), gt(f["z20"], float(p["z_exit"]))
+                elif fam == "bollinger":
+                    enter, ex = gt(f["close"], f["bbu20"]), gt(f["sma20"], f["close"])
+                elif fam == "macd":
+                    m_, s_ = f[f"macd_{p['fast']}_{p['slow']}"], f[f"macds_{p['fast']}_{p['slow']}"]
+                    enter, ex = gt(m_, s_), gt(s_, m_)
+                elif fam == "momentum":
+                    enter, ex = gt(f[f"roc{p['n']}"], float(p["min_return"])), gt(0.0, f[f"roc{p['n']}"])
+                elif fam == "volume":
+                    enter, ex = gt(f[f"vbo{p['n']}"], 0.5), gt(f["ll10"], f["close"])
+                elif fam == "vwap":
+                    enter, ex = gt(float(p["below_vwap"]), f["vwapdev"]), gt(f["vwapdev"], 0.0)
+                elif fam == "orb":
+                    enter, ex = gt(f["orb_up"], 0.0), gt(0.0, f["orb_mid"])
+                elif fam == "gap" and p["kind"] == "gap-and-go":
+                    enter, ex = gt(f["gapgo"], float(p["min_gap"])), gt(0.0, f["dayret"])
+                elif fam == "gap":
+                    enter, ex = gt(float(p["max_gap"]), f["gapdn"]), gt(f["gapfill"], 0.0)
+                else:
+                    assert fam == "prevday", fam
+                    enter, ex = gt(f["pdh_dev"], float(p["above"])), gt(float(p["exit_below"]), f["pdh_dev"])
                 if pos == 0:
                     dec = "BUY" if enter and not (intraday and m > LAST_ENTRY_MIN) else None
                 else:
@@ -240,7 +262,7 @@ def test_registry_ids_are_deterministic_and_reach_50k():
     a, b = build(syms, 50_000), build(list(reversed(syms)), 50_000)
     assert len(a) == 50_000 and set(a.ids) == set(b.ids) and len(set(a.ids)) == 50_000
     assert {TF_NAMES[t] for t in np.unique(a.tf)} == set(TIMEFRAMES) and {FAMILIES[f] for f in np.unique(a.fam)} == set(FAMILIES)
-    assert len(FEATURES) == 16
+    assert len(FEATURES) == 37 and len(FAMILIES) == 12
 
 
 def test_background_clock_runs_a_cycle_after_each_minute_boundary(frames, tmp_path):

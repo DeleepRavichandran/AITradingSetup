@@ -1023,8 +1023,15 @@ def create_app() -> FastAPI:
         m = json.loads(meta.read_text())
         from nseql.screening.scheduler import ReplayMinuteFeed
         feed = ReplayMinuteFeed({}, f"replay of {m.get('dataset')} (finished)", synthetic=bool(m.get("synthetic"))) if m["mode"] == "replay" else None
-        screening["sch"] = MinuteScheduler(Path(m["root"]), m["symbols"], m["configs"], kill=st.kill, mode=m["mode"], feed=feed,
-                                           experiments_dir=st.exp_dir)
+        try:
+            screening["sch"] = MinuteScheduler(Path(m["root"]), m["symbols"], m["configs"], kill=st.kill, mode=m["mode"], feed=feed,
+                                               experiments_dir=st.exp_dir)
+        except ValueError as e:                     # saved with another strategy list: report it, do not break every endpoint
+            if "registry" not in str(e):
+                raise
+            screening["outdated"] = (f"The last screening run ({Path(m['root']).name}) was made with an older strategy list and cannot be "
+                                     "resumed. Start a new replay, or restart with live screening for a fresh paper account.")
+            return None
         screening["meta"] = m
         return screening["sch"]
 
@@ -1091,7 +1098,10 @@ def create_app() -> FastAPI:
                 raise RuntimeError(f"NSEQL_PAPER_CAPITAL must be at least 10000 (got {capital:g})")
             # each starting capital is its own paper account: a new amount starts from scratch, it never inherits
             # another account's cash or positions; NSEQL_LIVE_RUN names a fresh account explicitly
-            name = os.environ.get("NSEQL_LIVE_RUN") or ("live_angelone" if capital == PortfolioRules.capital else f"live_angelone_{int(capital)}")
+            from nseql.screening.registry import REGISTRY_VERSION
+            # a new strategy list (registry version) also opens a fresh account: old checkpoints cannot be resumed
+            name = os.environ.get("NSEQL_LIVE_RUN") or ("live_angelone" + ("" if capital == PortfolioRules.capital else f"_{int(capital)}")
+                                                        + ("" if REGISTRY_VERSION == 1 else f"_r{REGISTRY_VERSION}"))
             if not name.replace("_", "").replace("-", "").isalnum():
                 raise RuntimeError("NSEQL_LIVE_RUN may contain only letters, digits, '-' and '_'")
             root = st.exp_dir / "screening" / name
@@ -1146,7 +1156,7 @@ def create_app() -> FastAPI:
         live = screening.get("live")
         if sch is None:
             return clean({"started": False, "live": live or {"state": "off", "how": "set NSEQL_LIVE_SCREENING=angelone and the ANGEL_* keys in .env"},
-                          "live_trading": False})
+                          "outdated_run": screening.get("outdated"), "live_trading": False})
         return clean({"started": True, **sch.status(), "run": screening.get("meta"), "live": live})
 
     @api.get("/screening/summary")

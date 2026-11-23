@@ -12,8 +12,8 @@ Validation stages (forward, in this paper ledger only):
   qualified         >= min_trades round trips and a positive shrunk mean net return
   gated             >= min_trades round trips and a non-positive shrunk mean (no capital under ranking)
 
-A "configuration" is rule family x parameters x timeframe x stop x symbol. The families (19 rules in 3
-families) are the independent strategies; parameter variants are not counted as separate strategies.
+A "configuration" is rule family x parameters x timeframe x stop x symbol. The rules (36 in 12 families)
+are the independent strategies; parameter, timeframe, stop and symbol variants are not counted separately.
 """
 from __future__ import annotations
 
@@ -31,11 +31,20 @@ _cache: dict = {}
 
 
 def _rule_name(fam: str, p: dict) -> str:
-    if fam == "cross":
-        return f"SMA {p['fast']}/{p['slow']} cross"
-    if fam == "breakout":
-        return f"Channel breakout {p['entry']}/{p['exit']}"
-    return f"RSI{p['n']} {p['buy']}/{p['sell']}"
+    return {
+        "cross": lambda: f"SMA {p['fast']}/{p['slow']} cross",
+        "breakout": lambda: f"Channel breakout {p['entry']}/{p['exit']}",
+        "rsi": lambda: f"RSI{p['n']} {p['buy']}/{p['sell']}",
+        "zscore": lambda: f"Z-score reversion {p['z_entry']:+g}",
+        "bollinger": lambda: f"Bollinger breakout {p['n']}/{p['k']}σ",
+        "macd": lambda: f"MACD {p['fast']}-{p['slow']}-{p['signal']}",
+        "momentum": lambda: f"Momentum {p['n']} bars > {p['min_return'] * 100:g}%",
+        "volume": lambda: f"Volume breakout {p['n']} ({p['volume_x']}x)",
+        "vwap": lambda: f"VWAP reversion {p['below_vwap'] * 100:+g}%",
+        "orb": lambda: f"Opening range breakout {p['minutes']} min",
+        "gap": lambda: f"Gap {'and go' if p['kind'] == 'gap-and-go' else 'fill'} {(p.get('min_gap') or p.get('max_gap')) * 100:+g}%",
+        "prevday": lambda: "Previous-day high breakout",
+    }[fam]()
 
 
 _static_cache: dict = {}
@@ -230,12 +239,22 @@ def dossier(sch, config_id: str, research_registry=None) -> dict | None:
 
 def _definition(d: dict) -> str:
     p, f = d["params"], d["family"]
-    if f == "cross":
-        txt = f"Buy when SMA{p['fast']} closes above SMA{p['slow']}; exit when it is no longer above."
-    elif f == "breakout":
-        txt = f"Buy when the close exceeds the prior {p['entry']}-bar high; exit when it falls below the prior {p['exit']}-bar low."
-    else:
-        txt = f"Buy when RSI{p['n']} falls below {p['buy']}; exit when it rises above {p['sell']}."
+    txt = {
+        "cross": lambda: f"Buy when SMA{p['fast']} closes above SMA{p['slow']}; exit when it is no longer above.",
+        "breakout": lambda: f"Buy when the close exceeds the prior {p['entry']}-bar high; exit when it falls below the prior {p['exit']}-bar low.",
+        "rsi": lambda: f"Buy when RSI{p['n']} falls below {p['buy']}; exit when it rises above {p['sell']}.",
+        "zscore": lambda: f"Buy when the close is more than {abs(p['z_entry']):g} standard deviations below its 20-bar mean; exit when it is back above the mean.",
+        "bollinger": lambda: "Buy when the close breaks above the upper Bollinger band (20 bars, 2 standard deviations); exit below the 20-bar mean.",
+        "macd": lambda: f"Buy when MACD ({p['fast']}-{p['slow']}) crosses above its {p['signal']}-bar signal line; exit when it falls below it.",
+        "momentum": lambda: f"Buy when the {p['n']}-bar return exceeds {p['min_return'] * 100:g}%; exit when it turns negative.",
+        "volume": lambda: f"Buy on a new {p['n']}-bar closing high with volume above {p['volume_x']}x the 20-bar average; exit below the 10-bar low.",
+        "vwap": lambda: f"Buy when the close is more than {abs(p['below_vwap']) * 100:g}% below the session VWAP; exit when it is back above VWAP.",
+        "orb": lambda: f"Buy when the close breaks above the high of the first {p['minutes']} minutes; exit below the middle of that range.",
+        "gap": lambda: (f"Buy after a gap up of more than {p['min_gap'] * 100:g}% while trading above the day's open; exit below the open."
+                        if p["kind"] == "gap-and-go" else
+                        f"After a gap down of more than {abs(p['max_gap']) * 100:g}%, buy while still that far below yesterday's close; exit when the gap is filled."),
+        "prevday": lambda: f"Buy when the close breaks above yesterday's high; exit {abs(p['exit_below']) * 100:g}% back below it.",
+    }[f]()
     return (f"{txt} Evaluated on {d['timeframe']} bars of {d['symbol']} ({d['horizon']}), long only, stop {d['stop_pct'] * 100:.1f}% below the fill"
             + ("; intraday positions square off from 15:15, no new entries after 15:00." if d["horizon"] == "intraday" else "."))
 

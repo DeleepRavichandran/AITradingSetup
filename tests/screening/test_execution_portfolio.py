@@ -30,7 +30,7 @@ def stream():
 
 @pytest.fixture(scope="module")
 def run(stream, tmp_path_factory):
-    """40 symbols, all 6,840 configurations, default realistic execution and shared portfolio."""
+    """40 symbols, all 12,240 configurations, default realistic execution and shared portfolio."""
     root = tmp_path_factory.mktemp("real")
     checks = {"max_open": 0, "min_free_cash": float("inf"), "min_reserved": 0, "gross_over": 0.0}
     sch = MinuteScheduler(root, symbols(40))

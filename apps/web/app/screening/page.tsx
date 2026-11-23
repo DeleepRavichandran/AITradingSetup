@@ -48,7 +48,7 @@ export default function Screening() {
       right={<button className="primary" disabled={running} onClick={replay}>{running ? "Replay running…" : "Run 5-session replay"}</button>}>
       <Err e={status.error || err} /><Loading on={status.loading} />
       {job && <Banner tone="info">Replay job <span className="mono">{job.id}</span>: <Badge s={job.status} /> {job.progress?.length ? `minute ${job.progress[job.progress.length - 1].minute}/${job.progress[job.progress.length - 1].of}` : ""} {job.error}</Banner>}
-      {s && !started && <Banner>No screening run yet. Run a replay of stored 1-minute bars, or set up Angel One for live 1-minute data (the Angel One adapter is mock-tested and not yet verified against the real service).{s.live?.state === "error" ? ` Live start failed: ${s.live.error}` : ""}</Banner>}
+      {s && !started && <Banner>No screening run yet. Run a replay of stored 1-minute bars, or set up Angel One for live 1-minute data (the Angel One adapter is mock-tested and not yet verified against the real service).{s.live?.state === "error" ? ` Live start failed: ${s.live.error}` : ""}{s.outdated_run ? ` ${s.outdated_run}` : ""}</Banner>}
       {started && <>
         <DataSource d={s.data_source} />
         <Banner tone="info">Live trading is off; every order on this page is simulated. Feed: {s.feed}{s.feed_status ? ` (${s.feed_status})` : ""}.</Banner>
