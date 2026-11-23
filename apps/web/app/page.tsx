@@ -29,7 +29,9 @@ export default function CommandCenter() {
   return (
     <>
       <div className="top"><h1>Command Center</h1><span className="sp" />
-        <button className="primary" onClick={start} disabled={!!active || running}>{active || running ? "Research running…" : "Run research (3 hypotheses)"}</button></div>
+        {d && !d.platform.research_service.available
+          ? <button disabled title={d.platform.research_service.detail}>Research needs Docker (Linux sandbox)</button>
+          : <button className="primary" onClick={start} disabled={!!active || running}>{active || running ? "Research running…" : "Run research (3 hypotheses)"}</button>}</div>
       <p className="sub">What the lab is doing now, how far each number can be trusted, and what needs attention. Simulated orders only.</p>
       <Err e={cc.error || err} />
       {!d && !cc.error && <Skeleton lines={4} />}
