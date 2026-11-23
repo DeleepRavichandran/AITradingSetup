@@ -1084,6 +1084,8 @@ def create_app() -> FastAPI:
         from nseql.screening.feeds import BrokerMinutePoller, warm_up
         from nseql.screening.scheduler import MinuteScheduler
         screening["live"] = {"state": "starting", "broker": "angelone"}
+        log = lambda msg: print(f"[live-screening] {datetime.now():%Y-%m-%d %H:%M:%S} {msg}", flush=True)   # goes to experiments/logs/api.log
+        log("starting: logging in to Angel One")
         try:
             if not credentials_present():
                 raise RuntimeError(f"Angel One credentials missing in .env: {', '.join(missing_credentials())}")
@@ -1123,9 +1125,12 @@ def create_app() -> FastAPI:
             screening["sch"], screening["meta"] = sch, meta
             sch.start()
             screening["live"].update(state="running", symbols=len(syms), live_from=live_from, not_found=missing, capital=capital, account=name)
+            log(f"running: {len(syms)} symbols, {len(sch.reg):,} configurations, paper account {name} (capital {capital:,.0f}), "
+                f"paper orders from {live_from}" + (f"; not found: {', '.join(missing)}" if missing else ""))
             reg.audit("system", "LIVE_SCREENING_STARTED", broker="angelone", symbols=len(syms), live_from=live_from)
         except Exception as e:                      # reported, never crashes the API
             screening["live"].update(state="error", error=f"{type(e).__name__}: {e}")
+            log(f"ERROR: could not start: {type(e).__name__}: {e}")
             st.notify("feed", f"Live screening could not start: {type(e).__name__}: {e}")
             return
         hist = "angel_daily"                         # daily history for backtests, once; a failure here does not stop screening
