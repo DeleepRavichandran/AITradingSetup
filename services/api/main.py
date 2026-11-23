@@ -1016,6 +1016,8 @@ def create_app() -> FastAPI:
         """Reopen the most recent screening run after an API restart (its checkpoint is recovered)."""
         if screening["sch"] is not None:
             return screening["sch"]
+        if (screening.get("live") or {}).get("state") in ("starting", "running"):
+            return None                             # the live bot owns the account; a read-only copy would replace it on the dashboard
         meta = st.exp_dir / "screening" / "current.json"
         if not meta.exists():
             return None
@@ -1731,6 +1733,7 @@ def create_app() -> FastAPI:
     app.state.scheduler = scheduler
     _restore_sessions()
     if os.environ.get("NSEQL_LIVE_SCREENING", "").lower() == "angelone":
+        screening["live"] = {"state": "starting", "broker": "angelone"}     # before any request can reopen the account read-only
         threading.Thread(target=_start_live_screening, name="live-screening-bootstrap", daemon=True).start()
     if os.environ.get("NSEQL_NEWS_WATCH", "").lower() == "true" or (
             os.environ.get("NSEQL_LIVE_SCREENING", "").lower() == "angelone" and os.environ.get("NSEQL_NEWS_WATCH", "").lower() != "false"):

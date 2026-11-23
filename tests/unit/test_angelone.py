@@ -216,10 +216,15 @@ def test_unattended_api_start_with_angel_one(data_dir, tmp_path, monkeypatch):
     assert st["feed"].startswith("Angel One") and st["running"] is True and st["live_trading"] is False
     assert st["live"]["history"].startswith("dataset angel_daily")
     assert st["portfolio"]["equity_inr"] == 1_000_000 and st["live"]["account"] == "live_angelone_r2"
-    # a different starting capital is a separate paper account, starting from scratch
+    # a different starting capital is a separate paper account, starting from scratch.
+    # A slow login opens the race seen on 2026-11-23: dashboard requests during start-up must not reopen the
+    # previous account read-only and hide the live bot.
+    monkeypatch.setattr(FakeAngel, "ensure_login", lambda self: time.sleep(1.5))
     monkeypatch.setenv("NSEQL_PAPER_CAPITAL", "100000")
     config.get_settings.cache_clear()
     c2 = TestClient(create_app(), headers={"Authorization": "Bearer angel-live-test-operator-token-1"})
+    early = c2.get("/api/today").json()
+    assert early["started"] is False and early["data_source"]["kind"] == "none"
     for _ in range(100):
         st2 = c2.get("/api/screening/status").json()
         if (st2.get("live") or {}).get("state") in ("running", "error"):
@@ -227,6 +232,7 @@ def test_unattended_api_start_with_angel_one(data_dir, tmp_path, monkeypatch):
         time.sleep(0.2)
     assert st2["live"]["state"] == "running", st2["live"].get("error")
     assert st2["live"]["account"] == "live_angelone_100000_r2" and st2["portfolio"]["rules"]["capital"] == 100_000
+    assert st2["feed"].startswith("Angel One") and st2["running"] is True                    # the live bot, not a read-only copy
     assert st2["portfolio"]["cash_inr"] == 100_000 and st2["paper_orders"] == 0             # fresh: no inherited cash, positions or orders
     assert (tmp_path / "exp" / "screening" / "live_angelone_r2").exists()                    # the old account is kept, untouched
     monkeypatch.setenv("NSEQL_PAPER_CAPITAL", "5000")
