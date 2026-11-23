@@ -51,6 +51,30 @@ the API replay and the benchmark use the realistic one by default.
     served best-first by a score that uses only information available at that minute; see
     "Ranked allocation" below. `allocation="first_come"` keeps the old registry-order baseline.
 
+## Rule families (since 2026-11-23: 36 rules in 12 families, registry version 2)
+
+| Family | Entry | Exit | Timeframes |
+|---|---|---|---|
+| cross | SMA fast above SMA slow (5 pairs) | no longer above | all |
+| breakout | close above prior n-bar high (5) | below prior n-bar low | all |
+| rsi | RSI below buy level (9) | above sell level | all |
+| zscore | z-score of close vs 20-bar mean below -1.5 / -2 / -2.5 | z above 0 | all |
+| bollinger | close above upper band (20, 2 sd) | below the 20-bar mean | all |
+| macd | MACD above signal (12-26-9, 8-17-9) | below signal | all |
+| momentum | 10 / 20 / 55-bar return above 0 / 0.5% / 1% | return below 0 | all |
+| volume | new 10 / 20-bar high on > 1.5x the 20-bar mean volume | below 10-bar low | all |
+| vwap | close 0.3% / 0.6% below session VWAP | back above VWAP | intraday |
+| orb | above the 09:16-09:30 opening-range high | below the range middle | intraday |
+| gap | gap-and-go (> 0.5% gap up, above the open) / gap-fill (> 0.5% gap down, still below) | below the open / gap filled | intraday |
+| prevday | above yesterday's high | 0.5% back below it | intraday |
+
+306 configurations per symbol (30 rules x 9 + 6 session rules x 6). Every new indicator has an
+independent pandas reference; the parity tests check features and every decision for all 12 families.
+Measured on a synthetic session: 6,426 configurations p99 8 ms per minute, 50,000 p99 49 ms. A saved
+run or live paper account from registry version 1 is not resumed: live accounts get a new folder
+(`live_angelone[_capital]_r2`) and an old replay is reported as outdated. The benchmark tables below
+were measured with the 3-family registry.
+
 ## Registry
 
 Per symbol there are 19 rules (5 SMA crosses, 5 breakouts, 9 RSI) × (3 intraday timeframes × 2 stops +
