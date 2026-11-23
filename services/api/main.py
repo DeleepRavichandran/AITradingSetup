@@ -1085,23 +1085,34 @@ def create_app() -> FastAPI:
             tokens, missing = angel_resolve(api.instruments(st.exp_dir), [*_watchlist(), "NIFTY 50"])
             if not tokens:
                 raise RuntimeError(f"none of the watchlist symbols were found at Angel One: {missing}")
-            root = st.exp_dir / "screening" / "live_angelone"
+            from nseql.screening.execution import PortfolioRules
+            capital = float(os.environ.get("NSEQL_PAPER_CAPITAL") or PortfolioRules.capital)
+            if capital < 10_000:
+                raise RuntimeError(f"NSEQL_PAPER_CAPITAL must be at least 10000 (got {capital:g})")
+            # each starting capital is its own paper account: a new amount starts from scratch, it never inherits
+            # another account's cash or positions; NSEQL_LIVE_RUN names a fresh account explicitly
+            name = os.environ.get("NSEQL_LIVE_RUN") or ("live_angelone" if capital == PortfolioRules.capital else f"live_angelone_{int(capital)}")
+            if not name.replace("_", "").replace("-", "").isalnum():
+                raise RuntimeError("NSEQL_LIVE_RUN may contain only letters, digits, '-' and '_'")
+            root = st.exp_dir / "screening" / name
             root.mkdir(parents=True, exist_ok=True)
             lf = root / "live.json"
             first = not lf.exists()
             live_from = json.loads(lf.read_text())["live_from"] if not first else datetime.now().strftime("%Y-%m-%dT%H:%M:00")
             syms = [x["symbol"] for x in tokens]
+            if not first and json.loads(lf.read_text()).get("capital", PortfolioRules.capital) != capital:
+                raise RuntimeError(f"paper account '{name}' was started with a different capital; set NSEQL_LIVE_RUN to a new name to start fresh")
             sch = MinuteScheduler(root, syms, None, feed=BrokerMinutePoller(tokens, _angel_api), kill=st.kill, mode="live",
-                                  calendar=_calendar(), live_from=live_from, experiments_dir=st.exp_dir)
+                                  calendar=_calendar(), live_from=live_from, experiments_dir=st.exp_dir, portfolio=PortfolioRules(capital=capital))
             if first:
-                lf.write_text(json.dumps({"live_from": live_from, "symbols": syms, "not_found": missing}))
+                lf.write_text(json.dumps({"live_from": live_from, "symbols": syms, "not_found": missing, "capital": capital, "account": name}))
                 screening["live"]["warm_up"] = warm_up(sch, api, tokens, days=5)
             meta = {"root": str(root), "symbols": syms, "configs": None, "mode": "live", "broker": "angelone", "live_from": live_from,
-                    "synthetic": False, "not_found": missing}
+                    "synthetic": False, "not_found": missing, "capital": capital, "account": name}
             (st.exp_dir / "screening" / "current.json").write_text(json.dumps(meta))
             screening["sch"], screening["meta"] = sch, meta
             sch.start()
-            screening["live"].update(state="running", symbols=len(syms), live_from=live_from, not_found=missing)
+            screening["live"].update(state="running", symbols=len(syms), live_from=live_from, not_found=missing, capital=capital, account=name)
             reg.audit("system", "LIVE_SCREENING_STARTED", broker="angelone", symbols=len(syms), live_from=live_from)
         except Exception as e:                      # reported, never crashes the API
             screening["live"].update(state="error", error=f"{type(e).__name__}: {e}")
