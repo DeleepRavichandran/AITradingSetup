@@ -108,11 +108,15 @@ def verify(experiments_dir: Path, *, now: datetime | None = None, symbol: str | 
             if bad:
                 raise AssertionError(f"unexpected row shape, e.g. {str(bad[0])[:80]}")
             secs = df["ts"].dt.second.ne(0).sum()
+            mins = df["ts"].dt.hour * 60 + df["ts"].dt.minute
+            pre = int((mins < 9 * 60 + 16).sum())                       # pre-open auction bars: not trading minutes; the scheduler drops them
+            df = df[mins >= 9 * 60 + 16]
             firsts = df.groupby(df["ts"].dt.date)["ts"].min().dt.strftime("%H:%M").unique().tolist()
             if secs or (df[["open", "high", "low", "close"]] <= 0).any().any() or (df["high"] < df["low"]).any():
                 raise AssertionError("bars not minute-aligned, non-positive prices, or high < low")
             add("candle_format", "passed" if firsts == ["09:16"] else "failed",
-                f"{len(df):,} bars for {tok['symbol']}; first bar of each session stamped {firsts} (expected 09:16 = 09:15 start + 1 min)")
+                f"{len(df):,} session bars for {tok['symbol']}; first bar of each session stamped {firsts} (expected 09:16 = 09:15 start + 1 min)"
+                + (f"; {pre} pre-open bar(s) before 09:16 returned by the API (ignored by the screening loop)" if pre else ""))
         except Exception as e:  # noqa: BLE001
             add("candle_format", "failed", f"{type(e).__name__}: {e}")
 
@@ -169,7 +173,9 @@ def verify(experiments_dir: Path, *, now: datetime | None = None, symbol: str | 
                     break
             add("rate_limit", "passed" if errs == 0 else "failed",
                 f"6 paced requests: {errs} refused, {6 / el:.2f} req/s; unpaced burst first refused at request "
-                f"{refused_at if refused_at else f'none of {burst}'}", paced_req_per_s=round(6 / el, 2), burst_refused_at=refused_at)
+                f"{refused_at if refused_at else f'none of {burst}'}"
+                + ("; if the lab was running, it shares the same request allowance: stop it and run this check again" if errs else ""),
+                paced_req_per_s=round(6 / el, 2), burst_refused_at=refused_at)
         except Exception as e:  # noqa: BLE001
             add("rate_limit", "failed", f"{type(e).__name__}: {e}")
     else:

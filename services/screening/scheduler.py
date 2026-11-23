@@ -27,20 +27,23 @@ import json
 import os
 import threading
 import time
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Callable
 
 import numpy as np
 import pandas as pd
-
 from nseql.instruments.calendar import IST, TradingCalendar
 from nseql.screening.engine import ScreeningEngine
 from nseql.screening.execution import ExecConfig, PortfolioRules
-from nseql.screening.features import SESSION_MINUTES, SESSION_OPEN_MIN
+from nseql.screening.features import SESSION_MINUTES, SESSION_OPEN_MIN, minute_of_session
 from nseql.screening.registry import FAMILIES, HORIZON, TF_NAMES, build
 from nseql.screening.store import ScreeningStore, _iso
 
+
+def _in_session(ts) -> bool:
+    m = minute_of_session(pd.Timestamp(ts))
+    return 1 <= m <= SESSION_MINUTES
 
 class ReplayMinuteFeed:
     """Serves stored 1-minute bars as if they were arriving live: fetch(now) returns every bar whose close
@@ -129,7 +132,13 @@ class MinuteScheduler:
 
     # ------------------------------------------------------------------ input
     def ingest(self, bars: list[dict], source: str = "push") -> dict:
-        return self.store.add_events(bars, processed_upto=self.watermark, source=source)
+        """Store 1-minute bars. Bars outside the 09:16-15:30 continuous session (the 09:00-09:08 pre-open
+        auction that some brokers return, or after-close prints) are not trading minutes: counted, not stored."""
+        ok = [b for b in bars if _in_session(b["ts"])]
+        out = self.store.add_events(ok, processed_upto=self.watermark, source=source)
+        if len(ok) != len(bars):
+            out["outside_session"] = len(bars) - len(ok)
+        return out
 
     # ------------------------------------------------------------------ one cycle
     def run_cycle(self, now=None) -> dict:
@@ -138,7 +147,7 @@ class MinuteScheduler:
             got = self.ingest(self.feed.fetch(now), getattr(self.feed, "label", "feed")) if self.feed is not None else {}
             upto = _iso(now - pd.Timedelta(seconds=self.grace))
             before = self.watermark
-            minutes = self.store.pending_minutes(before, upto)
+            minutes = [m for m in self.store.pending_minutes(before, upto) if _in_session(m)]   # older stores may hold pre-open bars
             gaps = self._gaps(before, minutes[-1] if minutes else None)
             for g in gaps:
                 self.store.record({"minute": g, "processed_at": time.time(), "latency_ms": 0.0, "lag_s": None, "mode": self.mode,

@@ -160,14 +160,15 @@ class AngelHistorical:
             self._last = self._clock()
             d = self._json(r)
             code = str(d.get("errorcode") or d.get("errorCode") or "")
-            if r.status_code in (401, 403) or code in ("AG8001", "AG8002", "AG8003", "AB1010"):
+            rate_limited = r.status_code == 429 or code == "AB1021" or "access rate" in str(d.get("message") or r.text).lower()
+            if not rate_limited and (r.status_code in (401, 403) or code in ("AG8001", "AG8002", "AG8003", "AB1010")):
                 if relogged:
                     raise AngelAuthError(f"Angel One rejected the session: {d.get('message')} ({code or r.status_code})")
                 self.jwt = None
                 self.login()
                 relogged = True
                 continue
-            if r.status_code == 429 or code == "AB1021" or r.status_code >= 500:
+            if rate_limited or r.status_code >= 500:
                 if busy >= self._retries:
                     break
                 self._sleep(min(2 ** busy, 16))

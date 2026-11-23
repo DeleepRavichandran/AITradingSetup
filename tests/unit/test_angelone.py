@@ -9,7 +9,6 @@ import httpx
 import numpy as np
 import pandas as pd
 import pytest
-
 from nseql.data.adapters import angelone as A
 from nseql.screening.feeds import BrokerMinutePoller, warm_up
 from nseql.screening.scheduler import MinuteScheduler
@@ -44,6 +43,8 @@ class Server:
                     return httpx.Response(200, json={"status": False, "message": "Invalid Token", "errorcode": "AG8001"})
                 if kind == "rate":
                     return httpx.Response(200, json={"status": False, "message": "Too many requests", "errorcode": "AB1021"})
+                if kind == "rate403":                                    # what the real service returned on 2026-11-23
+                    return httpx.Response(403, text="Access denied because of exceeding access rate")
                 return httpx.Response(200, json={"status": False, "message": "Something wrong", "errorcode": "AB2001"})
             assert req.headers["authorization"].startswith("Bearer jwt") and req.headers["x-privatekey"] == "key123"
             f, t = pd.Timestamp(body["fromdate"]), pd.Timestamp(body["todate"])
@@ -168,7 +169,6 @@ def test_unattended_api_start_with_angel_one(data_dir, tmp_path, monkeypatch):
     """With NSEQL_LIVE_SCREENING=angelone the API logs in, resolves the watchlist, warms up and starts the minute
     loop by itself, then downloads daily history; nothing for the operator to do."""
     from fastapi.testclient import TestClient
-
     from nseql import config
     stream = minute_stream(5, ["2026-11-16"], seed=2, missing=0.0)
 
@@ -240,3 +240,27 @@ def test_unattended_api_start_with_angel_one(data_dir, tmp_path, monkeypatch):
     assert "at least 10000" in st3["live"]["error"]
     config.get_settings.cache_clear()
     assert np.isfinite(1.0)
+
+
+def test_access_rate_403_is_a_rate_limit_not_a_login_failure(tmp_path):
+    srv = Server()
+    api, sleeps = _api(srv, tmp_path)
+    api.login()
+    logins = sum(1 for c in srv.calls if c[0].endswith("loginByPassword"))
+    srv.fail = ["rate403", "rate403"]
+    df = api.candles("2885", "1d", datetime(2026, 11, 16), datetime(2026, 11, 20))
+    assert len(df) == 5 and sleeps[-2:] == [1, 2]                         # backed off twice, then succeeded
+    assert sum(1 for c in srv.calls if c[0].endswith("loginByPassword")) == logins   # no re-login storm
+
+
+def test_pre_open_bars_are_dropped_and_never_block_the_session(tmp_path):
+    stream = minute_stream(2, ["2026-11-16"], seed=3, missing=0.0)
+    sch = MinuteScheduler(tmp_path / "s", ["SYN000", "SYN001"])
+    pre = [{"symbol": "SYN000", "ts": pd.Timestamp("2026-11-16 09:09"), "open": 1, "high": 1, "low": 1, "close": 1, "volume": 5}]
+    assert sch.ingest(pre)["outside_session"] == 1
+    sch.store.add_events(pre, processed_upto=None, source="older version")   # as stored by the version that ran this morning
+    for ts, bars in stream[:5]:
+        sch.ingest(bars)
+        c = sch.run_cycle(ts + pd.Timedelta(seconds=6))
+        assert "error" not in c
+    assert sch.watermark == "2026-11-16T09:20:00" and sch.store.counts()["cycles"] == 5
