@@ -1,6 +1,8 @@
 "use client";
-import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
 import { Badge, Banner, Card, DataSource, DataTable, Err, KV, Loading, Page, Stat } from "@/components/ui";
+import { AccountKinds } from "@/components/kinds";
 import { inr, num, post, useApi, useJob } from "@/lib/api";
 
 const HORIZONS = [["", "All"], ["intraday", "Intraday"], ["swing", "Swing"]] as const;
@@ -16,21 +18,41 @@ function Pager({ total, offset, set }: { total: number; offset: number; set: (o:
   );
 }
 
-export default function Screening() {
-  const [hz, setHz] = useState<string>("");
-  const [sigOff, setSigOff] = useState(0);
+export default function ScreeningPage() {
+  return <Suspense fallback={<Loading on />}><Screening /></Suspense>;
+}
+
+/* Filters live in the URL (?horizon=&status=&decision=&day=&reason=&warmup=), so ledger drill-downs from Mission Control
+   and My Trading open the matching rows, and Back returns with the filters intact. */
+function Screening() {
+  const sp = useSearchParams();
+  const router = useRouter();
+  const [hz, setHz] = useState<string>(sp.get("horizon") || "");
+  const [sigOff, setSigOff] = useState(Number(sp.get("offset") || 0));
   const [cfgOff, setCfgOff] = useState(0);
-  const [decision, setDecision] = useState("");
-  const [alloc, setAlloc] = useState("");
+  const [decision, setDecision] = useState(sp.get("decision") || (sp.get("day") ? "BUY" : ""));
+  const [alloc, setAlloc] = useState(sp.get("status") || "");
+  const [day, setDay] = useState(sp.get("day") || "");
+  const [reason, setReason] = useState(sp.get("reason") || "");
+  const [warmup, setWarmup] = useState(sp.get("warmup") || "");
+  const [config, setConfig] = useState(sp.get("config") || "");
+  useEffect(() => {
+    const q = new URLSearchParams();
+    for (const [k, v] of [["horizon", hz], ["status", alloc], ["decision", decision], ["day", day], ["reason", reason], ["warmup", warmup], ["config", config],
+      ["offset", sigOff ? String(sigOff) : ""]] as [string, string][]) if (v) q.set(k, v);
+    const next = q.toString();
+    if (next !== sp.toString()) router.replace(next ? `/screening?${next}` : "/screening", { scroll: false });
+  }, [hz, alloc, decision, day, reason, warmup, config, sigOff, router, sp]);
+  const enc = encodeURIComponent;
   const [jobId, setJobId] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const { job, running } = useJob(jobId);
   const status = useApi<any>("/screening/status", 10000);
   const started = status.data?.started;
   const summary = useApi<any>(started ? "/screening/summary" : null, 10000);
-  const signals = useApi<any>(started ? `/screening/signals?horizon=${hz}&decision=${decision}&alloc_status=${alloc}&limit=${PAGE}&offset=${sigOff}` : null, 10000);
+  const signals = useApi<any>(started ? `/screening/signals?horizon=${hz}&decision=${decision}&alloc_status=${alloc}&day=${day}&reason=${enc(reason)}&warmup=${warmup}&config_id=${config}&limit=${PAGE}&offset=${sigOff}` : null, 10000);
   const configs = useApi<any>(started ? `/screening/configs?horizon=${hz}&limit=${PAGE}&offset=${cfgOff}` : null);
-  const orders = useApi<any>(started ? `/screening/orders?horizon=${hz}&status=filled&limit=${PAGE}` : null, 10000);
+  const orders = useApi<any>(started ? `/screening/orders?horizon=${hz}&status=filled&day=${day}&limit=${PAGE}` : null, 10000);
   const cycles = useApi<any>(started ? "/screening/cycles?limit=30" : null, 10000);
   const pf = useApi<any>(started ? "/screening/portfolio" : null, 10000);
   const pos = useApi<any>(started ? "/screening/positions" : null, 10000);
@@ -47,6 +69,7 @@ export default function Screening() {
   return (
     <Page title="Strategy Monitor" sub="The one-minute screening loop: registered configurations, which were evaluated, the decisions they made and the forward paper ledger. Simulated orders only."
       right={<button className="primary" disabled={running} onClick={replay}>{running ? "Replay running…" : "Run 5-session replay"}</button>}>
+      <AccountKinds here="screening" />
       <Err e={status.error || err} /><Loading on={status.loading} />
       {job && <Banner tone="info">Replay job <span className="mono">{job.id}</span>: <Badge s={job.status} /> {job.progress?.length ? `minute ${job.progress[job.progress.length - 1].minute}/${job.progress[job.progress.length - 1].of}` : ""} {job.error}</Banner>}
       {s && !started && <Banner>No screening run yet. Run a replay of stored 1-minute bars, or set up Angel One for live 1-minute data (the Angel One adapter is mock-tested and not yet verified against the real service).{s.live?.state === "error" ? ` Live start failed: ${s.live.error}` : ""}{s.outdated_run ? ` ${s.outdated_run}` : ""}</Banner>}
@@ -65,7 +88,8 @@ export default function Screening() {
           </div>
           <KV items={[
             ["Qualified means", o.configurations.qualified_rule],
-            ["Top refusal reasons", Object.entries(o.signals.refusal_reasons || {}).slice(0, 5).map(([k, v]: any) => `${k}: ${num(v, 0)}`).join(" · ") || "none"],
+            ["Refused BUY signals by recorded reason (all time)", Object.entries(o.signals.refusal_reasons || {}).slice(0, 6).map(([k, v]: any) => `${k}: ${num(v, 0)}`).join(" · ") || "none"],
+            ["Latest session", o.signals.latest_session ? `${o.signals.latest_session.day}: ${num(o.signals.latest_session.eligible, 0)} eligible paper BUY signals, ${num(o.signals.latest_session.accepted, 0)} accepted, ${num(o.signals.latest_session.orders, 0)} orders, ${num(o.signals.latest_session.fills, 0)} fills; ${num(o.signals.latest_session.warm_up, 0)} warm-up (historical, never tradable)` : "—"],
             ["Learning Brain", o.learning_brain?.verdict || "—"],
             ["Failures", [o.failures.feed_status, o.failures.event_conflicts ? `${o.failures.event_conflicts} conflicting bars` : null,
               o.failures.late_events ? `${o.failures.late_events} late bars` : null, Object.keys(o.failures.feed_errors || {}).length ? `${Object.keys(o.failures.feed_errors).length} symbols erroring` : null].filter(Boolean).join(" · ") || "none"],
@@ -94,7 +118,6 @@ export default function Screening() {
             ["Execution", pf.data.execution ? `realistic: ≤${(pf.data.execution.participation * 100).toFixed(0)}% of each bar's volume, ${pf.data.execution.half_spread_bps} bps half-spread + impact, entries time out after ${pf.data.execution.entry_ttl_minutes} min` : "simple: whole order at the next open"],
             ["Limits", pf.data.rules ? `${(pf.data.rules.per_trade_pct * 100).toFixed(0)}% of equity per trade · ≤${(pf.data.rules.max_symbol_pct * 100).toFixed(0)}% per symbol · ≤${(pf.data.rules.max_gross_pct * 100).toFixed(0)}% gross · stop new entries at −${(pf.data.rules.daily_loss_pct * 100).toFixed(0)}% on the day` : "none (each configuration has its own Rs 1,00,000)"],
             ["Allocation", pf.data.allocation ? `${pf.data.allocation.method === "ranked" ? "ranked by forward evidence, costs, liquidity, correlation and concentration" : pf.data.allocation.method === "first_come" ? "first come (registry order)" : "none"} · ${num(pf.data.allocation.round_trips, 0)} forward round trips · ${num(pf.data.allocation.qualified_configs, 0)} qualified configurations${pf.data.allocation.calibration?.brier != null ? ` · Brier ${pf.data.allocation.calibration.brier} vs base rate ${pf.data.allocation.calibration.base_rate_brier}` : ""}` : "—"],
-            ["Signals refused", Object.keys(pf.data.refused_signals || {}).length ? Object.entries(pf.data.refused_signals).map(([k, v]: any) => `${k}: ${num(v, 0)}`).join(" · ") : "none"],
             ["Largest holdings", (pf.data.top_symbols || []).map((x: any) => `${x.symbol} ${(x.pct_equity * 100).toFixed(1)}%`).join(" · ") || "none"],
           ] as [string, React.ReactNode][]} />
           <p className="dim" style={{ marginTop: 6 }}>{pf.data.note}</p>
@@ -122,6 +145,14 @@ export default function Screening() {
               <button key={k} className={alloc === k ? "primary" : ""} aria-pressed={alloc === k} onClick={() => { setAlloc(k); setSigOff(0); }}>{l}
                 {sm?.buy_allocation && k ? ` (${num(sm.buy_allocation[k] || 0, 0)} BUY)` : ""}</button>)}
           </div>
+          {(day || reason || warmup || config) && <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }} data-testid="ledger-filters">
+            <span className="dim">Showing</span>
+            {day && <span className="badge info">session {day}</span>}
+            {reason && <span className="badge warn">reason: {reason}</span>}
+            {warmup && <span className="badge">{warmup === "only" ? "warm-up history only" : "warm-up excluded"}</span>}
+            {config && <span className="badge info">configuration {config.slice(0, 8)}…</span>}
+            <button className="ghost" onClick={() => { setDay(""); setReason(""); setWarmup(""); setConfig(""); setSigOff(0); }}>Clear filters</button>
+          </div>}
           <Err e={signals.error} />
           <DataTable maxHeight={420} rows={signals.data?.rows || []} cols={[
             { key: "bar_ts", label: "bar close", f: (r: any) => r.bar_ts.replace("T", " ") }, { key: "symbol", label: "symbol" },

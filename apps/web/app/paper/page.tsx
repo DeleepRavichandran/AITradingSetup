@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { LineChart } from "@/components/charts";
 import { Badge, Banner, Card, DataSource, DataTable, Err, KV, Page, Stat, Synthetic } from "@/components/ui";
+import { AccountKinds } from "@/components/kinds";
 import { inr, num, pct, post, useApi } from "@/lib/api";
 
 export default function Paper() {
@@ -26,7 +27,8 @@ export default function Paper() {
   const order = () => call(() => post(`/paper/sessions/${sid}/orders`, { symbol: o.symbol, qty: Number(o.qty), type: o.type, limit: o.limit ? Number(o.limit) : null }), (r) => setMsg(`${r.status}${r.reason ? `: ${r.reason}` : r.note ? ` — ${r.note}` : ""}`));
   const lib = (strategies.data?.library || []).filter((x: any) => x.intervals.includes("1d") && x.requires === "EQ");
   return (
-    <Page title="Paper Trading Terminal" sub="Simulated orders only — nothing is sent to a broker. The session uses the same matching engine, costs, margin and ledger as the backtester, fed one bar at a time.">
+    <Page title="Paper Trading" sub="Simulated orders only — nothing is sent to a broker. The session uses the same matching engine, costs, margin and ledger as the backtester, fed one bar at a time.">
+      <AccountKinds here="paper" />
       <Banner tone="info"><b>Two feeds.</b> <i>Replay</i> steps through stored bars — “Advance” plays the role of the clock. <i>Kite daily</i> / <i>Angel One daily</i> pull each day’s completed candle after the close and step once per trading day (mock-tested; not yet verified against the real services). Live 1-minute data is on the Strategy Monitor; no streaming tick feed exists. Sessions are saved to disk and come back after a restart.</Banner>
       {sched.data && <Card title="Scheduler" right={<button onClick={tick} disabled={busy}>Run one pass now</button>}>
         <KV items={[["timer", <Badge key="t" s={sched.data.running ? "running" : "off (set NSEQL_SCHEDULER=true)"} tone={sched.data.running ? "good" : "warn"} />], ["last pass", sched.data.last_tick || "never"],

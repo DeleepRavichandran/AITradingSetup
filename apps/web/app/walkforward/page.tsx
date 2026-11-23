@@ -1,15 +1,18 @@
 "use client";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { LineChart } from "@/components/charts";
+import { ResearchTrail, readCtx, useCtx } from "@/components/trail";
 import { Badge, Card, DataTable, Err, KV, Page, Stat, Synthetic } from "@/components/ui";
 import { num, pct, post, useApi, useJob } from "@/lib/api";
 
 export default function WalkForward() {
+  const ctx = useCtx();
   const strategies = useApi<any>("/strategies");
   const reports = useApi<any[]>("/walkforward");
   const [f, setF] = useState({ strategy: "sma_cross", grid: "", train_days: 250, test_days: 60, mode: "rolling", max_points: 12 });
   const [jobId, setJobId] = useState<string | null>(null);
+  useEffect(() => { const c = readCtx(); if (c.strategy) setF((x) => ({ ...x, strategy: c.strategy as string })); }, []);
   const [sel, setSel] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const { job, running } = useJob(jobId);
@@ -26,10 +29,11 @@ export default function WalkForward() {
   const cur = lib.find((s: any) => s.name === f.strategy);
   return (
     <Page title="Walk-Forward Testing" sub="For each fold the parameters are chosen using the training window only, then frozen and applied to the next, unseen window. Stitching those unseen windows together gives an honest out-of-sample curve.">
+      <ResearchTrail here="/walkforward" ctx={{ strategy: f.strategy, dataset: ctx.dataset }} />
       <Card title="Configure">
         <div className="row">
           <label>Strategy<select value={f.strategy} onChange={(e) => setF({ ...f, strategy: e.target.value, grid: "" })}>
-            <optgroup label="Library">{lib.filter((x: any) => Object.keys(x.param_grid).length).map((x: any) => <option key={x.name}>{x.name}</option>)}</optgroup>
+            <optgroup label="Library">{lib.filter((x: any) => Object.keys(x.param_grid || {}).length).map((x: any) => <option key={x.name}>{x.name}</option>)}</optgroup>
             <optgroup label="Generated">{gen.map((x: any) => <option key={x.code_id} value={`generated:${x.code_id}`}>{x.hypothesis_id}</option>)}</optgroup></select></label>
           <label>Mode<select value={f.mode} onChange={(e) => setF({ ...f, mode: e.target.value })}><option>rolling</option><option>expanding</option></select></label>
           <label>Train sessions<input type="number" value={f.train_days} onChange={(e) => setF({ ...f, train_days: Number(e.target.value) })} style={{ width: 100 }} /></label>

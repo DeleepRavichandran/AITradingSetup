@@ -43,7 +43,8 @@ function Dossier({ id, onClose }: { id: string; onClose: () => void }) {
   const d = useApi<any>(`/universe/configs/${id}`);
   const x = d.data;
   return (
-    <Panel title={<>Dossier · <span className="mono">{id}</span></>} id="dossier" right={<button onClick={onClose} aria-label="Close dossier">Close</button>}
+    <Panel title={<>Dossier · {x ? `${x.config.rule} · ${x.config.symbol}` : <span className="mono">{id}</span>}</>} id="dossier"
+      right={<span style={{ display: "flex", gap: 6 }}><CopyId id={id} /><Link className="btn" href={`/screening?config=${id}`}>Open in ledger</Link><button onClick={onClose} aria-label="Close dossier">Close</button></span>}
       prov={x && <Prov source="screening registry, forward paper ledger, signal log" data={x.data_provenance} />}>
       <Err e={d.error} />{d.loading && <Skeleton lines={6} />}
       {x && <div className="stack" data-testid="dossier">
@@ -111,8 +112,24 @@ const Related = ({ rows }: { rows: any[] }) => rows.length ? (
     <div className="d">{r.stage.replaceAll("_", " ")} · {r.trades} trades{r.mean_net_bps != null ? ` · ${num(r.mean_net_bps, 1)} bps` : ""}</div></li>)}</ul>
 ) : <p className="dim">None.</p>;
 
+const FKEYS = ["family", "timeframe", "horizon", "stage", "q", "sort"] as const;
+const SPARSE = 5;                     // fewer completed trades than this: the cell is visually subdued, whatever its sign
+
+function CopyId({ id }: { id: string }) {
+  const [ok, setOk] = useState(false);
+  return <button className="ghost" style={{ padding: "2px 8px", fontSize: 12.5 }} aria-label={`Copy configuration id ${id}`}
+    onClick={async () => { try { await navigator.clipboard.writeText(id); setOk(true); setTimeout(() => setOk(false), 1500); } catch { /* clipboard blocked */ } }}>
+    {ok ? "Copied" : "Copy id"}</button>;
+}
+
 export default function Universe() {
-  const [f, setF] = useState({ family: "", timeframe: "", horizon: "", stage: "", q: "", sort: "trades" });
+  // filters, sort and the open dossier live in the URL: Back from the ledger or another page restores them
+  const init = () => {
+    const sp = typeof window === "undefined" ? new URLSearchParams() : new URLSearchParams(window.location.search);
+    return { family: sp.get("family") || "", timeframe: sp.get("timeframe") || "", horizon: sp.get("horizon") || "", stage: sp.get("stage") || "",
+      q: sp.get("q") || "", sort: sp.get("sort") || "trades" };
+  };
+  const [f, setF] = useState(init);
   const [rows, setRows] = useState<any[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -128,6 +145,20 @@ export default function Universe() {
     } catch (e: any) { setErr(e.message); } finally { setLoading(false); }
   }, [qs]);
   useEffect(() => { load(0); }, [load]);
+  useEffect(() => {                                                    // keep filters in the URL (replace, not push: no history spam)
+    const u = new URL(window.location.href);
+    for (const k of FKEYS) { if (f[k] && !(k === "sort" && f[k] === "trades")) u.searchParams.set(k, f[k]); else u.searchParams.delete(k); }
+    if (u.toString() !== window.location.href) window.history.replaceState(null, "", u.toString());
+  }, [f]);
+  useEffect(() => {                                                    // restore the scroll position of this exact view once rows are in
+    const key = `nseql_scroll:${window.location.pathname}${window.location.search}`;
+    let y: string | null = null;
+    try { y = sessionStorage.getItem(key); } catch { /* storage blocked */ }
+    if (y && rows.length) window.scrollTo(0, Number(y));
+    const save = () => { try { sessionStorage.setItem(`nseql_scroll:${window.location.pathname}${window.location.search}`, String(window.scrollY)); } catch { /* blocked */ } };
+    window.addEventListener("pagehide", save);
+    return () => { save(); window.removeEventListener("pagehide", save); };
+  }, [rows.length]);
   useEffect(() => {                                                    // ?config=<id> opens a dossier (links from Vega and elsewhere)
     const c = new URLSearchParams(window.location.search).get("config");
     if (c) setSel(c);
@@ -143,21 +174,22 @@ export default function Universe() {
   const fams = s ? [...new Set<string>(s.map.map((c: any) => c.family))] : [];
   const tfs = ["1m", "5m", "15m", "1d"];
   const cols: Col[] = [
-    { key: "id", label: "configuration", f: (r) => <span className="mono">{r.id}</span> },
-    { key: "symbol", label: "symbol" }, { key: "rule", label: "rule" }, { key: "timeframe", label: "tf" },
+    { key: "rule", label: "rule", f: (r) => <span title={`configuration ${r.id}`}>{r.rule}</span> },
+    { key: "symbol", label: "symbol" }, { key: "timeframe", label: "tf" },
     { key: "stage", label: "stage", f: (r) => <Badge s={r.stage.replaceAll("_", " ")} tone={STAGE_TONE[r.stage]} /> },
     { key: "trades", label: "trades", r: true }, { key: "mean_net_bps", label: "mean after costs", r: true, f: (r) => r.mean_net_bps == null ? <span className="dim">—</span>
       : <span className={r.mean_net_bps >= 0 ? "up" : "down"}>{num(r.mean_net_bps, 1)} bps</span> },
     { key: "confidence", label: "conf.", r: true, f: (r) => num(r.confidence, 2) },
     { key: "realised_inr", label: "realised", r: true, f: (r) => inr(r.realised_inr) },
     { key: "position", label: "position" },
+    { key: "id", label: "id", f: (r) => <span className="mono dim" title={r.id}>{r.id.slice(0, 8)}…</span> },
   ];
   return (
     <>
       <div className="top"><h1>Strategy Universe</h1></div>
       <p className="sub">Every configuration the one-minute loop evaluates, grouped by rule family and timeframe, with its forward paper evidence. Select one to open its research dossier.</p>
       <Err e={sm.error && !sm.error.includes("no screening run") ? sm.error : null} />
-      {sm.error?.includes("no screening run") && <Unavailable title="No screening run yet">Start a replay on the <Link href="/screening">Intraday &amp; Swing Lab</Link> or the live Angel One feed; the universe is built from the registered configurations.</Unavailable>}
+      {sm.error?.includes("no screening run") && <Unavailable title="No screening run yet">Start a replay on the <Link href="/screening">Strategy Monitor</Link> or the live Angel One feed; the universe is built from the registered configurations.</Unavailable>}
       {!s && !sm.error && <Skeleton lines={5} />}
       {s && <>
         <div className="metrics" style={{ marginBottom: 6 }}>
@@ -168,8 +200,9 @@ export default function Universe() {
         </div>
         <p className="dim" style={{ fontSize: 13.5, margin: "0 0 14px" }}>{s.note}</p>
         <div className="grid g21" style={{ marginBottom: 14 }}>
-          <Panel title="Family × timeframe map" hint="colour: mean forward return after costs · click to filter" id="map"
-            prov={<Prov source="screening registry + forward paper ledger" note={`computed in ${s.compute_ms} ms`} />}>
+          <Panel title="Family × timeframe map" hint={`return after costs · trades · qualified · cells with under ${SPARSE} trades are faded · click to filter`} id="map"
+            prov={<Prov source="screening registry + forward paper ledger" period={s.period?.from ? `${String(s.period.from).slice(0, 10)} → ${String(s.period.to).slice(0, 10)}` : undefined}
+              note={`${s.period?.note || ""}; computed in ${s.compute_ms} ms`} />}>
             <div className="matrix" style={{ gridTemplateColumns: `90px repeat(${tfs.length}, minmax(0, 1fr))` }} role="group" aria-label="Filter by family and timeframe">
               <span />{tfs.map((t) => <span key={t} className="lab" style={{ textAlign: "center" }}>{t}{t === "1d" ? " (swing)" : ""}</span>)}
               {fams.map((fam) => <Fragment key={fam}>
@@ -178,11 +211,13 @@ export default function Universe() {
                   const c = s.map.find((x: any) => x.family === fam && x.timeframe === t);
                   if (!c) return <span key={fam + t} />;
                   const on = f.family === fam && f.timeframe === t;
-                  return <button key={fam + t} className="cell" aria-pressed={on} style={{ background: cellColor(c.mean_net_bps) }}
+                  const sparse = c.trades < SPARSE;
+                  return <button key={fam + t} className="cell" aria-pressed={on} data-sparse={sparse || undefined}
+                    style={{ background: sparse ? "var(--raised)" : cellColor(c.mean_net_bps), opacity: sparse ? 0.62 : 1, borderStyle: sparse ? "dashed" : undefined }}
                     onClick={() => setF({ ...f, family: on ? "" : fam, timeframe: on ? "" : t })}
-                    aria-label={`${fam} ${t}: ${c.configs} configurations, ${c.with_evidence} with trades, mean ${c.mean_net_bps == null ? "none" : num(c.mean_net_bps, 1) + " bps"}`}>
+                    aria-label={`${fam} ${t}: mean after costs ${c.mean_net_bps == null ? "none" : num(c.mean_net_bps, 1) + " bps"} over ${c.trades} trades${sparse ? " (sparse sample)" : ""}, ${c.qualified} qualified, ${c.configs} configurations`}>
                     <div className="a">{c.mean_net_bps == null ? "—" : `${num(c.mean_net_bps, 1)}`}<span style={{ fontSize: 12, fontWeight: 400 }}>{c.mean_net_bps == null ? "" : " bps"}</span></div>
-                    <div className="b">{c.configs} configs · {c.trades} trades · {c.qualified} qualified</div>
+                    <div className="b">{c.trades} trade{c.trades === 1 ? "" : "s"}{sparse ? " · sparse" : ""} · {c.qualified} qualified · {c.configs} configs</div>
                   </button>;
                 })}
               </Fragment>)}
@@ -190,6 +225,10 @@ export default function Universe() {
           </Panel>
           <Panel title="Validation funnel" id="funnel" prov={<Prov source="screening registry + signal log" />}>
             <Funnel steps={s.funnel} />
+            {s.funnel_note && <p className="dim" style={{ fontSize: 12.5, margin: "6px 0 10px" }}>{s.funnel_note}</p>}
+            {s.evidence && <p className="ink2" style={{ fontSize: 14, margin: "0 0 10px" }} data-testid="evidence-book">Evidence book (a separate population):{" "}
+              <b>{num(s.evidence.with_forward_evidence, 0)}</b> configurations with completed round trips, <b>{num(s.evidence.qualified, 0)}</b> qualified.{" "}
+              <span className="dim">{s.evidence.note}</span></p>}
             <h3>Return distribution</h3>
             <Histogram h={s.return_distribution} />
           </Panel>

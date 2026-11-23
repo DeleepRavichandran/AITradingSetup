@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import { Badge, Banner, Card, DataTable, Err, KV, Loading, Page } from "@/components/ui";
+import { AccountKinds } from "@/components/kinds";
 import { inr, post, useApi } from "@/lib/api";
 
 export default function Risk() {
@@ -10,7 +11,8 @@ export default function Risk() {
   const act = async (path: string) => { setErr(null); try { await post(path, f); r.reload(); } catch (e: any) { setErr(e.message); } };
   const d = r.data;
   return (
-    <Page title="Risk Control Center" sub="The kill switch stops every paper session and blocks every new order, paper or live. Engaging it is immediate; clearing it needs a named human and a reason, and is written to the audit log.">
+    <Page title="Risk Control" sub="The kill switch stops every paper session and blocks every new order, paper or live. Engaging it is immediate; clearing it needs a named human and a reason, and is written to the audit log.">
+      <AccountKinds here="screening" />
       <Err e={r.error || err} /><Loading on={r.loading} />
       {d && <>
         <Banner tone={d.kill_switch.engaged ? "crit" : "good"}>{d.kill_switch.engaged ? <><b>Kill switch ENGAGED.</b> {d.kill_switch.reason}</> : "Kill switch clear."}</Banner>

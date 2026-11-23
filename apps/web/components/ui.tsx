@@ -222,3 +222,23 @@ export function VirtualTable<T = any>({ cols, rows, rowHeight = 34, height = 480
     </div>
   );
 }
+
+/** A value the API did not provide: say so, never invent one. */
+export function na(v: any, f?: (x: any) => React.ReactNode): React.ReactNode {
+  return v == null || (typeof v === "number" && !Number.isFinite(v))
+    ? <span className="dim" title="this field is missing from the API response (data gap)">Unavailable</span> : f ? f(v) : v;
+}
+
+/** Issues first: a list of problems with the feature each affects; nothing to show means "no issues". */
+export function Issues({ items, testid }: { items: { issue: string; affects: string; tone?: "crit" | "warn" }[]; testid?: string }) {
+  return (
+    <section className="panel" aria-labelledby={`${testid || "issues"}-h`} data-testid={testid || "issues"} style={{ marginBottom: 14 }}>
+      <h2 id={`${testid || "issues"}-h`}>{items.length ? `Issues (${items.length})` : "No open issues"}</h2>
+      {items.length ? <ul className="list" style={{ margin: 0 }}>
+        {items.map((x, i) => <li key={i} style={{ display: "flex", gap: 10, padding: "6px 0", flexWrap: "wrap" }}>
+          <span className={x.tone === "crit" ? "down" : "warn"} aria-hidden="true">{x.tone === "crit" ? "✕" : "!"}</span>
+          <span style={{ flex: 1, minWidth: 200 }}>{x.issue}</span><span className="dim">affects: {x.affects}</span></li>)}
+      </ul> : <p className="dim" style={{ margin: 0 }}>Everything this page checks is working.</p>}
+    </section>
+  );
+}

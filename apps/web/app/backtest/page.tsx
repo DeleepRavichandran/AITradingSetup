@@ -3,6 +3,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Bars, LineChart } from "@/components/charts";
 import { METRIC_HELP, MetricTiles, runCols } from "@/components/common";
+import { ResearchTrail } from "@/components/trail";
 import { Badge, Banner, Card, DataTable, Err, KV, Page, Synthetic } from "@/components/ui";
 import { inr, num, pct, post, useApi, useQuery } from "@/lib/api";
 
@@ -14,7 +15,24 @@ export default function Backtest() {
   const [runId, setRunId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  useEffect(() => { if (q.get("run")) setRunId(q.get("run")); }, [q]);
+  useEffect(() => {
+    if (q.get("run")) setRunId(q.get("run"));
+    const st = q.get("strategy"), ds = q.get("dataset");
+    if (st || ds) setF((x) => ({ ...x, ...(st ? { strategy: st, params: "{}" } : {}), ...(ds ? { dataset_id: ds } : {}) }));
+  }, [q]);
+  useEffect(() => {                                    // the selected run is part of the URL, so links and Back carry it
+    if (!runId) return;
+    const u = new URL(window.location.href);
+    if (u.searchParams.get("run") !== runId) { u.searchParams.set("run", runId); window.history.replaceState(null, "", u.toString()); }
+  }, [runId]);
+  const setParam = (k: string, v: string) => {
+    let p: any = {};
+    try { p = JSON.parse(f.params || "{}"); } catch { p = {}; }
+    const n = Number(v);
+    if (v === "") delete p[k]; else p[k] = Number.isFinite(n) && v.trim() !== "" ? n : v;
+    setF({ ...f, params: JSON.stringify(p) });
+  };
+  const paramVal = (k: string) => { try { const p = JSON.parse(f.params || "{}"); return p[k] ?? ""; } catch { return ""; } };
   const det = useApi<any>(runId ? `/runs/${runId}` : null);
   const eq = useApi<any>(runId && det.data?.summary ? `/runs/${runId}/equity` : null);
   const trades = useApi<any>(runId && det.data?.summary ? `/runs/${runId}/trades` : null);
@@ -34,6 +52,7 @@ export default function Backtest() {
   const s = det.data?.summary, m = s?.metrics;
   return (
     <Page title="Backtesting Studio" sub="Event-driven simulation: an order created on one bar can only fill on a later bar, with spread, market impact, volume limits, margin and the statutory charges in force on that date.">
+      <ResearchTrail here="/backtest" ctx={{ strategy: s?.strategies?.[0]?.name || f.strategy, dataset: s?.dataset?.id || f.dataset_id, run: runId }} />
       <Card title="Configure">
         <div className="row">
           <label>Strategy<select value={f.strategy} onChange={(e) => { const n = lib.find((x: any) => x.name === e.target.value); setF({ ...f, strategy: e.target.value, params: "{}", interval: n?.intervals?.[0] || "1d" }); }}>
@@ -45,15 +64,27 @@ export default function Backtest() {
           <label>End<input type="date" value={f.end} onChange={(e) => setF({ ...f, end: e.target.value })} /></label>
           <label>Capital (₹)<input type="number" value={f.capital} onChange={(e) => setF({ ...f, capital: Number(e.target.value) })} style={{ width: 120 }} /></label>
           <label>Cost multiplier<input type="number" step="0.5" min="0" value={f.cost_multiplier} onChange={(e) => setF({ ...f, cost_multiplier: Number(e.target.value) })} style={{ width: 90 }} /></label>
-          <label style={{ flex: 1, minWidth: 200 }}>Parameters (JSON)<input value={f.params} onChange={(e) => setF({ ...f, params: e.target.value })} className="mono" /></label>
+          {cur && Object.entries(cur.default_params || {}).map(([k, dv]: any) => (
+            <label key={k}>{k.replaceAll("_", " ")}<input value={paramVal(k)} placeholder={String(dv)} onChange={(e) => setParam(k, e.target.value)} style={{ width: 100 }}
+              inputMode={typeof dv === "number" ? "decimal" : "text"} /></label>))}
           <button className="primary" onClick={go} disabled={busy}>{busy ? "Running…" : "Run backtest"}</button>
         </div>
+        <details style={{ marginTop: 8 }}><summary className="dim">Advanced: parameters as JSON</summary>
+          <label style={{ display: "block", marginTop: 6 }}>Parameters (JSON)<input value={f.params} onChange={(e) => setF({ ...f, params: e.target.value })} className="mono" style={{ width: "100%" }} /></label>
+        </details>
         {cur && <p className="dim" style={{ marginTop: 8 }}><b>Hypothesis:</b> {cur.hypothesis} <span className="mono">defaults {JSON.stringify(cur.default_params)}</span>{cur.intervals[0] !== "1d" && " · needs intraday bars (1m)"}</p>}
         {!f.start && !f.end && <p className="dim">No dates set: this run covers the whole dataset, including the sealed window. Use it for exploration, not for claims.</p>}
       </Card>
       <Err e={err || det.error} />
       {s && m && <>
         <div className="top" style={{ marginTop: 16 }}><h1>Run <span className="mono">{runId}</span></h1><Badge s={s.status} /><span className="sp" /><Link href={`/replay?run=${runId}`}>replay trades</Link><Link href={`/chat?run=${runId}`}>ask the analyst</Link></div>
+        <div className="ctxline" data-testid="run-context">
+          <span>dataset <Link href={`/data?dataset=${encodeURIComponent(s.dataset.id)}`}><b>{s.dataset.id}</b></Link> ({s.dataset.synthetic ? "synthetic" : "real"}, hash {s.dataset.content_hash.slice(0, 10)}…)</span>
+          <span>interval <b>{s.interval || f.interval}</b></span>
+          <span>period <b>{s.period.start} → {s.period.end}</b></span>
+          <span>costs <b>×{s.cost_multiplier ?? f.cost_multiplier}</b> of the dated NSE schedule</span>
+          <span>validation partition <b>{s.partition || (s.flags.some((x: string) => /sealed/i.test(x)) ? "includes the sealed window" : "as requested")}</b></span>
+        </div>
         <Synthetic on={s.dataset.synthetic} />
         {s.error && <Banner tone="crit">{s.error}</Banner>}
         {s.flags.filter((x: string) => !x.startsWith("SYNTHETIC")).map((x: string) => <Banner key={x}>{x}</Banner>)}

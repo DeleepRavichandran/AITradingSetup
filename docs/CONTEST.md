@@ -110,3 +110,25 @@ Challenger** (`/contest`, API `/api/contest`).
   whether the challenger works.
 * The forward contest needs at least 60 sessions (about three months) before it can say anything.
 * Breadth is measured on the watchlist (about 20 stocks), not the whole market.
+
+## 6. Robustness checks (before trusting any good-looking result)
+
+`services/screening/robustness.py`, run with:
+
+```bash
+python -m nseql.cli robustness --fixture
+```
+
+Options: `--dataset <id>` (historical replay), `--account <folder>` (Monte Carlo only, on a live paper account's closed
+trades), `--symbols`, `--days`, `--window`, `--workers`, `--no-incumbent`. Report: `experiments/robustness/<run>/report.json`,
+shown on the Incumbent vs Challenger page.
+
+| Check | What it does | Flag |
+|---|---|---|
+| 1. Monte Carlo trade shuffle | the closed trades (net after costs) are reshuffled 1,000 times (seed 20261124); each order's drawdown from the starting capital. Total P&L never changes, only the sequence | sequence risk if the 95th-percentile drawdown is at least double the actual one: expect it live eventually |
+| 2. Walk-forward | grid of 9 challenger variants (opening range 15/30/45 min x breadth 40/50/60%); the best on each window of N sessions is scored on the next N sessions it has never seen; the frozen default is scored out-of-sample too | "memory, not edge" if the mean out-of-sample result is <= 0 or less than half the in-sample result |
+| 3. Parameter sensitivity | each challenger parameter nudged one step either side (opening range 25/35, breadth 45/55%, coverage 70/90%, risk 0.20/0.30%, freshness 1/3 min) | plateau only if every neighbour is positive and keeps at least half of the baseline; else "lonely spike"; a losing baseline is "no edge to test" |
+
+The incumbent runs thousands of fixed rules without a parameter search, so walk-forward and sensitivity apply to the
+challenger (the backtester's own walk-forward is in the Walk-Forward workspace); the Monte Carlo check runs on both.
+Synthetic results test the machinery, not the market.

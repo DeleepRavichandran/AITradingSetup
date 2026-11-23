@@ -11,6 +11,7 @@ clients only (and refuses requests forwarded from elsewhere) — for one person 
 
 import hmac
 import json
+import re
 import os
 import shutil
 import threading
@@ -1379,8 +1380,18 @@ def create_app() -> FastAPI:
         snap = x.snapshot()
         alloc = snap["allocation"]
         eq = snap["equity_inr"]
-        start_cap = x.rules.capital if x.rules else None
-        refused = dict(db.execute("SELECT reason, SUM(n) FROM refusals GROUP BY reason ORDER BY 2 DESC LIMIT 12").fetchall())
+        from nseql.screening.metrics import account_figures, reason_category, session_decisions
+        meta_ = screening.get("meta") or {}
+        today_ = datetime.now(views.IST).strftime("%Y-%m-%d")
+        last_day = db.execute("SELECT MAX(substr(minute,1,10)) FROM cycles WHERE status='processed'").fetchone()[0] or today_
+        fig = account_figures(sch, meta_, today_)
+        start_cap = fig["starting_capital"]
+        session = session_decisions(db, last_day, meta_.get("live_from"))
+        by_cat: dict[str, int] = {}
+        for why, n in db.execute("SELECT reason, SUM(n) FROM refusals GROUP BY reason").fetchall():
+            c = reason_category(why)
+            by_cat[c] = by_cat.get(c, 0) + int(n)
+        refused = dict(sorted(by_cat.items(), key=lambda kv: -kv[1]))
         realised = db.execute("SELECT COALESCE(SUM(realized_paise), 0), COALESCE(SUM(charges_paise), 0) FROM paper_orders WHERE side='SELL'").fetchone()
         charges_all = q1("SELECT COALESCE(SUM(charges_paise), 0) FROM paper_orders")
         return clean({
@@ -1395,12 +1406,15 @@ def create_app() -> FastAPI:
                        "lag_s": {"p50": float(np.percentile(lag, 50)), "max": float(max(lag))} if lag else None},
             "signals": {"by_decision": dict(db.execute("SELECT decision, COUNT(*) FROM signals GROUP BY decision").fetchall()),
                         "buy_allocation": dict(db.execute("SELECT COALESCE(alloc_status, 'not recorded'), COUNT(*) FROM signals WHERE decision='BUY' GROUP BY 1").fetchall()),
-                        "refusal_reasons": refused},
+                        "refusal_reasons": refused,
+                        "refusal_reasons_note": "all-time totals by recorded reason category; 'warm-up history' = historical bars before the live "
+                                                "start (never tradable)",
+                        "latest_session": session},
             "capital": {"equity_inr": eq, "starting_capital_inr": start_cap, "cash_inr": snap["cash_inr"], "reserved_inr": snap["reserved_inr"],
                         "gross_exposure_inr": snap["gross_exposure_inr"],
                         "utilisation_pct": round(100 * (snap["gross_exposure_inr"] + snap["reserved_inr"]) / eq, 2) if eq else None,
                         "open_positions": snap["open_positions"], "halted_today": snap["halted_today"]},
-            "paper_performance": {"equity_change_inr": round(eq - start_cap, 2) if start_cap else None,
+            "paper_performance": {"equity_change_inr": fig["pnl_since_start"], "pnl_today_inr": fig["pnl_today"], "windows": fig["windows"],
                                   "realised_after_charges_inr": realised[0] / 100, "charges_paid_inr": charges_all / 100,
                                   "note": "simulated fills on " + sch.provenance().get("label", "unknown data") + "; not real trading results"},
             "allocation": alloc, "learning_brain": _brain_status(),
@@ -1427,6 +1441,7 @@ def create_app() -> FastAPI:
                       "live_trading_enabled": st.settings.live_trading_enabled, "role": request.state.role, "auth_required": not insecure_local,
                       "modules": {"ready": sum(m["status"] == "ready" for m in rd), "total": len(rd),
                                   "attention": [m["module"] for m in rd if m["status"] in ("blocked", "degraded", "engaged", "unavailable")]},
+                      "last_candle": sch.watermark if sch is not None else None, "run_id": _run_id(screening["meta"]) if screening.get("meta") else None,
                       "version": code_version()})
 
     @api.get("/command-center")
@@ -1438,7 +1453,7 @@ def create_app() -> FastAPI:
             bstate = {}
         return clean(views.command_center(st=st, sch=sch, reg=reg, brain_status=_brain_status(), brain_state=bstate, readiness=_readiness(),
                                           calendar=_calendar(), universe_summary=uni.summary(sch) if sch is not None else None,
-                                          sandbox_status=sandbox.isolation_status()))
+                                          sandbox_status=sandbox.isolation_status(), meta=screening.get("meta")))
 
     @api.get("/universe/summary")
     def universe_summary():
@@ -1557,16 +1572,41 @@ def create_app() -> FastAPI:
     def screening_configs(horizon: str = "", family: str = "", timeframe: str = "", symbol: str = "", limit: int = 50, offset: int = 0):
         return _page("configs", "idx", {"horizon": horizon, "family": family, "timeframe": timeframe, "symbol": symbol}, limit, offset)
 
+    def _day(col: str, day: str) -> list:
+        if not day:
+            return []
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
+            raise HTTPException(400, "day must be YYYY-MM-DD")
+        return [(f"substr({col},1,10) = ?", [day])]
+
     @api.get("/screening/signals")
     def screening_signals(horizon: str = "", symbol: str = "", decision: str = "", config_id: str = "", alloc_status: str = "",
-                          limit: int = 50, offset: int = 0):
-        return _page("signals", "bar_ts DESC, config_id", {"horizon": horizon, "symbol": symbol, "decision": decision, "config_id": config_id,
-                                                           "alloc_status": alloc_status}, limit, offset)
+                          day: str = "", reason: str = "", warmup: str = "", limit: int = 50, offset: int = 0):
+        """day: IST session (YYYY-MM-DD); reason: a recorded-reason category (metrics.CATEGORIES); warmup: 'only' / 'exclude'."""
+        from nseql.screening.metrics import category_sql
+        extra = _day("bar_ts", day)
+        if reason:
+            try:
+                extra.append(category_sql(reason))
+            except ValueError as e:
+                raise HTTPException(400, str(e)) from None
+        if warmup == "only":
+            extra.append(("alloc_reason LIKE ?", ["warm-up%"]))
+        elif warmup == "exclude":
+            extra.append(("COALESCE(alloc_reason, '') NOT LIKE ?", ["warm-up%"]))
+        try:
+            return clean(_need_screening().store.page("signals", where={"horizon": horizon, "symbol": symbol, "decision": decision, "config_id": config_id,
+                                                                       "alloc_status": alloc_status}, order="bar_ts DESC, config_id",
+                                                      limit=min(max(limit, 1), 500), offset=max(offset, 0), extra=extra))
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
 
     @api.get("/screening/orders")
-    def screening_orders(horizon: str = "", status: str = "", symbol: str = "", side: str = "", config_id: str = "", limit: int = 50, offset: int = 0):
-        return _page("paper_orders", "decided_at DESC, order_key", {"horizon": horizon, "status": status, "symbol": symbol, "side": side,
-                                                                    "config_id": config_id}, limit, offset)
+    def screening_orders(horizon: str = "", status: str = "", symbol: str = "", side: str = "", config_id: str = "", day: str = "",
+                         limit: int = 50, offset: int = 0):
+        return clean(_need_screening().store.page("paper_orders", where={"horizon": horizon, "status": status, "symbol": symbol, "side": side,
+                                                                          "config_id": config_id}, order="decided_at DESC, order_key",
+                                                  limit=min(max(limit, 1), 500), offset=max(offset, 0), extra=_day("decided_at", day)))
 
     news_desk: dict = {}
 
@@ -1604,8 +1644,10 @@ def create_app() -> FastAPI:
         return clean({"pulses": watch.pulses(min(max(limit, 1), 200)), "every_s": watch.pulse_every})
 
     @api.get("/screening/fills")
-    def screening_fills(symbol: str = "", side: str = "", config_id: str = "", order_key: str = "", limit: int = 50, offset: int = 0):
-        return _page("paper_fills", "ts DESC, fill_key", {"symbol": symbol, "side": side, "config_id": config_id, "order_key": order_key}, limit, offset)
+    def screening_fills(symbol: str = "", side: str = "", config_id: str = "", order_key: str = "", day: str = "", limit: int = 50, offset: int = 0):
+        return clean(_need_screening().store.page("paper_fills", where={"symbol": symbol, "side": side, "config_id": config_id, "order_key": order_key},
+                                                  order="ts DESC, fill_key", limit=min(max(limit, 1), 500), offset=max(offset, 0),
+                                                  extra=_day("ts", day)))
 
     @api.get("/screening/positions")
     def screening_positions():
@@ -1711,7 +1753,11 @@ def create_app() -> FastAPI:
                                               for t in sorted(rc, key=lambda t: str(t["exit_ts"]), reverse=True)[:12]]}
         except Exception as e:      # noqa: BLE001 - shown, never breaks the page
             charts["rca"] = {"error": f"{type(e).__name__}: {e}"}
-        start_cap = (screening.get("meta") or {}).get("original_capital") or (x.rules.capital if x.rules else None)
+        from nseql.screening.metrics import account_figures, session_decisions
+        meta_ = screening.get("meta") or {}
+        fig = account_figures(sch, meta_, day)
+        with sch.store._lock:
+            session = session_decisions(db, curve_day or day, meta_.get("live_from"))
         age = None
         if last:
             age = (datetime.now(views.IST).replace(tzinfo=None) - pd.Timestamp(last[0]).to_pydatetime()).total_seconds()
@@ -1728,17 +1774,20 @@ def create_app() -> FastAPI:
             bot = {"state": "ok", "message": f"Working: checked {int(last[1] or 0):,} strategies at {str(last[0])[11:16]}." if last else "Working: waiting for the first candle."}
         out.update({
             "bot": bot,
-            "account": {"starting_capital": start_cap, "value_now": snap["equity_inr"], "cash_free": round(snap["cash_inr"] - snap["reserved_inr"], 2),
-                        "invested": snap["gross_exposure_inr"], "since_start": round(snap["equity_inr"] - start_cap, 2) if start_cap else None,
-                        "today": round(snap["equity_inr"] - base, 2), "today_trades": today_n[0], "today_realised": today_n[1] / 100,
-                        "today_charges": today_n[2] / 100, "halted_today": snap["halted_today"]},
+            "account": {"starting_capital": fig["starting_capital"], "value_now": fig["equity_now"], "cash_free": fig["cash_free"],
+                        "invested": fig["invested"], "since_start": fig["pnl_since_start"], "return_since_start": fig["return_since_start"],
+                        "exposure": fig["exposure"], "day_open_equity": fig["day_open_equity"],
+                        "today": fig["pnl_today"], "today_trades": today_n[0], "today_realised": today_n[1] / 100,
+                        "today_charges": today_n[2] / 100, "halted_today": snap["halted_today"], "windows": fig["windows"]},
+            "session": session,
             "holdings": holdings_rows,
             "charts": charts,
             "recent_trades": [{"time": str(f["fill_ts"]).replace("T", " ")[:16], "action": "Bought" if f["side"] == "BUY" else "Sold", "symbol": f["symbol"],
                                "qty": f["qty"], "price": f["price"], "strategy": rule(f["config_id"]), "horizon": f["horizon"],
                                "profit": (f["realized_paise"] or 0) / 100 if f["side"] == "SELL" else None, "charges": (f["charges_paise"] or 0) / 100,
                                "config_id": f["config_id"]} for f in fills],
-            "signals_today": {"accepted": sig.get("accepted", 0), "not_taken": sig.get("deferred", 0) + sig.get("rejected", 0)},
+            "signals_today": {"accepted": session["accepted"], "eligible": session["eligible"], "warm_up": session["warm_up"],
+                              "deferred": session["deferred"], "rejected": session["rejected"]},
         })
         return clean(out)
 
@@ -1774,7 +1823,19 @@ def create_app() -> FastAPI:
                     out["replays"].append({"folder": p.parent.name, **json.loads(p.read_text())})
                 except (OSError, ValueError):
                     continue
-        out["how"] = "python -m nseql.cli contest --fixture  (synthetic, from a clean checkout); --dataset <id> for a historical replay"
+        rb = st.exp_dir / "robustness"
+        out["robustness"] = None
+        if rb.exists():
+            reps = sorted(rb.glob("*/report.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+            if reps:
+                try:
+                    r = json.loads(reps[0].read_text())
+                    out["robustness"] = {"folder": reps[0].parent.name, **{k: r[k] for k in ("kind", "kind_label", "sessions", "symbols", "challenger",
+                                                                                            "monte_carlo", "walk_forward", "sensitivity") if k in r}}
+                except (OSError, ValueError):
+                    pass
+        out["how"] = ("python -m nseql.cli contest --fixture  (synthetic, from a clean checkout); --dataset <id> for a historical replay; "
+                      "python -m nseql.cli robustness --fixture for the robustness checks")
         return clean(out)
 
     @api.get("/screening/portfolio")

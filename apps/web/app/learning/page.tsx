@@ -39,11 +39,18 @@ export default function Learning() {
   const lift = d?.kpis?.find((k: any) => k.key === "oos_lift");
   const learner = r?.arms?.[primary?.[0]];
   return (
-    <Page title="Learning Brain" sub="What the research system has learned, the evidence for it, which decisions it changed — and whether those changes improved results on data the system had not seen when it decided."
+    <Page title="AI Research Brain" sub="What the research system has learned, the evidence for it, which decisions it changed — and whether those changes improved results on data the system had not seen when it decided."
       right={<button className="primary" disabled={running} onClick={() => act(() => post("/brain/benchmark", { negative_control: true }), (j) => setJobId(j.id))}>{running ? "Benchmark running…" : "Run learning benchmark + negative control"}</button>}>
       <Err e={s.error || err} /><Loading on={s.loading} />
       {job && <Banner tone="info">Benchmark job <span className="mono">{job.id}</span>: <Badge s={job.status} /> {job.progress?.length ? `decision ${job.progress[job.progress.length - 1].epoch}/${job.progress[job.progress.length - 1].of}` : ""} {job.error}</Banner>}
       {d && <>
+        <section className="panel" style={{ marginBottom: 14 }} aria-labelledby="oos-h" data-testid="brain-oos">
+          <h2 id="oos-h">Measured out-of-sample result</h2>
+          {lift && lift.status !== "not measured" ? <p className="lede" style={{ margin: 0 }}>
+            Memory-informed research vs memory-free, on windows no arm had seen: <b className={lift.value > 0 ? "up" : "down"}>{fmtKpi("oos_lift", lift.value)}</b>
+            {" "}(memory-free {fmtKpi("oos_lift", lift.baseline)}) · <Badge s={lift.status} tone={statusTone(lift.status)} /></p>
+            : <p className="ink2" style={{ margin: 0 }}>Not measured yet: run the learning benchmark. Until then nothing here claims the system has learned anything.</p>}
+        </section>
         {!lift || lift.status === "not measured"
           ? <Banner>No learning benchmark has been run on this server yet. Nothing here claims the system has learned anything until one has.</Banner>
           : <Banner tone={lift.status === "met" ? "good" : "crit"}><b>{lift.status === "met" ? "Learning is supported by out-of-sample evidence." : "Learning is NOT demonstrated."}</b> {r?.verdict} (basis: {r?.verdict_basis}).
@@ -53,7 +60,7 @@ export default function Learning() {
           <Stat k="Champion policy" v={d.champion || "—"} h={`protocol v${d.protocol_version}`} />
           <Stat k="Episodes in memory" v={num(d.memory.episodes, 0)} h={`${d.memory.namespaces} namespaces`} />
           <Stat k="Memory chain" v={ver.data ? (ver.data.memory.ok ? "intact" : "BROKEN") : "…"} h="hash-chained, append-only" tone={ver.data?.memory.ok ? "up" : "down"} />
-          {r && <><Stat k="Configurations" v={num(r.protocol.universe, 0)} h={`${r.protocol.budget_per_decision} screened per decision`} />
+          {r && <><Stat k="Benchmark configurations" v={num(r.protocol.universe, 0)} h={`${r.protocol.budget_per_decision} screened per decision`} />
             <Stat k="Decision windows" v={r.protocol.epochs} h={`${r.protocol.first_decision} → ${r.protocol.last_window_end}`} />
             <Stat k="Screening throughput" v={r.evaluation.configs_per_second ? `${num(r.evaluation.configs_per_second, 0)}/s` : "cached"} h={`${r.evaluation.workers} workers`} /></>}
         </div>

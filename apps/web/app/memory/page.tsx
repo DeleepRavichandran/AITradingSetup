@@ -4,9 +4,11 @@ import { useState } from "react";
 import { Bars } from "@/components/charts";
 import { runCols } from "@/components/common";
 import { Badge, Card, DataTable, Err, KV, Loading, Page, Stat } from "@/components/ui";
+import { ResearchTrail, useCtx } from "@/components/trail";
 import { useApi } from "@/lib/api";
 
 export default function Memory() {
+  const ctx = useCtx();
   const m = useApi<any>("/research/memory", 10000);
   const ex = useApi<any[]>("/research/experiments", 10000);
   const [id, setId] = useState<string | null>(null);
@@ -15,6 +17,7 @@ export default function Memory() {
   const e = d.data?.experiment;
   return (
     <Page title="Experiment Memory" sub="The permanent record: every experiment, what it cost, what was concluded and what should be tried next. Hypothesis-generating agents read this memory — minus anything measured on the sealed window.">
+      <ResearchTrail here="/memory" ctx={ctx} />
       <Err e={m.error} /><Loading on={m.loading} />
       {m.data && <>
         <div className="stats" style={{ marginBottom: 14 }}>

@@ -3,6 +3,7 @@
    Paper (simulated) trading only. Technical detail lives on the other pages. */
 import Link from "next/link";
 import { Donut, LineChart, Ring } from "@/components/charts";
+import { SessionPanel, sessionState, whatHappened } from "@/components/session";
 import { Err, Prov, Skeleton } from "@/components/ui";
 import { inr, num, useApi } from "@/lib/api";
 
@@ -40,10 +41,10 @@ export default function Today() {
   const a = d?.account;
   return (
     <div style={{ maxWidth: 980 }}>
-      <div className="top"><h1>My trading</h1></div>
+      <div className="top"><h1>My Trading</h1></div>
       <p className="sub">Your practice account, in plain words. Every trade here uses pretend money (paper trading); where the prices come from is shown next to the light below.</p>
       <Err e={t.error} />
-      {!d && !t.error && <Skeleton lines={4} />}
+      {!d && !t.error && <><p className="banner info" role="status" data-testid="today-connecting">Connecting to the lab…</p><Skeleton lines={4} /></>}
       {d && <>
         <section className="panel" style={{ marginBottom: 14, flexDirection: "row", alignItems: "center", gap: 14 }} aria-live="polite" data-testid="bot-light">
           <span aria-hidden="true" style={{ width: 18, height: 18, borderRadius: "50%", background: color, boxShadow: `0 0 0 6px color-mix(in srgb, ${color} 20%, transparent)`, flex: "none" }} />
@@ -56,10 +57,11 @@ export default function Today() {
           <H id="money-h" icon="wallet" color="var(--s3)">Your money</H>
           <div className="metrics">
             <div className="metric"><div className="k">Account value now</div><div className="v">{inr(a.value_now)}</div><div className="h">started with {inr(a.starting_capital)}</div></div>
-            <div className="metric"><div className="k">Today</div><div className={`v ${tone(a.today)}`}>{signed(a.today)}</div><div className="h">{a.today_trades} trade{a.today_trades === 1 ? "" : "s"} · charges {inr(a.today_charges)}</div></div>
-            <div className="metric"><div className="k">Since the start</div><div className={`v ${tone(a.since_start)}`}>{signed(a.since_start)}</div></div>
+            <div className="metric" title={a.windows?.pnl_today}><div className="k">P&amp;L today</div><div className={`v ${tone(a.today)}`} data-testid="today-pnl">{signed(a.today)}</div><div className="h">{a.today_trades} trade{a.today_trades === 1 ? "" : "s"} · charges {inr(a.today_charges)}</div></div>
+            <div className="metric" title={a.windows?.pnl_since_start}><div className="k">Since the start</div><div className={`v ${tone(a.since_start)}`} data-testid="since-pnl">{signed(a.since_start)}</div><div className="h">from {inr(a.starting_capital)}</div></div>
             <div className="metric"><div className="k">Free cash</div><div className="v">{inr(a.cash_free)}</div><div className="h">{inr(a.invested)} in stocks</div></div>
           </div>
+          <p className="ink2" style={{ margin: "10px 0 0" }} data-testid="today-what"><b>{sessionState(d, t.error).label}.</b> {whatHappened(d)}</p>
           {a.halted_today && <p className="down" style={{ marginTop: 10 }}>Today's loss limit was reached, so the bot stopped buying for the rest of the day. It can still sell.</p>}
         </section>}
 
@@ -76,7 +78,7 @@ export default function Today() {
                 <div className="dim" style={{ fontSize: 13 }}>{h.rule} · {h.horizon === "intraday" ? "sold by 3:15 PM today" : "can be held overnight"}{h.exit_pending ? " · selling now" : ""}</div>
                 <div className="dim" style={{ fontSize: 13 }}>Safety stop at {inr(h.stop_price, 2)}</div>
               </Link>))}
-          </div> : <p className="ink2" style={{ margin: 0 }}>Nothing right now. The bot buys only when a strategy's rule is met and the safety limits allow it.</p>}
+          </div> : <p className="ink2" style={{ margin: 0 }}>Nothing right now. The bot buys only when a strategy's rule is met and the portfolio limits allow it.</p>}
         </section>}
 
         {d.started && <section className="panel" style={{ marginBottom: 14 }} aria-labelledby="trades-h">
@@ -89,8 +91,8 @@ export default function Today() {
               <div className="d">Strategy: {x.strategy} ({x.horizon}) · charges {inr(x.charges, 2)}</div>
             </li>))}</ul>
             : <p className="ink2" style={{ margin: 0 }}>No trades yet today.</p>}
-          <p className="dim" style={{ fontSize: 13, marginTop: 10 }}>Today the strategies wanted to buy {num(d.signals_today.accepted + d.signals_today.not_taken, 0)} times; {num(d.signals_today.accepted, 0)} got money,
-            the rest were skipped by the safety limits (₹ per trade, per stock and daily loss).</p>
+          <details style={{ marginTop: 10 }} data-testid="today-session"><summary>Why buys were or were not taken this session</summary>
+            <SessionPanel s={d.session} /></details>
         </section>}
 
         <p className="dim" style={{ fontSize: 13 }}>Want the details? <Link href="/screening">every decision and fill</Link> · <Link href="/universe">which strategies work</Link> · <Link href="/">Command Center</Link> · ask Vega with Ctrl K.

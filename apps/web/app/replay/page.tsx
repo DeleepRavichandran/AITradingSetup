@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { Candles } from "@/components/charts";
+import { ResearchTrail } from "@/components/trail";
 import { Badge, Card, DataTable, Err, KV, Page, Synthetic } from "@/components/ui";
 import { num, useApi, useQuery } from "@/lib/api";
 
@@ -18,6 +19,7 @@ export default function Replay() {
   return (
     <Page title="Trade Replay" sub="One trade at a time: the bars around it, the order that was placed, the fills it received, the engine events and the exact cash-ledger lines. Markers sit on the bar where each fill happened."
       right={<select aria-label="Backtest run" value={rid || ""} onChange={(e) => { setRun(e.target.value); setI(0); }}>{withFiles.map((r) => <option key={r.run_id} value={r.run_id}>{r.run_id} · {r.strategy} · {r.metrics.trades} trades</option>)}</select>}>
+      <ResearchTrail here="/replay" ctx={{ run: rid, strategy: (runs.data || []).find((r) => r.run_id === rid)?.strategy }} />
       <Err e={trades.error || rp.error} />
       {!rid && <div className="empty">No runs with trades yet. Run a backtest first.</div>}
       {d && t && <>

@@ -42,7 +42,7 @@ export default function Copilot({ onClose, page }: { onClose: () => void; page: 
       <div className="drawer" role="dialog" aria-modal="true" aria-labelledby="vega-h" data-testid="copilot">
         <header>
           <h2 id="vega-h" style={{ margin: 0 }}>Vega</h2>
-          <span className="dim" style={{ fontSize: 13 }}>answers from the lab's records</span>
+          <span className="dim" style={{ fontSize: 13 }}>global assistant · answers from platform-wide records (for one backtest run, use Analyst Chat)</span>
           <span style={{ flex: 1 }} />
           <button className="ghost" onClick={onClose} aria-label="Close Vega">Close</button>
         </header>
@@ -50,7 +50,7 @@ export default function Copilot({ onClose, page }: { onClose: () => void; page: 
           {!turns.length && <>
             <p className="ink2" style={{ margin: 0 }}>Ask about strategies, research, the paper portfolio or the data feed. Every answer cites what it read and what it did not.</p>
             <div className="sugg">{sugg.map((s) => <button key={s} onClick={() => ask(s)}>{s}</button>)}</div>
-            <p className="dim" style={{ fontSize: 13, margin: 0 }}>Voice and actions (with confirmation) are on the <Link href="/deck" onClick={onClose}>Vega page</Link>.</p>
+            <p className="dim" style={{ fontSize: 13, margin: 0 }}>Voice and actions (with confirmation) are on the <Link href="/deck" onClick={onClose}>Vega Deck</Link>.</p>
           </>}
           {turns.map((t, i) => (
             <div className="qa" key={i}>

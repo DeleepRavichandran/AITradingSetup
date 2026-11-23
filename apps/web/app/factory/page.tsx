@@ -3,11 +3,13 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { runCols } from "@/components/common";
 import { Badge, Card, DataTable, Err, KV, Loading, Page } from "@/components/ui";
+import { ResearchTrail, useCtx } from "@/components/trail";
 import { num, pct, useApi, useQuery } from "@/lib/api";
 
 const pick = (arts: any[], t: string) => arts?.filter((a) => a.type === t).slice(-1)[0]?.payload;
 
 export default function Factory() {
+  const ctx = useCtx();
   const q = useQuery();
   const hs = useApi<any[]>("/research/hypotheses", 8000);
   const lib = useApi<any>("/strategies");
@@ -21,6 +23,7 @@ export default function Factory() {
     risk = pick(d.data?.artifacts, "RiskReport"), ready = pick(d.data?.artifacts, "ReadinessReport");
   return (
     <Page title="Strategy Factory" sub="Every hypothesis the team has proposed, with its declarative spec, the code generated from it, the evidence gathered, the independent audit and the decision. Nothing is deleted — failures are part of the record.">
+      <ResearchTrail here="/factory" ctx={ctx} />
       <Err e={hs.error} /><Loading on={hs.loading} />
       <Card title={`Hypotheses (${real.length})`}>
         <DataTable onRow={(r) => setId(r.id)} selected={(r) => r.id === hid} maxHeight={260} cols={[{ key: "id", f: (r) => <span className="mono">{r.id}</span> }, { key: "family" },

@@ -4,19 +4,12 @@ import { usePathname } from "next/navigation";
 import React, { useCallback, useEffect, useState } from "react";
 import { api, post, setToken, useApi } from "@/lib/api";
 import Copilot from "./Copilot";
+import { NAV } from "@/lib/nav";
 import { provKind } from "./ui";
 
-/* Workspaces: only pages that exist and work are listed. Planned workspaces without a working journey are
+/* Workspaces (lib/nav.ts): only pages that exist and work are listed. Planned workspaces without a working journey are
    tracked in docs/AUDIT_V6.md, not shown as empty pages. */
-const NAV: [string, [string, string][]][] = [
-  ["Overview", [["/today", "My trading (simple)"], ["/hud", "Mission control"], ["/", "Command Center"], ["/deck", "Vega"], ["/market", "Market Intelligence"], ["/data", "Data Quality"]]],
-  ["Strategies", [["/universe", "Strategy Universe"], ["/contest", "Incumbent vs Challenger"], ["/screening", "Intraday & Swing Lab"], ["/factory", "Strategy Factory"], ["/code", "Strategy Code"],
-    ["/backtest", "Backtesting Studio"], ["/walkforward", "Walk-Forward"], ["/compare", "Comparison"], ["/replay", "Trade Replay"]]],
-  ["AI research", [["/learning", "AI Research Brain"], ["/agents", "Research Agents"], ["/memory", "Experiment Memory"], ["/chat", "Analyst Chat"]]],
-  ["Portfolio & trading", [["/portfolio", "Portfolio Intelligence"], ["/paper", "Paper Trading"], ["/risk", "Risk Control"], ["/brokers", "Broker Connections"]]],
-  ["Investing", [["/funds", "Mutual Funds"], ["/planner", "SIP & Goal Planner"]]],
-  ["Operations", [["/system", "Operations"], ["/settings", "Configuration & Audit"]]],
-];
+
 
 function Login({ onDone }: { onDone: () => void }) {
   const [t, setT] = useState("");
@@ -86,18 +79,22 @@ export default function Shell({ children }: { children: React.ReactNode }) {
       <header className="strip" aria-label="Platform status">
         <button className="menu" onClick={() => setOpen(!open)} aria-expanded={open} aria-label="Open navigation">Menu</button>
         <div className="chips">
-        {ps.error && <span className="chip crit"><i />API unreachable</span>}
+        {ps.error && <span className="chip crit" data-testid="strip-conn"><i />✕ API offline</span>}
+        {!s && !ps.error && <span className="chip info" data-testid="strip-conn"><i />Connecting…</span>}
         {s && <>
-          <span className={`chip ${k.q === "live" ? "good" : k.q === "synthetic" || k.q === "unverified" ? "warn" : "info"}`} title={ds?.label} data-testid="strip-data"><i />{ds?.label}</span>
+          <span className={`chip ${s.live_trading_enabled ? "crit" : "good"}`} data-testid="strip-mode"><i />{s.live_trading_enabled ? "▲ Live flag ON" : "◆ Paper mode · real orders off"}</span>
           <span className={`chip ${s.market.open ? "good" : "info"}`} title={`IST ${s.market.ist_time}`}><i />Market {s.market.state}</span>
-          <span className={`chip ${kill ? "crit" : "good"}`} data-testid="strip-kill"><i />{kill ? "Kill switch engaged" : "Kill switch clear"}</span>
-          <span className={`chip ${s.live_trading_enabled ? "crit" : "good"}`}><i />{s.live_trading_enabled ? "Live flag ON" : "Live orders off"}</span>
-          {s.modules.attention.length > 0 && <Link href="/" className="chip warn"><i />{s.modules.attention.length} module{s.modules.attention.length > 1 ? "s" : ""} need attention</Link>}
+          <span className="chip info" data-testid="strip-candle" title="last completed 1-minute candle processed by the bot">
+            <i />{s.last_candle ? `Last candle ${String(s.last_candle).slice(11, 16)} IST ${String(s.last_candle).slice(8, 10)}/${String(s.last_candle).slice(5, 7)}` : "No candle processed"}</span>
+          <span className={`chip ${k.q === "live" ? "good" : k.q === "synthetic" || k.q === "unverified" ? "warn" : "info"}`} title={ds?.label} data-testid="strip-data">
+            <i />{k.q === "live" ? "✓ " : k.q === "synthetic" ? "◇ " : k.q === "unverified" ? "! " : ""}{ds?.label}</span>
+          <span className={`chip ${kill ? "crit" : "good"}`} data-testid="strip-kill"><i />{kill ? "■ Kill switch engaged" : "Kill switch clear"}</span>
+          {s.modules.attention.length > 0 && <Link href="/" className="chip warn"><i />! {s.modules.attention.length} module{s.modules.attention.length > 1 ? "s" : ""} need attention</Link>}
         </>}
         </div>
         <div className="acts">
         <button className="ghost theme" onClick={flip} aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}>{theme === "dark" ? "Light" : "Dark"}</button>
-        <button onClick={() => setVega(true)} aria-haspopup="dialog" data-testid="open-vega">Ask Vega <span className="dim kbd">Ctrl K</span></button>
+        <button onClick={() => setVega(true)} aria-haspopup="dialog" data-testid="open-vega" title="Vega: the global assistant; answers from platform-wide records">Ask Vega <span className="dim kbd">Ctrl K</span></button>
         {path !== "/deck" && <button className="estop" onClick={estop} disabled={!s || kill || viewer} data-testid="strip-estop"
           title={viewer ? "Read-only token: the operator token is needed" : "Halts all paper trading at once; no confirmation"}>{kill ? "Halted" : "Emergency stop"}</button>}
         </div>

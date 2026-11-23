@@ -40,6 +40,8 @@ export default function Planner() {
     <>
       <div className="top"><h1>SIP &amp; Goal Planner</h1></div>
       <p className="sub">Plan SIPs, step-up SIPs, lump sums, withdrawals (SWP) and transfers (STP) at a return you choose. For what a real fund actually delivered, use a fund's NAV history on <Link href="/funds">Mutual Funds</Link>.</p>
+      <p className="ink2" style={{ margin: "0 0 10px" }} data-testid="planner-kind"><span className="badge warn">Assumed-return projection</span>{" "}
+        These figures use a constant return you choose. What a SIP actually delivered on imported NAVs is on <a href="/funds">Mutual Funds</a>.</p>
       <Banner tone="info"><b>Projections, not forecasts.</b> A constant assumed return never happens in practice; real returns vary year to year and can be negative. Taxes and exit loads are not included.</Banner>
       <div style={{ marginBottom: 14 }}>
         <Segmented label="Plan type" value={mode} onChange={(m) => setMode(m)} options={[["goal", "Goal"], ["sip", "SIP / step-up SIP"], ["lumpsum", "Lump sum"], ["swp", "SWP"], ["stp", "STP"]]} />

@@ -121,7 +121,14 @@ def account_metrics(sch: MinuteScheduler, capital: float, sessions: list[str]) -
     o = o[o.fill_ts.fillna("").str[:10].isin(sessions) | o.status.isin(["rejected", "cancelled"])]
     filled = o[o.status.isin(["filled", "partial"])]
     value = float((filled.qty * filled.price).sum())
-    refused = int(db.execute("SELECT COALESCE(SUM(n),0) FROM refusals").fetchone()[0])
+    from nseql.screening.metrics import session_decisions
+    dec = {"warm_up": 0, "eligible": 0, "accepted": 0, "deferred": 0, "rejected": 0, "rejected_by_category": {}}
+    for d in sessions:                                     # same sessions as every other measure; recorded reasons only
+        x = session_decisions(db, d, sch.live_from)
+        for k in ("warm_up", "eligible", "accepted", "deferred", "rejected"):
+            dec[k] += x[k]
+        for k, v in x["rejected_by_category"].items():
+            dec["rejected_by_category"][k] = dec["rejected_by_category"].get(k, 0) + v
     sells = filled[filled.side == "SELL"]
     exposure = float(((cyc.equity_inr - cyc.cash_inr) / cyc.equity_inr).clip(lower=0).mean()) if len(cyc) else 0.0
     # positions an intraday strategy still held after the session (liquidity prevented the square-off)
@@ -139,7 +146,7 @@ def account_metrics(sch: MinuteScheduler, capital: float, sessions: list[str]) -
             "turnover": round(value / max(start, 1), 4), "charges_inr": round(float(filled.charges_paise.sum()) / 100, 2),
             "trades_closed": int(len(sells)), "fills": int(len(filled)), "exposure_avg": round(exposure, 4),
             "orders_partial": int((o.status == "partial").sum()), "orders_cancelled_or_rejected": int(o.status.isin(["cancelled", "rejected"]).sum()),
-            "buys_refused_by_limits": refused, "residual_positions": resid}
+            "buy_decisions": dec, "buys_refused_by_limits": dec["rejected"], "residual_positions": resid}
 
 
 def block_bootstrap(d: np.ndarray, cfg: dict = BOOTSTRAP) -> dict:

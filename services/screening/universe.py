@@ -83,7 +83,9 @@ def frame(sch) -> pd.DataFrame:
     with sch.store._lock:
         real = dict(db.execute("SELECT config_id, SUM(realized_paise) FROM paper_orders WHERE side='SELL' GROUP BY config_id").fetchall())
         chg = dict(db.execute("SELECT config_id, SUM(charges_paise) FROM paper_orders GROUP BY config_id").fetchall())
-        buys = dict(db.execute("SELECT config_id, COUNT(*) FROM signals WHERE decision='BUY' GROUP BY config_id").fetchall())
+        buys = dict(db.execute("SELECT config_id, COUNT(*) FROM signals WHERE decision='BUY' AND COALESCE(alloc_reason,'') NOT LIKE 'warm-up%' "
+                               "GROUP BY config_id").fetchall())
+        here = dict(db.execute("SELECT config_id, COUNT(*) FROM paper_orders WHERE side='SELL' AND status IN ('filled','partial') GROUP BY config_id").fetchall())
         acc = dict(db.execute("SELECT config_id, COUNT(*) FROM signals WHERE decision='BUY' AND alloc_status='accepted' GROUP BY config_id").fetchall())
     static = _static(r)
     ids = static["id"]
@@ -96,7 +98,7 @@ def frame(sch) -> pd.DataFrame:
         "mean_net_bps": mean * 1e4, "shrunk_bps": est["mu"] * 1e4, "confidence": est["confidence"],
         "stage": [STAGES[k] for k in stage], "position": np.where(e.pos == 1, "open", np.where(e.pend != 0, "working", "flat")),
         "realised_inr": _lookup(ids, real, 100), "charges_inr": _lookup(ids, chg, 100),
-        "buy_signals": _lookup(ids, buys), "accepted": _lookup(ids, acc),
+        "buy_signals": _lookup(ids, buys), "accepted": _lookup(ids, acc), "trades_here": _lookup(ids, here),
     })
     _cache.update(key=key, df=df)
     return df
@@ -145,12 +147,26 @@ def summary(sch, research_registry=None) -> dict:
         "by_stage": {s: int((df.stage == s).sum()) for s in STAGES},
         "by_horizon": df.horizon.value_counts().to_dict(), "by_timeframe": df.timeframe.value_counts().to_dict(),
         "map": cells, "return_distribution": hist, "research": research,
-        "funnel": [{"stage": "registered", "n": len(df)}, {"stage": "evaluated", "n": int((df.evaluations > 0).sum())},
-                   {"stage": "signalled", "n": int((df.buy_signals > 0).sum())}, {"stage": "allocated capital", "n": int((df.accepted > 0).sum())},
-                   {"stage": "completed a trade", "n": len(traded)}, {"stage": "qualified", "n": int((df.stage == "qualified").sum())}],
+        # one population and period: this account's own ledger, since it started (warm-up signals excluded)
+        "funnel": [{"stage": "registered", "n": len(df)}, {"stage": "evaluated (incl. warm-up history)", "n": int((df.evaluations > 0).sum())},
+                   {"stage": "paper BUY signal", "n": int((df.buy_signals > 0).sum())}, {"stage": "allocated capital", "n": int((df.accepted > 0).sum())},
+                   {"stage": "completed a trade in this account", "n": int((df.trades_here > 0).sum())}],
+        "funnel_note": "configurations of this account, counted on its own ledger since it started; warm-up signals excluded",
+        # a different population: the evidence book, which includes round trips inherited from earlier accounts of the series
+        "evidence": {"with_forward_evidence": len(traded), "qualified": int((df.stage == "qualified").sum()),
+                     "note": "configurations with completed round trips in the evidence book (this account plus any evidence it inherited); "
+                             "not a stage of the funnel above"},
+        "period": _period(sch),
         "stages_help": __doc__.split("Validation stages")[1].split("A \"configuration\"")[0].strip(),
         "compute_ms": round((time.perf_counter() - t0) * 1000, 1),
     }
+
+
+def _period(sch) -> dict:
+    """The window the map's evidence covers: this account's processed minutes (warm-up excluded)."""
+    with sch.store._lock:
+        a, b = sch.store.db.execute("SELECT MIN(minute), MAX(minute) FROM cycles WHERE status='processed' AND mode != 'warmup'").fetchone()
+    return {"from": a, "to": b, "note": "this account's processed minutes; evidence inherited from earlier accounts is older"}
 
 
 def page(sch, *, family="", timeframe="", horizon="", symbol="", stage="", q="", sort="trades", desc=True, limit=100, offset=0) -> dict:

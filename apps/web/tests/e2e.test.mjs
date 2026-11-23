@@ -36,7 +36,7 @@ const DENY = `
   navigator.mediaDevices.getUserMedia = () => Promise.reject(new DOMException("denied", "NotAllowedError"));
 `;
 
-async function open(path, { deny = false, consent = true, viewport = { width: 1280, height: 900 }, colorScheme = "light" } = {}) {
+async function open(path, { deny = false, consent = true, viewport = { width: 1280, height: 900 }, colorScheme = "light", override = {} } = {}) {
   const state = { kill: false, posts: [] };
   const ctx = await browser.newContext({ viewport, colorScheme, permissions: deny ? [] : ["camera", "microphone"] });
   await ctx.addInitScript(FAKE_SPEECH + (deny ? DENY : "") + (consent ? "" : "try { localStorage.removeItem('nseql_voice_consent'); } catch {}"));
@@ -49,6 +49,8 @@ async function open(path, { deny = false, consent = true, viewport = { width: 12
       if (p === "/risk/kill") state.kill = true;
       return route.fulfill({ json: { ok: true, id: "job-1", answer: "fixture answer" } });
     }
+    if (override[p] === "hang") return;                                         // never answers: the page must say "Connecting"
+    if (override[p]) { const o = override[p](fx); return route.fulfill(o.status ? o : { json: o }); }
     const h = resolve(fx, p);
     return h ? route.fulfill({ json: h() }) : route.fulfill({ status: 404, json: { detail: `no fixture for ${p}` } });
   });
@@ -276,8 +278,128 @@ describe("Accessibility and layout", () => {
     await page.getByTestId("hud-source").getByText("Live 1-minute candles (adapter not verified)").waitFor();
     await page.getByTestId("hud-breadth").getByText("12 up").waitFor();
     await page.getByTestId("hud-contest").getByText("The forward contest starts with live screening.").waitFor();
-    await page.getByTestId("hud-stream").getByText("RBI keeps repo rate unchanged").waitFor();
+    await page.getByTestId("hud-news").getByText("RBI keeps repo rate unchanged").waitFor();
     await page.getByTestId("hud-stream").getByText(/ITC: Lost 40.50 INR/).waitFor();
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  });
+
+  test("Mission Control: first screen answers value, P&L today, since inception, exposure and what happened", async () => {
+    const { page, ctx, errors } = await open("/hud");
+    await page.getByTestId("kpi-value").getByText("₹99,820").waitFor();
+    await page.getByTestId("kpi-today").getByText("−₹180").waitFor();
+    await page.getByTestId("kpi-since").getByText("−₹180").waitFor();
+    await page.getByTestId("kpi-exposure").getByText("4.8%").waitFor();
+    await page.getByTestId("hud-what").getByText(/44 eligible BUY signals, 3 accepted, 3 orders, 5 fills; the most common refusal was churn limits \(20\)/).waitFor();
+    await page.getByTestId("hud-session").getByText("Warm-up history (not tradable)").waitFor();
+    // trading events come before general headlines
+    const tr = await page.getByTestId("hud-stream").boundingBox(), nw = await page.getByTestId("hud-news").boundingBox();
+    assert.ok(tr && nw && tr.y < nw.y);
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  });
+
+  test("Drill-down: a session count opens the ledger with matching filters, and Back keeps them", async () => {
+    const { page, ctx, errors } = await open("/hud");
+    await page.getByRole("link", { name: /refused: churn limits: 20 - open the ledger/ }).click();
+    await page.waitForURL(/\/screening\?/);
+    const u = new URL(page.url());
+    assert.equal(u.searchParams.get("day"), "2026-11-23");
+    assert.equal(u.searchParams.get("status"), "rejected");
+    assert.equal(u.searchParams.get("reason"), "churn limits");
+    assert.equal(u.searchParams.get("decision"), "BUY");
+    await page.getByTestId("ledger-filters").getByText("reason: churn limits").waitFor();
+    await page.getByRole("link", { name: "Strategy Universe" }).click();
+    await page.waitForURL(/\/universe/);
+    await page.goBack();
+    await page.waitForURL(/reason=churn/);
+    await page.getByTestId("ledger-filters").getByText("session 2026-11-23").waitFor();
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  });
+
+  test("Zero-trade session: one explained card with the last candle and an example decision", async () => {
+    const zero = (fx) => { const t = fx["/today"](); return { ...t, market: { open: false, state: "closed for the day" }, charts: { ...t.charts, equity_curve: [], rca: { won: 0, lost: 0, by_cause: [], latest: [] } },
+      session: { ...t.session, accepted: 0, orders: 0, fills: 0, buy_fills: 0, sell_fills: 0, last_processed_minute: "2026-11-23T15:30:00" } }; };
+    const { page, ctx, errors } = await open("/hud", { override: { "/today": zero } });
+    await page.getByTestId("hud-state").getByText("No trades this session").waitFor();
+    await page.getByTestId("hud-no-trades").getByText(/last candle 15:30 IST: no trades\. 44 eligible BUY signals; none became a fill\. Most were refused by churn limits \(20\)/).waitFor();
+    assert.equal(await page.getByTestId("hud-curve").count(), 0);                // no redundant empty chart
+    await page.getByRole("link", { name: "Open an example decision in the ledger" }).click();
+    await page.waitForURL(/status=rejected/);
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  });
+
+  test("Loading versus offline: Connecting until the API answers, Lab offline when it fails", async () => {
+    const a = await open("/hud", { override: { "/today": "hang" } });
+    await a.page.getByTestId("hud-state").getByText("Connecting").waitFor();
+    await a.ctx.close();
+    const b = await open("/today", { override: { "/today": "hang" } });
+    await b.page.getByTestId("today-connecting").waitFor();
+    await b.ctx.close();
+    const c = await open("/hud", { override: { "/today": () => ({ status: 503, json: { detail: "down" } }) } });
+    await c.page.getByTestId("hud-state").getByText("Lab offline").waitFor();
+    await c.ctx.close();
+  });
+
+  test("Sidebar names and page headings are the same for every workspace", async () => {
+    const { NAV: nav } = await import("../lib/nav.ts");
+    const { page, ctx } = await open("/");
+    for (const [, items] of nav) for (const [href, label] of items) {
+      await page.goto(BASE + href);
+      await page.getByRole("heading", { level: 1, name: label, exact: true }).waitFor({ timeout: 15000 });
+    }
+    await ctx.close();
+  });
+
+  test("Journey: open a dossier from a filtered heatmap, go to the ledger, return with filters intact", async () => {
+    const { page, ctx, errors } = await open("/universe");
+    const cell = page.locator(".matrix .cell").first();
+    await cell.waitFor();
+    await cell.click();
+    await page.waitForURL(/family=.*timeframe=/);
+    const filtered = new URL(page.url());
+    await page.getByRole("button", { name: /Clear map filter/ }).waitFor();
+    await page.locator(".vt-row, [role=row]").nth(1).click().catch(() => {});
+    if (!(await page.getByTestId("dossier").count())) await page.goto(BASE + `/universe?${filtered.searchParams}&config=0123456789abcdef`);
+    await page.getByTestId("dossier").waitFor();
+    await page.getByRole("link", { name: "Open in ledger" }).click();
+    await page.waitForURL(/\/screening\?.*config=/);
+    await page.getByTestId("ledger-filters").getByText(/configuration/).waitFor();
+    await page.goBack();
+    await page.waitForURL(/\/universe/);
+    const back = new URL(page.url());
+    assert.equal(back.searchParams.get("family"), filtered.searchParams.get("family"));
+    assert.equal(back.searchParams.get("timeframe"), filtered.searchParams.get("timeframe"));
+    await page.getByRole("button", { name: /Clear map filter/ }).waitFor();
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  });
+
+  test("Journey: trace a backtest result to its dataset and an individual replayed fill", async () => {
+    const { page, ctx, errors } = await open("/backtest?run=R1");
+    await page.getByTestId("run-context").getByText("synthetic_v1").waitFor();
+    await page.getByTestId("run-context").getByText("2023-01-02 → 2023-03-31").waitFor();
+    await page.getByTestId("research-trail").getByText(/run R1/).waitFor();
+    assert.equal(await page.getByTestId("run-context").getByRole("link", { name: "synthetic_v1" }).getAttribute("href"), "/data?dataset=synthetic_v1");
+    await page.getByText("AAA").first().click();
+    await page.waitForURL(/\/replay\?run=R1&trade=0/);
+    await page.getByText("Fills and charges").waitFor();
+    await page.getByText("100.05").first().waitFor();
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  });
+
+  test("Journey: explain a zero-trade session from the ledger (My Trading)", async () => {
+    const zero = (fx) => { const t = fx["/today"](); return { ...t, market: { open: false, state: "closed for the day" },
+      session: { ...t.session, accepted: 0, orders: 0, fills: 0, last_processed_minute: "2026-11-23T15:30:00" } }; };
+    const { page, ctx, errors } = await open("/today", { override: { "/today": zero } });
+    await page.getByTestId("today-what").getByText(/No trades this session\..*Most were refused by churn limits \(20\)/).waitFor();
+    await page.getByTestId("today-session").locator("summary").click();
+    await page.getByRole("link", { name: /refused: size or liquidity: 15 - open the ledger/ }).click();
+    await page.waitForURL(/reason=size\+or\+liquidity/);
+    await page.getByTestId("ledger-filters").getByText("reason: size or liquidity").waitFor();
     assert.deepEqual(errors, []);
     await ctx.close();
   });
@@ -292,6 +414,9 @@ describe("Accessibility and layout", () => {
     await page.getByTestId("both-lost").waitFor();
     for (const id of ["contest-equity", "contest-drawdown", "contest-table"]) await page.getByTestId(id).waitFor();
     await page.getByTestId("contest-table").getByText("−₹1,900").waitFor();
+    await page.getByTestId("rb-mc").getByText("Sequence risk.").waitFor();
+    await page.getByTestId("rb-wf").getByText("memory, not edge").waitFor();
+    await page.getByTestId("rb-sv").getByText("no edge to test").waitFor();
     assert.deepEqual(errors, []);
     await ctx.close();
   });
@@ -326,7 +451,7 @@ describe("Accessibility and layout", () => {
     await page.waitForFunction(() => true);
     await new Promise((r) => setTimeout(r, 400));
     assert.ok(seen.some((u) => u.includes("family=rsi") && u.includes("timeframe=5m")), "map click becomes a server-side filter");
-    await page.getByTestId("vtable").getByText("0123456789abcdef").click();
+    await page.getByTestId("vtable").getByTitle("0123456789abcdef", { exact: true }).click();
     await page.getByTestId("dossier").waitFor();
     await page.getByTestId("dossier").getByText("All evidence comes from SYNTHETIC data").waitFor();
     assert.ok(page.url().includes("config=0123456789abcdef"), "dossier is linkable");

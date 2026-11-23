@@ -117,3 +117,29 @@ def test_replay_needs_minute_bars(boot):
     c = boot()
     r = c.post("/api/screening/replay", json={"dataset_id": "nope"})
     assert r.status_code in (400, 404)
+
+
+def test_ledger_drill_down_filters_match_the_session_counts(boot):
+    """Mission Control / My Trading counts open the ledger with day, status and reason filters; the filtered ledger must
+    contain exactly the rows the count describes."""
+    from nseql.screening.metrics import reason_category
+    c = boot()
+    j = _wait(c, c.post("/api/screening/replay", json={"sessions": 2, "configs": 300}).json()["id"])
+    assert j["status"] == "done", j
+    days = sorted({r["bar_ts"][:10] for r in c.get("/api/screening/signals?decision=BUY&limit=500").json()["rows"]})
+    day = days[-1]
+    rows = c.get(f"/api/screening/signals?decision=BUY&day={day}&limit=500").json()
+    assert rows["total"] > 0 and all(r["bar_ts"].startswith(day) for r in rows["rows"])
+    rej = [r for r in rows["rows"] if r["alloc_status"] == "rejected"]
+    if rej:
+        cat = reason_category(rej[0]["alloc_reason"])
+        f = c.get("/api/screening/signals", params={"decision": "BUY", "day": day, "status": "rejected", "alloc_status": "rejected",
+                                                    "reason": cat, "limit": 500}).json()
+        all_rej = c.get(f"/api/screening/signals?decision=BUY&day={day}&alloc_status=rejected&limit=1").json()["total"]
+        assert 0 < f["total"] <= all_rej and all(reason_category(r["alloc_reason"]) == cat and r["bar_ts"].startswith(day) for r in f["rows"])
+    assert c.get("/api/screening/signals?day=2026/11/23").status_code == 400
+    assert c.get("/api/screening/signals?reason=nonsense").status_code == 400
+    w = c.get(f"/api/screening/signals?decision=BUY&day={day}&warmup=exclude&limit=500").json()
+    assert all(not (r["alloc_reason"] or "").startswith("warm-up") for r in w["rows"])
+    o = c.get(f"/api/screening/orders?day={day}&limit=500").json()
+    assert all(r["decided_at"].startswith(day) for r in o["rows"])

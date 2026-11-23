@@ -4,6 +4,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { LineChart } from "@/components/charts";
+import { SessionPanel, sessionState, whatHappened } from "@/components/session";
 import { inr, useApi } from "@/lib/api";
 import s from "./hud.module.css";
 
@@ -43,21 +44,38 @@ export default function MissionControl() {
   const fw = k.data?.forward && !k.data.forward.error ? k.data.forward : null;
   const pulse = p.data?.pulses?.[0];
   const curve = ch?.equity_curve || [];
-  const events = [
-    ...((ch?.rca?.latest || []) as any[]).map((r) => ({ time: r.time, text: `${r.symbol}: ${r.summary}`, tone: r.outcome === "won" ? s.up : s.down })),
-    ...((n.data?.items || []) as any[]).slice(0, 6).map((h) => ({ time: String(h.first_seen || "").slice(11, 16), text: h.title, tone: s.dim })),
-  ].sort((x, y) => (y.time > x.time ? 1 : -1)).slice(0, 14);
+  const trades = ((ch?.rca?.latest || []) as any[]).map((r) => ({ time: r.time, text: `${r.symbol}: ${r.summary}`, tone: r.outcome === "won" ? s.up : s.down }));
+  const heads = ((n.data?.items || []) as any[]).slice(0, 8).map((h) => ({ time: String(h.first_seen || "").slice(11, 16), text: h.title }));
 
   return (
     <div className={s.deck}>
       <div className={s.top}>
-        <h1 className={s.title}>Mission <span>control</span></h1>
+        <h1 className={s.title}>Mission <span>Control</span></h1>
         <div className={s.meta}>
           <span className={s.chip}><b>{clock || "—"}</b></span>
           <span className={s.chip}>Market <b>{d?.market?.state || "—"}</b></span>
           <span className={s.chip} data-testid="hud-source">Prices: <b>{d?.data_source?.label || "no market data"}</b></span>
           <span className={s.chip}>Real-money orders <b>off</b></span>
         </div>
+      </div>
+
+      {(() => { const st2 = sessionState(d, t.error); return (
+        <div className={s.state} data-tone={st2.tone} role="status" data-testid="hud-state">
+          <span className={s.dot} style={{ color: `var(--${st2.tone === "good" ? "green" : st2.tone === "warn" ? "amber" : st2.tone === "crit" ? "red" : "cyan"})` }} aria-hidden="true" />
+          <span><b>{st2.label}</b> <span className={s.k}>{st2.text}</span></span>
+        </div>); })()}
+
+      <div className={s.kpis}>
+        <section className={`${s.panel} ${s.kpi}`} aria-label="Account value"><span className={s.k}>Account value</span>
+          <span className={s.big} data-testid="kpi-value">{a ? inr(a.value_now) : "—"}</span></section>
+        <section className={`${s.panel} ${s.kpi}`} aria-label="P&L today"><span className={s.k}>P&amp;L today</span>
+          <span className={`${s.big} ${a && a.today >= 0 ? s.up : s.down}`} data-testid="kpi-today" title={a?.windows?.pnl_today}>{a ? signed(a.today) : "—"}</span></section>
+        <section className={`${s.panel} ${s.kpi}`} aria-label="P&L since inception"><span className={s.k}>Since inception{a?.starting_capital ? ` (${inr(a.starting_capital)})` : ""}</span>
+          <span className={`${s.big} ${a && (a.since_start ?? 0) >= 0 ? s.up : s.down}`} data-testid="kpi-since" title={a?.windows?.pnl_since_start}>{a?.since_start == null ? "—" : signed(a.since_start)}</span></section>
+        <section className={`${s.panel} ${s.kpi}`} aria-label="Exposure"><span className={s.k}>Exposure</span>
+          <span className={s.big} data-testid="kpi-exposure">{a?.exposure == null ? "—" : `${(a.exposure * 100).toFixed(1)}%`}</span></section>
+        <section className={`${s.panel} ${s.kpi}`} aria-labelledby="hud-what"><h2 id="hud-what" className={s.h}>What happened this session?</h2>
+          <p className={s.happen} data-testid="hud-what">{d ? whatHappened(d) : "—"}</p></section>
       </div>
 
       <div className={s.grid}>
@@ -69,17 +87,10 @@ export default function MissionControl() {
               <div><div className={s.v} data-testid="hud-bot">{st[1]}</div><div className={s.k}>{d?.bot?.message || "Waiting for the API…"}</div></div>
             </div>
           </section>
-          <section className={s.panel} aria-labelledby="hud-money">
-            <h2 id="hud-money" className={s.h}>Money <em>paper</em></h2>
-            {a ? <>
-              <div className={s.row}><span className={s.k}>Today</span><span className={`${s.v} ${a.today >= 0 ? s.up : s.down}`}>{signed(a.today)}</span></div>
-              <div className={s.row}><span className={s.k}>Since the start</span>
-                <span className={`${s.v} ${(a.since_start ?? 0) >= 0 ? s.up : s.down}`}>{a.since_start == null ? "—" : signed(a.since_start)}</span></div>
-              <div className={s.row}><span className={s.k}>Free cash</span><span className={s.v}>{inr(a.cash_free)}</span></div>
-              <div className={s.row}><span className={s.k}>In stocks</span><span className={s.v}>{inr(a.invested)}</span></div>
-              <div className={s.row}><span className={s.k}>Trades today · charges</span><span className={s.v}>{a.today_trades} · {inr(a.today_charges)}</span></div>
-              {a.halted_today && <p className={s.warn} style={{ margin: "8px 0 0", fontSize: 14 }}>Daily loss limit reached: no new buys today.</p>}
-            </> : <p className={s.dim} style={{ margin: 0 }}>The bot is not running yet.</p>}
+          <section className={s.panel} aria-labelledby="hud-session" data-testid="hud-session">
+            <h2 id="hud-session" className={s.h}>Signals, orders and fills <em>{d?.session?.day || ""}</em></h2>
+            <SessionPanel s={d?.session} className={s.sp} rowClass={s.row} kClass={s.k} vClass={s.v} />
+            {a?.halted_today && <p className={s.warn} style={{ margin: "8px 0 0", fontSize: 14 }}>Daily loss limit reached: no new buys today.</p>}
           </section>
           <section className={s.panel} aria-labelledby="hud-hold">
             <h2 id="hud-hold" className={s.h}>Holding <em>{d?.holdings?.length ?? 0}</em></h2>
@@ -153,19 +164,35 @@ export default function MissionControl() {
         </div>
       </div>
 
-      <div className={s.bottom}>
-        <section className={s.panel} aria-labelledby="hud-curve" data-testid="hud-curve">
-          <h2 id="hud-curve" className={s.h}>Account value through the day <em>{ch?.session || ""}</em></h2>
-          {curve.length > 1 ? <LineChart x={curve.map((c: any) => c.t)} series={[{ name: "account ₹", values: curve.map((c: any) => c.v) }]} height={190} area fmt={(v) => inr(v)} />
-            : <p className={s.dim} style={{ margin: 0 }}>The line appears after the first minutes of trading.</p>}
+      {trades.length || curve.length > 1 ? (
+        <div className={s.bottom}>
+          <section className={s.panel} aria-labelledby="hud-curve" data-testid="hud-curve">
+            <h2 id="hud-curve" className={s.h}>Account value through the day <em>{ch?.session || ""}</em></h2>
+            {curve.length > 1 ? <LineChart x={curve.map((c: any) => c.t)} series={[{ name: "account ₹", values: curve.map((c: any) => c.v) }]} height={190} area fmt={(v) => inr(v)} />
+              : <p className={s.dim} style={{ margin: 0 }}>The line appears after the first minutes of trading.</p>}
+          </section>
+          <section className={s.panel} aria-labelledby="hud-stream" data-testid="hud-stream">
+            <h2 id="hud-stream" className={s.h}>Trading events</h2>
+            {trades.length ? <ul className={s.stream}>
+              {trades.map((e, i) => <li key={i}><span className={s.t}>{e.time}</span><span className={e.tone}>{e.text}</span><span /></li>)}
+            </ul> : <p className={s.dim} style={{ margin: 0 }}>No completed trade yet in this session.</p>}
+          </section>
+        </div>
+      ) : (
+        <section className={s.panel} style={{ marginTop: 14 }} aria-labelledby="hud-none" data-testid="hud-no-trades">
+          <h2 id="hud-none" className={s.h}>No trades in this session</h2>
+          <p className={s.happen}>{d ? whatHappened(d) : "Waiting for the lab…"}</p>
+          {d?.session?.day && <p style={{ margin: "8px 0 0" }}>
+            <Link href={`/screening?${new URLSearchParams({ day: d.session.day, decision: "BUY", ...(d.session.eligible ? { status: "rejected" } : { warmup: "only" }) }).toString()}`}>
+              Open an example decision in the ledger</Link></p>}
         </section>
-        <section className={s.panel} aria-labelledby="hud-stream" data-testid="hud-stream">
-          <h2 id="hud-stream" className={s.h}>Event stream</h2>
-          {events.length ? <ul className={s.stream}>
-            {events.map((e, i) => <li key={i}><span className={s.t}>{e.time}</span><span className={e.tone}>{e.text}</span><span /></li>)}
-          </ul> : <p className={s.dim} style={{ margin: 0 }}>Trades (with their root cause) and headlines appear here.</p>}
-        </section>
-      </div>
+      )}
+      <section className={s.panel} style={{ marginTop: 14 }} aria-labelledby="hud-news" data-testid="hud-news">
+        <h2 id="hud-news" className={s.h}>Headlines <em>news watcher</em></h2>
+        {heads.length ? <ul className={s.stream}>
+          {heads.map((e, i) => <li key={i}><span className={s.t}>{e.time}</span><span className={s.dim}>{e.text}</span><span /></li>)}
+        </ul> : <p className={s.dim} style={{ margin: 0 }}>No headlines recorded yet.</p>}
+      </section>
       <p className={s.src}>Source: this lab's paper ledger, the challenger contest and the news watcher. {d?.data_source?.label ? `Prices: ${d.data_source.label}.` : ""} Simulated orders only.</p>
     </div>
   );

@@ -331,7 +331,7 @@ export default function Deck() {
   const ds = scr?.data_source;
   return (
     <>
-      <div className="top"><h1>Vega</h1><span className="sp" />
+      <div className="top"><h1>Vega Deck</h1><span className="sp" />
         <span className={`chip ${sys?.live_trading_enabled ? "crit" : "good"}`}><i />{sys ? (sys.live_trading_enabled ? "Live flag on" : "Live trading off") : "…"}</span>
         <span className={`chip ${kill ? "crit" : "good"}`} data-testid="kill-state"><i />{kill ? "Kill switch engaged" : "Kill switch clear"}</span>
         <time className="ink2 num" style={{ fontSize: 14 }}>{clock} IST</time>

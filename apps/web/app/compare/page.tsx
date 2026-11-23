@@ -1,7 +1,8 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Heatmap, LineChart } from "@/components/charts";
 import { runCols } from "@/components/common";
+import { ResearchTrail } from "@/components/trail";
 import { Banner, Card, DataTable, Err, Page } from "@/components/ui";
 import { inr, num, pct, post, useApi } from "@/lib/api";
 
@@ -13,6 +14,7 @@ const ROWS: [string, string, (v: any) => string][] = [["sharpe", "Sharpe", num],
 export default function Compare() {
   const runs = useApi<any[]>("/runs?limit=80");
   const [ids, setIds] = useState<string[]>([]);
+  useEffect(() => { const r = new URLSearchParams(window.location.search).get("runs"); if (r) setIds(r.split(",").filter(Boolean)); }, []);
   const [res, setRes] = useState<any>(null);
   const [err, setErr] = useState<string | null>(null);
   const toggle = (id: string) => setIds(ids.includes(id) ? ids.filter((x) => x !== id) : ids.length < 8 ? [...ids, id] : ids);
@@ -22,6 +24,7 @@ export default function Compare() {
   const name = (r: any) => `${r.strategy} ${r.run_id.slice(0, 6)}`;
   return (
     <Page title="Strategy Comparison" sub="Side-by-side on identical data, period and cost assumptions. The table leads with risk-adjusted measures; net profit is deliberately last." right={<button className="primary" disabled={ids.length < 1} onClick={go}>Compare {ids.length} run{ids.length === 1 ? "" : "s"}</button>}>
+      <ResearchTrail here="/compare" ctx={{ run: ids[0] }} />
       <Err e={err || runs.error} />
       <Card title="Choose up to 8 runs">
         <DataTable maxHeight={280} onRow={(r) => toggle(r.run_id)} selected={(r) => ids.includes(r.run_id)} cols={[{ key: "pick", label: "", f: (r) => (ids.includes(r.run_id) ? "☑" : "☐") }, ...runCols()]} rows={withFiles} empty="No stored runs yet." />

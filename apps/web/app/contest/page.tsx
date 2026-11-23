@@ -30,7 +30,7 @@ export default function Contest() {
   const cur = sources.find((s) => s[0] === pick) || sources[0];
   return (
     <>
-      <h1>Incumbent vs challenger</h1>
+      <h1>Incumbent vs Challenger</h1>
       <p className="sub">Two isolated paper accounts receive the same prices at the same moments. Only forward paper sessions can produce a
         verdict; promotion is always your decision. Real-money orders are switched off.</p>
       {error && <Err e={error} />}
@@ -47,6 +47,7 @@ export default function Contest() {
           {sources.map(([k, l]) => <button key={k} type="button" aria-pressed={cur?.[0] === k} onClick={() => setPick(k)}>{l}</button>)}
         </div>)}
       {cur && <Report r={cur[2]} />}
+      {data?.robustness && <Robust r={data.robustness} />}
     </>
   );
 }
@@ -65,11 +66,22 @@ function Report({ r }: { r: any }) {
     ["Turnover (× capital)", (a) => (a ? a.turnover.toFixed(2) : "0")],
     ["Average exposure", (a) => pct(a ? a.exposure_avg : 0, 1)],
     ["Partial / cancelled orders", (a) => (a ? `${a.orders_partial} / ${a.orders_cancelled_or_rejected}` : "—")],
-    ["Buys refused by limits", (a) => (a ? a.buys_refused_by_limits.toLocaleString("en-IN") : "—")],
+    ["Eligible BUY signals refused (contest sessions)", (a) => (a ? (a.buy_decisions ? a.buy_decisions.rejected : a.buys_refused_by_limits).toLocaleString("en-IN") : "—")],
+    ["Warm-up signals (not tradable, excluded)", (a) => (a?.buy_decisions ? a.buy_decisions.warm_up.toLocaleString("en-IN") : "Unavailable")],
     ["Residual positions (not closed)", (a) => (a ? String(a.residual_positions.length) : "—")],
   ];
+  const pS = Math.min(1, days.length / v.rules.min_sessions), pT = Math.min(1, ch.trades_closed / v.rules.min_challenger_trades);
   return (
     <>
+      <section className="panel" style={{ marginBottom: 14 }} aria-labelledby="ev-h" data-testid="contest-evidence">
+        <h2 id="ev-h">Evidence progress {r.kind === "forward" ? "toward a forward verdict" : "(replay: cannot produce a forward verdict)"}</h2>
+        <div className="grid g2">
+          <div><div className="ink2" style={{ display: "flex", justifyContent: "space-between" }}><span>Completed sessions</span><b>{days.length} of {v.rules.min_sessions}</b></div>
+            <div role="progressbar" aria-label="Completed sessions" aria-valuemin={0} aria-valuemax={v.rules.min_sessions} aria-valuenow={days.length} className="pbar"><span style={{ width: `${pS * 100}%` }} /></div></div>
+          <div><div className="ink2" style={{ display: "flex", justifyContent: "space-between" }}><span>Closed challenger trades</span><b>{ch.trades_closed} of {v.rules.min_challenger_trades}</b></div>
+            <div role="progressbar" aria-label="Closed challenger trades" aria-valuemin={0} aria-valuemax={v.rules.min_challenger_trades} aria-valuenow={ch.trades_closed} className="pbar"><span style={{ width: `${pT * 100}%` }} /></div></div>
+        </div>
+      </section>
       <section className="panel" style={{ marginBottom: 14, borderLeft: `4px solid ${VERDICT[v.status] || "var(--muted)"}` }} aria-labelledby="verdict-h"
         data-testid="contest-verdict">
         <h2 id="verdict-h" style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
@@ -116,5 +128,31 @@ function Report({ r }: { r: any }) {
         </div>
       </section>
     </>
+  );
+}
+
+const TONE: Record<string, string> = { plateau: "var(--good)", "holds out of sample": "var(--good)", "lonely spike": "var(--crit)",
+  "memory, not edge": "var(--crit)", "no edge to test": "var(--warn)" };
+
+function Robust({ r }: { r: any }) {
+  const mc = r.monte_carlo || {}, wf = r.walk_forward || {}, sv = r.sensitivity || {};
+  return (
+    <section className="panel" aria-labelledby="rb-h" data-testid="robustness" style={{ marginBottom: 14 }}>
+      <h2 id="rb-h">Robustness checks</h2>
+      <p className="ink2" style={{ margin: "0 0 10px" }}><b>{r.kind_label}</b> · {r.sessions?.length} sessions · {r.symbols} symbols · challenger {r.challenger}</p>
+      <div className="grid g3">
+        <div data-testid="rb-mc"><h3 style={{ margin: "0 0 6px", fontSize: 16 }}>1. Trade-order shuffle</h3>
+          {Object.entries(mc).map(([who, m]: [string, any]) => (
+            <p key={who} style={{ margin: "0 0 6px" }}><b style={{ textTransform: "capitalize" }}>{who}</b>: {m.plain || m.status}
+              {m.sequence_risk && <span className="down"> Sequence risk.</span>}</p>))}
+        </div>
+        <div data-testid="rb-wf"><h3 style={{ margin: "0 0 6px", fontSize: 16 }}>2. Walk-forward</h3>
+          <p style={{ margin: "0 0 4px", color: TONE[wf.verdict] }}><b>{wf.verdict || wf.status}</b></p>
+          <p className="ink2" style={{ margin: 0 }}>{wf.plain}</p></div>
+        <div data-testid="rb-sv"><h3 style={{ margin: "0 0 6px", fontSize: 16 }}>3. Parameter sensitivity</h3>
+          <p style={{ margin: "0 0 4px", color: TONE[sv.verdict] }}><b>{sv.verdict}</b></p>
+          <p className="ink2" style={{ margin: 0 }}>{sv.plain}</p></div>
+      </div>
+    </section>
   );
 }

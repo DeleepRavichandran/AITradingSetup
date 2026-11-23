@@ -84,7 +84,16 @@ export default function Funds() {
         <Metric k="Schemes" v={s.schemes.toLocaleString("en-IN")} /><Metric k="NAV points" v={s.navs.toLocaleString("en-IN")} h={`${s.first} → ${s.last}`} />
         <Metric k="Last import" v={s.imports[0]?.at?.slice(0, 10) || "—"} h={s.imports[0] ? `${s.imports[0].file} (${s.imports[0].layout})` : ""} />
       </div>}
-      <div className="grid g21" style={{ marginTop: 14 }}>
+      {s && s.navs > 0 && <p className="ink2" style={{ margin: "0 0 10px" }} data-testid="funds-kind"><span className="badge good">Imported NAV history</span>{" "}
+        Every figure on this page comes from AMFI NAVs you imported. Assumed-return projections live in the <a href="/planner">SIP &amp; Goal Planner</a>.</p>}
+      {s && s.navs === 0 ? (
+        <Panel title="Import your first NAV file" id="import" prov={<Prov source="AMFI files imported by the operator" />}>
+          <p className="ink2" style={{ fontSize: 14 }}>Paste the text of an AMFI NAVAll.txt or NAV history report. Re-importing is safe: stored NAVs are not duplicated.</p>
+          <textarea rows={9} value={text} onChange={(e) => setText(e.target.value)} aria-label="AMFI NAV file text" placeholder="Scheme Code;ISIN Div Payout/ ISIN Growth;..." />
+          <div style={{ marginTop: 8 }}><button className="primary" disabled={!text.trim()} onClick={imp} data-testid="funds-import">Import NAV file</button></div>
+          <Err e={err} />{msg && <Banner tone="good">{msg}</Banner>}
+        </Panel>
+      ) : <div className="grid g21" style={{ marginTop: 14 }}>
         <Panel title="Schemes" hint={list.data ? `${list.data.total.toLocaleString("en-IN")} match` : ""} id="schemes" prov={<Prov source="AMFI files imported by the operator" />}>
           <div className="row" style={{ marginBottom: 10 }}>
             <label>Search<input value={q} onChange={(e) => setQ(e.target.value)} placeholder="name or scheme code" /></label>
@@ -98,7 +107,7 @@ export default function Funds() {
           <div style={{ marginTop: 8 }}><button className="primary" disabled={!text.trim()} onClick={imp}>Import</button></div>
           <Err e={err} />{msg && <Banner tone="good">{msg}</Banner>}
         </Panel>
-      </div>
+      </div>}
       {sel && <div style={{ marginTop: 14 }}><Scheme code={sel} /></div>}
     </>
   );

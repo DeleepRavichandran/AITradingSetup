@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Bars, Heatmap } from "@/components/charts";
 import { MetricTiles } from "@/components/common";
 import { Badge, Card, DataTable, Err, KV, Page, Stat, Synthetic } from "@/components/ui";
+import { AccountKinds } from "@/components/kinds";
 import { inr, num, pct, post, useApi } from "@/lib/api";
 
 export default function Portfolio() {
@@ -22,6 +23,7 @@ export default function Portfolio() {
   };
   return (
     <Page title="Portfolio Simulation" sub="Several strategies trading at once on ONE account and one chronological event stream. Each gets its own capital book, so two strategies can never spend the same rupee. Weights are estimated on development data and evaluated on the validation window.">
+      <AccountKinds here="portfolio" />
       <Card title="Configure">
         <div className="row" style={{ marginBottom: 10 }}>
           <label>Allocation method<select value={method} onChange={(e) => setMethod(e.target.value)}>

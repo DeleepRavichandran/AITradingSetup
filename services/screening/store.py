@@ -173,7 +173,8 @@ class ScreeningStore:
                 "portfolio_events": q("SELECT COUNT(*) FROM portfolio_events")}
 
     @_locked
-    def page(self, table: str, *, where: dict | None = None, order: str, limit: int = 50, offset: int = 0) -> dict:
+    def page(self, table: str, *, where: dict | None = None, order: str, limit: int = 50, offset: int = 0,
+             extra: list[tuple[str, list]] | None = None) -> dict:
         allowed = {"signals": {"horizon", "symbol", "decision", "config_id", "alloc_status"}, "paper_orders": {"horizon", "symbol", "side", "status", "config_id"},
                    "paper_fills": {"symbol", "side", "config_id", "order_key"}, "portfolio_events": {"event"}, "refusals": {"reason"},
                    "cycles": {"status"}, "configs": {"horizon", "family", "timeframe", "symbol", "status"}}
@@ -187,6 +188,9 @@ class ScreeningStore:
                 raise ValueError(f"cannot filter {table} by {k}")
             clauses.append(f"{k} = ?")
             args.append(v)
+        for clause, a in extra or []:                      # fixed, code-defined clauses (never user text) with bound arguments
+            clauses.append(clause)
+            args.extend(a)
         w = (" WHERE " + " AND ".join(clauses)) if clauses else ""
         total = self.db.execute(f"SELECT COUNT(*) FROM {table}{w}", args).fetchone()[0]
         rows = [dict(r) for r in self.db.execute(f"SELECT * FROM {table}{w} ORDER BY {order} LIMIT ? OFFSET ?", [*args, limit, offset])]

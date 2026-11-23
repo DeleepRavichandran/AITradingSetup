@@ -1,5 +1,6 @@
 "use client";
 import { Badge, Banner, Card, DataTable, Err, KV, Loading, Page } from "@/components/ui";
+import { AccountKinds } from "@/components/kinds";
 import { useApi } from "@/lib/api";
 
 export default function Brokers() {
@@ -7,6 +8,7 @@ export default function Brokers() {
   const g = useApi<any>("/execution/gate");
   return (
     <Page title="Broker Connections" sub="Market-data connectivity and order routing are separate adapters. An adapter marked UNVERIFIED has only been tested against a mock; NOT IMPLEMENTED means the code does not exist.">
+      <AccountKinds here="brokers" />
       <Err e={b.error} /><Loading on={b.loading} />
       {b.data && <>
         <Banner tone={b.data.live_trading_enabled ? "crit" : "good"}>{b.data.live_trading_enabled ? "LIVE_TRADING_ENABLED is true in the server environment. Orders still require a signed approval, a complete compliance checklist and a clear kill switch." : "Live order routing is disabled. No adapter can send an order."}</Banner>

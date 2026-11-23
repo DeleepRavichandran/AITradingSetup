@@ -18,7 +18,7 @@ export default function Market() {
   const o = ov.data, b = bars.data, br = o?.brief;
   const expiry = exp || chain.data?.expiries?.[0];
   return (
-    <Page title="Market Explorer" sub="The loaded universe as the research team sees it: only data up to the end of the validation window is shown, so nothing here can leak the sealed period."
+    <Page title="Market Intelligence" sub="The loaded universe as the research team sees it: only data up to the end of the validation window is shown, so nothing here can leak the sealed period."
       right={<select aria-label="Dataset" value={ds} onChange={(e) => { setDs(e.target.value); setSym(null); }}>{(dss.data || []).map((d) => <option key={d.dataset_id}>{d.dataset_id}</option>)}</select>}>
       <Err e={ov.error} /><Loading on={ov.loading} />
       {o && <>

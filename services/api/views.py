@@ -42,7 +42,7 @@ def _drawdown(eq: list[float]) -> dict | None:
     return {"max_pct": round(float(dd.max()) * 100, 3), "current_pct": round(float(dd[-1]) * 100, 3)}
 
 
-def portfolio_section(sch) -> dict | None:
+def portfolio_section(sch, meta: dict | None = None) -> dict | None:
     if sch is None:
         return None
     x = sch.engine.x
@@ -56,7 +56,9 @@ def portfolio_section(sch) -> dict | None:
     held = e.pos == 1
     from nseql.screening.registry import FAMILIES
     fam_open = {FAMILIES[f]: int(n) for f, n in zip(*np.unique(r.fam[held], return_counts=True))} if held.any() else {}
-    start = x.rules.capital if x.rules else None
+    from nseql.screening.metrics import account_figures
+    fig = account_figures(sch, meta or {}, datetime.now(IST).strftime("%Y-%m-%d"))
+    start = fig["starting_capital"]
     eq_now = snap["equity_inr"]
     curve = eq[-750:]
     step = max(1, len(curve) // 150)
@@ -65,6 +67,7 @@ def portfolio_section(sch) -> dict | None:
         "available_inr": round(snap["cash_inr"] - snap["reserved_inr"], 2), "deployed_inr": snap["gross_exposure_inr"],
         "reserved_inr": snap["reserved_inr"], "utilisation_pct": round(100 * (snap["gross_exposure_inr"] + snap["reserved_inr"]) / eq_now, 2) if eq_now else None,
         "return_pct": round((eq_now / start - 1) * 100, 3) if start else None, "drawdown": _drawdown(eq),
+        "pnl_today_inr": fig["pnl_today"], "pnl_since_start_inr": fig["pnl_since_start"], "windows": fig["windows"],
         "realised_after_charges_inr": realised[0] / 100, "charges_inr": realised[1] / 100,
         "open_positions": snap["open_positions"], "top_symbols": snap["top_symbols"][:5], "open_by_family": fam_open,
         "halted_today": snap["halted_today"], "rules": snap["rules"],
@@ -75,7 +78,7 @@ def portfolio_section(sch) -> dict | None:
 
 
 def command_center(*, st, sch, reg, brain_status: dict, brain_state: dict, readiness: list[dict], calendar, universe_summary: dict | None,
-                   sandbox_status: tuple[bool, str]) -> dict:
+                   sandbox_status: tuple[bool, str], meta: dict | None = None) -> dict:
     t0 = time.perf_counter()
     now = datetime.now(IST)
     jobs = list(st.jobs.values())
@@ -143,4 +146,4 @@ def command_center(*, st, sch, reg, brain_status: dict, brain_state: dict, readi
         "provenance": {"source": "research registry and Learning Brain memory", "data": "research runs on the datasets recorded with each run"},
     }
     return {"generated_at": now.isoformat(timespec="seconds"), "platform": platform, "strategies": strat, "ai": ai,
-            "portfolio": portfolio_section(sch), "compute_ms": round((time.perf_counter() - t0) * 1000, 1)}
+            "portfolio": portfolio_section(sch, meta), "compute_ms": round((time.perf_counter() - t0) * 1000, 1)}

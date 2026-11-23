@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { MetricTiles } from "@/components/common";
 import { Badge, Banner, Card, DataTable, Err, KV, Page } from "@/components/ui";
+import { ResearchTrail, useCtx } from "@/components/trail";
 import { api, post, useApi, useQuery } from "@/lib/api";
 
 const TEMPLATE = `"""Edit me. Allowed imports: math, numpy, nseql.indicators, nseql.strategies.api."""
@@ -28,6 +29,7 @@ class MyStrategy(Strategy):
 `;
 
 export default function Code() {
+  const ctx = useCtx();
   const q = useQuery();
   const list = useApi<any>("/strategies");
   const [src, setSrc] = useState(TEMPLATE);
@@ -52,6 +54,7 @@ export default function Code() {
   const v = res?.validation, r = res?.run;
   return (
     <Page title="Strategy Code" sub="Read any strategy's source, or write one and test it. Code is statically checked against an allow-list and then run in a locked-down subprocess: no network, no credentials, CPU and memory limits. It can never reach an order router.">
+      <ResearchTrail here="/code" ctx={ctx} />
       <Err e={err || list.error} />
       <div className="grid g21">
         <Card title={meta ? `${meta.kind}: ${meta.id}` : "Editor"} right={<span className="row"><button onClick={() => run(false)} disabled={busy}>Validate</button><button className="primary" onClick={() => run(true)} disabled={busy}>{busy ? "Running in sandbox…" : "Validate + sandbox test"}</button></span>}>

@@ -1,11 +1,12 @@
 "use client";
-import { useState } from "react";
-import { Badge, Banner, Card, DataTable, Err, KV, Loading, Page, Stat } from "@/components/ui";
+import { useEffect, useState } from "react";
+import { Badge, Banner, Card, DataTable, Err, Issues, KV, Loading, Page, Stat } from "@/components/ui";
 import { num, short, useApi } from "@/lib/api";
 
 export default function Data() {
   const dss = useApi<any[]>("/datasets");
   const [pick, setPick] = useState<string | null>(null);
+  useEffect(() => { const d0 = new URLSearchParams(window.location.search).get("dataset"); if (d0) setPick(d0); }, []);
   const [kind, setKind] = useState("EQ");
   const id = pick || dss.data?.[0]?.dataset_id || null;
   const d = dss.data?.find((x) => x.dataset_id === id);
@@ -13,8 +14,13 @@ export default function Data() {
   const q = useApi<any>(id ? `/datasets/${id}/quality?kind=${kind}` : null);
   const ev = useApi<any>("/events");
   return (
-    <Page title="Data Quality & Coverage" sub="Every dataset is immutable and content-hashed. Results link back to the exact hash shown here. Quality problems are reported, never silently repaired.">
+    <Page title="Data Quality" sub="Every dataset is immutable and content-hashed. Results link back to the exact hash shown here. Quality problems are reported, never silently repaired.">
       <Err e={dss.error} /><Loading on={dss.loading} />
+      {q.data && <Issues testid="data-issues" items={[
+        ...(q.data.integrity_failures || []).map((f: any) => ({ issue: `Integrity check failed: ${typeof f === "string" ? f : JSON.stringify(f)}`, affects: `every result built on ${id}`, tone: "crit" as const })),
+        ...(q.data.issues || []).filter((x: any) => x.severity === "error").slice(0, 8).map((x: any) => ({ issue: `${x.symbol}: ${x.check} (${x.count}) ${x.detail || ""}`, affects: `backtests and research on ${id} (${x.symbol})`, tone: "crit" as const })),
+        ...(q.data.issues || []).filter((x: any) => x.severity === "warning").slice(0, 6).map((x: any) => ({ issue: `${x.symbol}: ${x.check} (${x.count})`, affects: `${x.symbol} results on ${id}` })),
+      ]} />}
       <Card title="Datasets"><DataTable onRow={(r) => setPick(r.dataset_id)} selected={(r) => r.dataset_id === id} maxHeight={220} cols={[
         { key: "dataset_id", label: "id" }, { key: "synthetic", label: "kind", f: (r) => <Badge s={r.synthetic ? "synthetic" : "real"} tone={r.synthetic ? "warn" : "good"} /> },
         { key: "source" }, { key: "licence" }, { key: "instruments", r: true }, { key: "intervals", f: (r) => r.intervals.join(", ") },
@@ -22,10 +28,12 @@ export default function Data() {
       {d && det.data && <div className="grid g2" style={{ marginTop: 14 }}>
         <Card title="Provenance">
           <KV items={[["description", d.description], ["source", d.source], ["licence", d.licence], ["redistribution", d.redistribution_allowed ? "allowed" : "not allowed"],
-            ["raw source files", d.raw_files], ["ingest corrections", d.audit_entries], ["instruments by kind", Object.entries(d.kinds).map(([k, v]) => `${k} ${v}`).join(" · ")],
-            ["range", Object.entries(d.range).map(([k, v]: any) => `${k}: ${String(v?.[0]).slice(0, 10)} → ${String(v?.[1]).slice(0, 10)}`).join(" · ")],
-            ["content hash", <span key="h" className="mono">{d.content_hash}</span>]]} />
-          {det.data.manifest.audit.length > 0 && <><h3>Corrections applied on ingest</h3><pre>{JSON.stringify(det.data.manifest.audit.slice(0, 20), null, 1)}</pre></>}
+            ["instruments by kind", Object.entries(d.kinds).map(([k, v]) => `${k} ${v}`).join(" · ")],
+            ["range", Object.entries(d.range).map(([k, v]: any) => `${k}: ${String(v?.[0]).slice(0, 10)} → ${String(v?.[1]).slice(0, 10)}`).join(" · ")]]} />
+          <details style={{ marginTop: 8 }}><summary>Technical: hashes, source files, ingest corrections ({d.audit_entries})</summary>
+            <KV items={[["raw source files", d.raw_files], ["ingest corrections", d.audit_entries], ["content hash", <span key="h" className="mono" style={{ wordBreak: "break-all" }}>{d.content_hash}</span>]]} />
+            {det.data.manifest.audit.length > 0 && <pre>{JSON.stringify(det.data.manifest.audit.slice(0, 20), null, 1)}</pre>}
+          </details>
         </Card>
         <Card title="Research partition (fixed on first use)">
           {det.data.partition ? <KV items={[["development", `${det.data.partition.dev_start} → ${det.data.partition.dev_end}`], ["validation", `${det.data.partition.val_start} → ${det.data.partition.val_end}`],

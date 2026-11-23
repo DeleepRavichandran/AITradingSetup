@@ -1,5 +1,5 @@
 "use client";
-import { Badge, Banner, Card, DataTable, Err, KV, Loading, Page } from "@/components/ui";
+import { Badge, Banner, Card, DataTable, Err, Issues, KV, Loading, Page } from "@/components/ui";
 import { setToken, useApi } from "@/lib/api";
 
 export default function Settings() {
@@ -7,9 +7,15 @@ export default function Settings() {
   const a = useApi<any[]>("/audit?limit=400", 8000);
   const d = s.data;
   return (
-    <Page title="Settings & Audit Logs" sub="Configuration is read from the server environment at start-up and shown here read-only. Safety-critical settings cannot be changed from the browser, the API, or by an agent."
+    <Page title="Configuration & Audit" sub="Configuration is read from the server environment at start-up and shown here read-only. Safety-critical settings cannot be changed from the browser, the API, or by an agent."
       right={<button onClick={() => { setToken(""); window.location.reload(); }}>Sign out</button>}>
       <Err e={s.error} /><Loading on={s.loading} />
+      {d && <Issues testid="settings-issues" items={[
+        ...(d.live_trading_enabled ? [{ issue: "LIVE_TRADING_ENABLED is true", affects: "the live-order gate (still needs compliance and human approval)", tone: "crit" as const }] : []),
+        ...((d.compliance || []).filter((c: any) => !c.done).length ? [{ issue: `${(d.compliance || []).filter((c: any) => !c.done).length} compliance items open`, affects: "the live-order gate stays closed" }] : []),
+        ...(!d.credentials?.anthropic ? [{ issue: "Anthropic credentials not set", affects: "Analyst Chat writes plain digests instead of written answers" }] : []),
+        ...(!d.credentials?.whatsapp ? [{ issue: "WhatsApp credentials not set", affects: "alerts (kill switch, feed, daily summary)" }] : []),
+      ]} />}
       {d && <div className="grid g2">
         <Card title="Safety">
           <Banner tone={d.live_trading_enabled ? "crit" : "good"}>LIVE_TRADING_ENABLED = <b>{String(d.live_trading_enabled)}</b>. {d.live_trading_note}.</Banner>
@@ -22,9 +28,9 @@ export default function Settings() {
           <p className="dim" style={{ marginTop: 8 }}>Edit <span className="mono">experiments/compliance.json</span> on the server to confirm items. All must be confirmed before the live gate can open.</p>
         </Card>
       </div>}
-      <div style={{ marginTop: 14 }}><Card title="Audit log (newest first)">
+      <details className="panel" style={{ marginTop: 14 }} data-testid="audit-log"><summary>Audit log, raw records ({(a.data || []).length}, newest first)</summary>
         <DataTable maxHeight={560} cols={[{ key: "created_at", label: "time", f: (r) => r.created_at.replace("T", " ") }, { key: "actor" }, { key: "action" }, { key: "detail", f: (r) => <span className="mono">{JSON.stringify(r.detail).slice(0, 180)}</span> }]} rows={a.data} empty="Nothing logged yet." />
-      </Card></div>
+      </details>
     </Page>
   );
 }

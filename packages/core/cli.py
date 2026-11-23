@@ -81,6 +81,14 @@ def main(argv: list[str] | None = None) -> int:
     co.add_argument("--symbols", type=int, default=10); co.add_argument("--dev", type=int, default=5, help="development sessions")
     co.add_argument("--eval", type=int, default=15, help="holdout (evaluation) sessions"); co.add_argument("--capital", type=float, default=100_000)
     co.add_argument("--seed", type=int, default=7); co.add_argument("--out", default=None)
+    rb = sub.add_parser("robustness", help="Monte Carlo trade shuffle, walk-forward and parameter sensitivity for the challenger (and Monte Carlo for the incumbent)")
+    g2 = rb.add_mutually_exclusive_group(required=True)
+    g2.add_argument("--fixture", action="store_true", help="deterministic SYNTHETIC minute data (works from a clean checkout)")
+    g2.add_argument("--dataset", help="a stored dataset with 1-minute bars (historical replay)")
+    g2.add_argument("--account", help="Monte Carlo only, on an existing paper account's closed trades (e.g. the live account)")
+    rb.add_argument("--symbols", type=int, default=8); rb.add_argument("--days", type=int, default=20); rb.add_argument("--window", type=int, default=5)
+    rb.add_argument("--capital", type=float, default=100_000); rb.add_argument("--seed", type=int, default=7)
+    rb.add_argument("--workers", type=int, default=4); rb.add_argument("--no-incumbent", action="store_true"); rb.add_argument("--out", default=None)
     sub.add_parser("brain-verify", help="verify the episodic memory hash chain and the correctness probes")
     v = sub.add_parser("serve", help="start the API server"); v.add_argument("--host", default="127.0.0.1"); v.add_argument("--port", type=int, default=8000)
     a = ap.parse_args(argv)
@@ -149,6 +157,41 @@ def main(argv: list[str] | None = None) -> int:
         for f in a.files:
             out = fs.import_text(Path(f).read_text(encoding="utf-8", errors="replace"), file=Path(f).name)
             print(f"{f}: {out['layout']} layout, {out['schemes']} schemes, {out['new_navs']} new NAVs ({out['duplicates']} already stored, {out['skipped']} skipped)")
+    elif a.cmd == "robustness":
+        from datetime import datetime as _dt
+
+        from nseql.screening import robustness as R
+        if a.account:
+            rep = R.ledger_monte_carlo(s.experiments_dir / "screening" / a.account)
+            print(json.dumps(rep, indent=2))
+            return 0
+        out = Path(a.out) if a.out else s.experiments_dir / "robustness" / f"{'fixture' if a.fixture else a.dataset}_{_dt.now():%Y%m%d_%H%M%S}"
+        if a.fixture:
+            rep = R.run_fixture(out, symbols_n=a.symbols, days_n=a.days, window=a.window, seed=a.seed, capital=a.capital, workers=a.workers,
+                                incumbent=not a.no_incumbent)
+        else:
+            from nseql.data.store import Dataset
+            from nseql.screening.contest import stream_from_frames
+            ds = Dataset(s.data_dir / a.dataset)
+            syms = [x for x in ds.symbols("1m") if not x.startswith("NIFTY")]
+            stream = stream_from_frames({x: ds.bars(x, "1m") for x in syms})
+            rep = R.run(out, stream, syms, a.capital, "synthetic" if ds.synthetic else "historical", a.window, a.workers, None,
+                        {"dataset": a.dataset, "synthetic": ds.synthetic})
+        print(f"{rep['kind_label']}: {len(rep['sessions'])} sessions, {rep['symbols']} symbols, {rep['variants_run']} challenger variants")
+        for who, m in rep["monte_carlo"].items():
+            print(f"1. Monte Carlo ({who}, {m.get('trades', 0)} trades, {m.get('shuffles', 0)} shuffles): " + m.get("plain", m.get("status", "")))
+        wf = rep["walk_forward"]
+        print("2. Walk-forward: " + wf.get("plain", wf.get("status", "")) + f" -> {wf.get('verdict', 'n/a')}")
+        for f in wf.get("folds", []):
+            print(f"     in {f['in_sample'][0]}..{f['in_sample'][1]} chose {f['chosen']} {f['in_sample_return']:+.2%}; "
+                  f"next {f['out_of_sample'][0]}..{f['out_of_sample'][1]} {f['out_of_sample_return']:+.2%} (frozen default {f['default_out_of_sample_return']:+.2%})")
+        sv = rep["sensitivity"]
+        print(f"3. Sensitivity: baseline {sv['baseline_return']:+.2%} -> {sv['verdict']} ({sv['plain']})")
+        for x in sv["neighbours"]:
+            print(f"     {x['parameter']}={x['value']} (default {x['default']}): {x['return']:+.2%}, {x['trades']} trades"
+                  + ("  (no effect on this data)" if x.get("no_effect") else ""))
+        print(f"report {out / 'report.json'}")
+        return 0
     elif a.cmd == "contest":
         from datetime import datetime as _dt
 
