@@ -1138,6 +1138,7 @@ def create_app() -> FastAPI:
             meta = {"root": str(root), "symbols": syms, "configs": None, "mode": "live", "broker": "angelone", "live_from": live_from,
                     "synthetic": False, "not_found": missing, "capital": capital, "account": name, "rules_version": LIVE_RULES_VERSION}
             (st.exp_dir / "screening" / "current.json").write_text(json.dumps(meta))
+            sch.news_count = lambda sym, t: (st.news_watch.symbol_count(sym, t) if getattr(st, "news_watch", None) else None)   # journal context
             screening["sch"], screening["meta"] = sch, meta
             sch.start()
             screening["live"].update(state="running", symbols=len(syms), live_from=live_from, not_found=missing, capital=capital, account=name)

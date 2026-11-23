@@ -37,6 +37,9 @@ CREATE TABLE IF NOT EXISTS signals (config_id TEXT NOT NULL, bar_ts TEXT NOT NUL
 CREATE INDEX IF NOT EXISTS ix_signals_ts ON signals(bar_ts);
 CREATE TABLE IF NOT EXISTS paper_orders (order_key TEXT PRIMARY KEY, config_id TEXT, symbol TEXT, side TEXT, horizon TEXT,
   decided_at TEXT, status TEXT, fill_ts TEXT, qty INTEGER, price REAL, product TEXT, charges_paise INTEGER, realized_paise INTEGER);
+CREATE TABLE IF NOT EXISTS journal (fill_key TEXT PRIMARY KEY, ts TEXT, config_id TEXT, symbol TEXT, side TEXT,
+  minute_of_session INTEGER, stock_move REAL, trend REAL, vol_session REAL, market_move REAL, breadth REAL, regime TEXT, news_60m INTEGER);
+CREATE INDEX IF NOT EXISTS ix_journal_ts ON journal(ts);
 CREATE TABLE IF NOT EXISTS paper_fills (fill_key TEXT PRIMARY KEY, order_key TEXT, config_id TEXT, symbol TEXT, side TEXT, ts TEXT,
   qty INTEGER, price REAL, charges_paise INTEGER, realized_paise INTEGER);
 CREATE INDEX IF NOT EXISTS ix_fills_order ON paper_fills(order_key);
@@ -122,7 +125,7 @@ class ScreeningStore:
     # ------------------------------------------------------------------ results
     @_locked
     def record(self, cycle: dict, signals: list[tuple], orders: list[tuple], fills: list[tuple], done: list[tuple] = (),
-               events: list[tuple] = (), refusals: list[tuple] = ()) -> None:
+               events: list[tuple] = (), refusals: list[tuple] = (), journal: list[tuple] = ()) -> None:
         """orders: (order_key, config_id, symbol, side, horizon, decided_at, status, requested_qty, reason)
         fills: (fill_key, order_key, config_id, symbol, side, ts, qty, price, charges_paise, realized_paise)
         done: (status, last_fill_ts, filled_qty, avg_price, product, charges_paise, realized_paise, reason, order_key)"""
@@ -143,6 +146,7 @@ class ScreeningStore:
                             "reason=? WHERE order_key=? AND status='pending'", done)
             cur.executemany("INSERT OR IGNORE INTO portfolio_events VALUES (?,?,?)", events)
             cur.executemany("INSERT OR IGNORE INTO refusals VALUES (?,?,?)", refusals)
+            cur.executemany("INSERT OR IGNORE INTO journal VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", journal)
             cur.execute("COMMIT")
         except Exception:
             cur.execute("ROLLBACK")

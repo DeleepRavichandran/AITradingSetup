@@ -106,6 +106,7 @@ class MinuteScheduler:
         self.last_cycle: dict | None = None
         self.overruns = 0
         self.startup_seconds = round(time.perf_counter() - t0, 3)
+        self.news_count = None          # optional (symbol, ts) -> headlines about it first seen in the 60 min before ts
         self.recovery = self._recover()
 
     # ------------------------------------------------------------------ state
@@ -187,6 +188,8 @@ class MinuteScheduler:
         cols = [np.array([x[k] for x in known], dtype=float) for k in ("open", "high", "low", "close", "volume")]
         warm = self.live_from is not None and minute < self.live_from
         allow = not (self.kill is not None and self.kill.engaged) and not warm
+        from nseql.screening import journal as jn
+        ctx = jn.context(self.engine)                    # market state known at decision time (before this minute's bar)
         t0 = time.perf_counter()
         res = self.engine.step(pd.Timestamp(minute), sy, *cols, allow_orders=allow,
                                block_reason="warm-up history (before live start)" if warm else "kill switch engaged")
@@ -219,7 +222,8 @@ class MinuteScheduler:
                "closed": json.dumps(res.closed), "eligible": res.eligible, "evaluated": res.evaluated, "skipped_pending": res.skipped_pending,
                "stale_skips": res.stale_skips, "counts": json.dumps(res.counts), "fills": len(fills),
                "equity_inr": x.equity() / 100 if x.rules else None, "cash_inr": x.cash / 100 if x.rules else None, "halted": int(x.halted_day)}
-        self.store.record(cyc, signals, orders, fills, done, events, [(minute, k, v) for k, v in refused.items()])
+        jr = jn.rows(fills, ctx, self.engine.fe.index, self.news_count) if fills else []
+        self.store.record(cyc, signals, orders, fills, done, events, [(minute, k, v) for k, v in refused.items()], jr)
         self._since_ckpt += 1
         return cyc
 

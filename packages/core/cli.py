@@ -68,6 +68,8 @@ def main(argv: list[str] | None = None) -> int:
     wi = sub.add_parser("what-if", help="replay a paper account's stored day under the current and the new live rules, side by side")
     wi.add_argument("--account", required=True, help="folder name under experiments/screening, e.g. live_angelone_100000_r2")
     wi.add_argument("--day", required=True, help="YYYY-MM-DD"); wi.add_argument("--out", default=None, help="empty folder for the replays")
+    tr = sub.add_parser("trade-report", help="root-cause report for one paper day: every round trip grouped by exit reason, strategy, stock, hour")
+    tr.add_argument("--account", required=True); tr.add_argument("--day", required=True, help="YYYY-MM-DD")
     sub.add_parser("brain-verify", help="verify the episodic memory hash chain and the correctness probes")
     v = sub.add_parser("serve", help="start the API server"); v.add_argument("--host", default="127.0.0.1"); v.add_argument("--port", type=int, default=8000)
     a = ap.parse_args(argv)
@@ -136,6 +138,19 @@ def main(argv: list[str] | None = None) -> int:
         for f in a.files:
             out = fs.import_text(Path(f).read_text(encoding="utf-8", errors="replace"), file=Path(f).name)
             print(f"{f}: {out['layout']} layout, {out['schemes']} schemes, {out['new_navs']} new NAVs ({out['duplicates']} already stored, {out['skipped']} skipped)")
+    elif a.cmd == "trade-report":
+        from nseql.screening.trade_report import report as _tr
+        rep = _tr(s.experiments_dir / "screening" / a.account, a.day)
+        out = s.experiments_dir / "screening" / a.account / f"trade_report_{a.day}.json"
+        out.write_text(json.dumps(rep, indent=2, default=str))
+        print("TOTALS", json.dumps(rep["totals"]))
+        print("FINDINGS"); [print(" -", x) for x in rep["findings"]]
+        for k in ("exit_reason", "timeframe", "family", "hold", "entry_hour"):
+            print(f"BY {k}:"); [print(f"   {g['group']:<26} trades {int(g['trades']):>4}  net {g['net_inr']:>9,.0f}  gross {g['gross_inr']:>9,.0f}  "
+                                       f"win {g['win_rate']:.0%}  hold {g['avg_hold_min']:.0f}m") for g in rep["by"][k]]
+        print("WORST 5 STOCKS:"); [print(f"   {g['group']:<12} trades {int(g['trades']):>4}  net {g['net_inr']:>8,.0f}") for g in rep["by"]["symbol"][:5]]
+        print(f"full report: {out}")
+        return 0
     elif a.cmd == "what-if":
         import json as _json
         from datetime import datetime as _dt

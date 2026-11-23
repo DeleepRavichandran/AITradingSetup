@@ -107,6 +107,15 @@ class NewsWatch:
             r["symbols"], r["themes"] = json.loads(r["symbols"]), json.loads(r["themes"])
         return rows
 
+    def symbol_count(self, symbol: str, ts, minutes: int = 60) -> int:
+        """Headlines tagged with `symbol` first seen here in the `minutes` before `ts` (point in time)."""
+        import pandas as pd
+        t = pd.Timestamp(ts)
+        lo, hi = (t - pd.Timedelta(minutes=minutes)).isoformat(timespec="seconds"), t.isoformat(timespec="seconds")
+        with self.lock:
+            return int(self.db.execute("SELECT COUNT(*) FROM headlines WHERE first_seen >= ? AND first_seen < ? AND symbols LIKE ?",
+                                       (lo, hi, f'%"{symbol}"%')).fetchone()[0])
+
     def counts(self, since: str) -> dict:
         with self.lock:
             rows = self.db.execute("SELECT symbols, themes FROM headlines WHERE first_seen >= ?", (since,)).fetchall()
