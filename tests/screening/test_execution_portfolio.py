@@ -160,3 +160,20 @@ def test_checkpoint_from_another_execution_model_is_refused(stream, tmp_path):
     _drive(tmp_path, stream, symbols(40), upto=40, execution="simple")
     with pytest.raises(ValueError, match="execution model"):
         MinuteScheduler(tmp_path, symbols(40))
+
+
+def test_checkpoint_works_where_fsync_needs_a_writable_handle(stream, tmp_path, monkeypatch):
+    """Windows refuses fsync on a read-only file descriptor; the checkpoint must not depend on that."""
+    import fcntl
+    import os as _os
+    real = _os.fsync
+
+    def strict(fd):
+        if fcntl.fcntl(fd, fcntl.F_GETFL) & _os.O_ACCMODE == _os.O_RDONLY:
+            raise OSError(9, "Bad file descriptor (simulated Windows fsync on a read-only handle)")
+        return real(fd)
+    monkeypatch.setattr("nseql.screening.scheduler.os.fsync", strict)
+    a = _drive(tmp_path, stream, symbols(40), upto=40)
+    a.checkpoint()
+    b = MinuteScheduler(tmp_path, symbols(40))
+    assert b.recovery["checkpoint"] == a.watermark and b.engine.x.cash == a.engine.x.cash

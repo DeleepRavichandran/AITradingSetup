@@ -50,3 +50,4 @@ Honest limit: steps 2-6 need weeks of real paper trades; one day is too few trad
 | Dashboard too technical | Built for analysis first | Added "My trading (simple)" page |
 | NIFTY 50 treated as a tradable stock | The index is in the watchlist for context but is screened like a stock | To fix after the close (needs a fresh account / registry version) |
 | TATAMOTORS not found | Symbol no longer listed under that name at Angel One | Verify the current symbol(s) and update the watchlist |
+| After an 11:47 restart the money cards showed a fresh ₹1,00,000 and "no new prices" | On Windows the checkpoint save called fsync on a read-only file, which Windows refuses, so no checkpoint was saved; the restart rebuilt the account by replaying every stored minute | Fixed: fsync on the writing handle (test simulates Windows); cycle errors now go to `api.log`; the reopen path keeps the account's capital |

@@ -1023,9 +1023,10 @@ def create_app() -> FastAPI:
         m = json.loads(meta.read_text())
         from nseql.screening.scheduler import ReplayMinuteFeed
         feed = ReplayMinuteFeed({}, f"replay of {m.get('dataset')} (finished)", synthetic=bool(m.get("synthetic"))) if m["mode"] == "replay" else None
-        try:
+        from nseql.screening.execution import PortfolioRules
+        try:                                        # a live account keeps its own starting capital
             screening["sch"] = MinuteScheduler(Path(m["root"]), m["symbols"], m["configs"], kill=st.kill, mode=m["mode"], feed=feed,
-                                               experiments_dir=st.exp_dir)
+                                               experiments_dir=st.exp_dir, portfolio=PortfolioRules(capital=m["capital"]) if m.get("capital") else True)
         except ValueError as e:                     # saved with another strategy list: report it, do not break every endpoint
             if "registry" not in str(e):
                 raise

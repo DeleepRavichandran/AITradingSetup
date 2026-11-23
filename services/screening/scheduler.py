@@ -124,8 +124,9 @@ class MinuteScheduler:
 
     def checkpoint(self) -> None:
         tmp = self.ckpt.with_suffix(".tmp.npz")
-        np.savez(tmp, **self.engine.state())
-        with open(tmp, "rb") as f:
+        with open(tmp, "wb") as f:              # fsync on the writing handle: Windows refuses fsync on a read-only one
+            np.savez(f, **self.engine.state())
+            f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, self.ckpt)
         self._since_ckpt = 0
@@ -243,6 +244,7 @@ class MinuteScheduler:
                         self.run_cycle(now)
                     except Exception as e:          # keep the clock alive; the error is visible in status()
                         self.last_cycle = {"at": str(now), "error": f"{type(e).__name__}: {e}"}
+                        print(f"[screening] {now:%Y-%m-%d %H:%M:%S} cycle error: {type(e).__name__}: {e}", flush=True)   # visible in api.log
         self._thread = threading.Thread(target=loop, name="screening-minute", daemon=True)
         self._thread.start()
 
