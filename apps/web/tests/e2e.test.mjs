@@ -293,7 +293,11 @@ describe("Accessibility and layout", () => {
 
   test("Vega copilot (Ctrl K) answers with evidence links on any page", async () => {
     const { page, ctx } = await open("/planner");
-    await page.keyboard.press("Control+k");
+    await page.getByTestId("strip-estop").waitFor();                  // shell hydrated: its keyboard listener is attached
+    for (let i = 0; i < 10 && !(await page.getByTestId("copilot").count()); i++) {
+      await page.keyboard.press("Control+k");
+      await page.waitForTimeout(300);
+    }
     await page.getByTestId("copilot").waitFor();
     await page.getByRole("button", { name: "Which strategies have the strongest validated evidence?" }).click();
     await page.getByTestId("copilot-answer").filter({ hasText: "No screening configuration is qualified yet" }).waitFor();
