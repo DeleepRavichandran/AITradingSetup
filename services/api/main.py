@@ -1010,7 +1010,22 @@ def create_app() -> FastAPI:
         return st.job("brain_benchmark", work, dataset=d.id)
 
     # ------------------------------------------------------------------ one-minute screening (nseql.screening)
-    screening: dict = {"sch": None}
+    screening: dict = {"sch": None, "runs": {}}
+
+    def _run_id(meta: dict) -> str:
+        return f"{meta.get('mode', 'replay')}:{Path(meta['root']).name}"
+
+    def _live_active() -> bool:
+        return (screening.get("live") or {}).get("state") in ("starting", "running")
+
+    def _register(sch, meta: dict, activate: bool) -> str:
+        """Every run has an explicit identity (review 2026-11-24, finding 3). The dashboard's active run is the
+        live paper account while it starts or runs; a finished replay is registered beside it, never over it."""
+        rid = _run_id(meta)
+        screening["runs"][rid] = (sch, meta)
+        if activate:
+            screening["sch"], screening["meta"] = sch, meta
+        return rid
 
     def _screening_open():
         """Reopen the most recent screening run after an API restart (its checkpoint is recovered)."""
@@ -1038,6 +1053,7 @@ def create_app() -> FastAPI:
                                      "resumed. Start a new replay, or restart with live screening for a fresh paper account.")
             return None
         screening["meta"] = m
+        _register(screening["sch"], m, activate=True)
         return screening["sch"]
 
     class ScreenReplayIn(BaseModel):
@@ -1072,8 +1088,10 @@ def create_app() -> FastAPI:
                     job["progress"].append({"minute": k + 1, "of": len(mins)})
             sch.checkpoint()
             meta = {"root": str(root), "symbols": syms, "configs": body.configs, "mode": "replay", "dataset": d.id, "synthetic": d.synthetic}
-            (st.exp_dir / "screening" / "current.json").write_text(json.dumps(meta))
-            screening["sch"], screening["meta"] = sch, meta
+            activate = not _live_active()
+            if activate:                                      # never point a restart at a replay while a live account runs
+                (st.exp_dir / "screening" / "current.json").write_text(json.dumps(meta))
+            _register(sch, meta, activate)
             reg.audit("user", "SCREENING_REPLAY", dataset=d.id, registered=len(sch.reg), minutes=len(mins))
             return {"registered": len(sch.reg), "minutes": len(mins), **sch.store.counts()}
         return st.job("screening_replay", work, dataset=d.id)
@@ -1081,6 +1099,39 @@ def create_app() -> FastAPI:
     def _watchlist() -> list[str]:
         from nseql.data.adapters.angelone import watchlist
         return watchlist(st.exp_dir)
+
+    def _attach_challenger(sch, name: str, syms: list[str], log) -> None:
+        """Forward contest: an isolated challenger paper account fed the incumbent's exact bars every minute."""
+        from nseql.screening.challenger import CHALLENGER_VERSION, challenger_rules, factory
+        from nseql.screening.scheduler import MinuteScheduler
+        croot = st.exp_dir / "screening" / f"{name}_challenger_{CHALLENGER_VERSION.replace('.', '_')}"
+        cf = croot / "live.json"
+        now = datetime.now()
+        if cf.exists():
+            cm = json.loads(cf.read_text())
+        else:
+            first_day = now.date() if now.hour * 60 + now.minute < 9 * 60 + 16 else None
+            cm = {"challenger": CHALLENGER_VERSION, "incumbent_account": name, "start_cash": round(sch.engine.x.equity() / 100, 2),
+                  "live_from": now.strftime("%Y-%m-%dT%H:%M:00"),
+                  "contest_from": (first_day or (pd.Timestamp(now.date()) + pd.offsets.BDay(1)).date()).isoformat(),
+                  "symbols": syms, "note": "forward contest: sessions counted from contest_from (first full session)"}
+        ch = MinuteScheduler(croot, syms, kill=st.kill, mode="live", calendar=_calendar(), live_from=cm["live_from"],
+                             experiments_dir=st.exp_dir, portfolio=challenger_rules(cm["start_cash"]), engine_factory=factory())
+        if not cf.exists():
+            croot.mkdir(parents=True, exist_ok=True)
+            cf.write_text(json.dumps(cm))
+            today = now.strftime("%Y-%m-%dT09:15:00")             # today's bars so far build its opening range (no past trading)
+            with sch.store._lock:
+                rows = sch.store.db.execute("SELECT symbol, ts, open, high, low, close, volume FROM events WHERE ts > ? AND late = 0",
+                                            (today,)).fetchall()
+            if rows:
+                ch.ingest([{"symbol": r[0], "ts": pd.Timestamp(r[1]), "open": r[2], "high": r[3], "low": r[4], "close": r[5], "volume": r[6]}
+                           for r in rows], source="incumbent's stored bars (opening range)")
+                ch.run_cycle(pd.Timestamp(now))
+        sch.followers.append(ch)
+        screening["challenger"] = (ch, cm)
+        _register(ch, {"root": str(croot), "mode": "live", "account": croot.name, "challenger": CHALLENGER_VERSION}, activate=False)
+        log(f"challenger {CHALLENGER_VERSION}: paper account {croot.name} (start cash {cm['start_cash']:,.2f}), contest from {cm['contest_from']}")
 
     def _start_live_screening() -> None:
         """Unattended: log in to Angel One, fetch daily history once, warm up, then screen every minute.
@@ -1150,8 +1201,9 @@ def create_app() -> FastAPI:
                                           "start_cash": start_cash, "original_capital": original,
                                           "carried_from": {k: v for k, v in (carried or {}).items() if k != "evidence"} or None}))
                 if carried:
-                    from nseql.screening.carry import apply_evidence
+                    from nseql.screening.carry import apply_evidence, save_inherited
                     n_ev = apply_evidence(sch, carried["evidence"])
+                    save_inherited(root, carried)
                     log(f"continuing from {carried['from_account']}: cash {start_cash:,.2f} (as of {carried['as_of']}), "
                         f"track record of {carried['round_trips']} round trips for {n_ev} strategies; original capital {original:,.0f}")
                     reg.audit("system", "LIVE_ACCOUNT_CONTINUED", account=name, from_account=carried["from_account"], cash_inr=start_cash,
@@ -1162,7 +1214,12 @@ def create_app() -> FastAPI:
                     "start_cash": start_cash, "original_capital": original}
             (st.exp_dir / "screening" / "current.json").write_text(json.dumps(meta))
             sch.news_count = lambda sym, t: (st.news_watch.symbol_count(sym, t) if getattr(st, "news_watch", None) else None)   # journal context
-            screening["sch"], screening["meta"] = sch, meta
+            _register(sch, meta, activate=True)
+            if os.environ.get("NSEQL_CHALLENGER", "on").lower() not in ("off", "false", "0"):
+                try:
+                    _attach_challenger(sch, name, syms, log)
+                except Exception as e:      # noqa: BLE001 - the challenger never stops the incumbent
+                    log(f"challenger not started: {type(e).__name__}: {e}")
             sch.start()
             screening["live"].update(state="running", symbols=len(syms), live_from=live_from, not_found=missing, capital=capital, account=name)
             log(f"running: {len(syms)} symbols, {len(sch.reg):,} configurations, paper account {name} (capital {capital:,.0f}, rules {LIVE_RULES_VERSION}), "
@@ -1196,14 +1253,28 @@ def create_app() -> FastAPI:
                                      "for the Angel One 1-minute polling feed (mock-tested, not yet verified against the real service)")
         return sch
 
+    @api.get("/screening/runs")
+    def screening_runs():
+        """Every screening run this API knows, with its identity; exactly one is active on the dashboard."""
+        _screening_open()
+        act = screening.get("meta")
+        return clean({"runs": [{"run_id": rid, "mode": m.get("mode"), "account": Path(m["root"]).name, "active": m is act,
+                                "watermark": sch.watermark, "running": sch._thread is not None and sch._thread.is_alive(),
+                                "synthetic": m.get("synthetic")} for rid, (sch, m) in screening["runs"].items()]})
+
     @api.get("/screening/status")
-    def screening_status():
-        sch = _screening_open()
+    def screening_status(run: str = ""):
         live = screening.get("live")
+        if run:
+            if run not in screening["runs"]:
+                raise HTTPException(404, f"unknown run {run!r}; see /screening/runs")
+            sch, meta = screening["runs"][run]
+        else:
+            sch, meta = _screening_open(), screening.get("meta")
         if sch is None:
             return clean({"started": False, "live": live or {"state": "off", "how": "set NSEQL_LIVE_SCREENING=angelone and the ANGEL_* keys in .env"},
                           "outdated_run": screening.get("outdated"), "live_trading": False})
-        return clean({"started": True, **sch.status(), "run": screening.get("meta"), "live": live})
+        return clean({"started": True, **sch.status(), "run_id": _run_id(meta), "run": meta, "live": live})
 
     @api.get("/screening/summary")
     def screening_summary():
@@ -1681,6 +1752,30 @@ def create_app() -> FastAPI:
             rc = _rca.analyse(sch.store.db, d, write=False)
         return clean({"day": d, **_rca.summary(rc), "trades": rc,
                       "note": "'recovered after the sale' uses prices after the exit (hindsight): documentation only."})
+
+    @api.get("/contest")
+    def contest_view():
+        """Incumbent vs challenger: the forward paper contest (if the challenger runs) and the latest replay contests.
+        Synthetic, historical replay and forward results are labelled separately; only forward results can decide."""
+        from nseql.screening.contest import forward_report
+        out: dict = {"forward": None, "replays": []}
+        _screening_open()
+        if screening.get("challenger") and screening.get("sch") is not None:
+            ch, cm = screening["challenger"]
+            try:
+                out["forward"] = forward_report(screening["sch"], ch, cm)
+            except Exception as e:      # noqa: BLE001 - shown, never breaks the page
+                out["forward"] = {"error": f"{type(e).__name__}: {e}"}
+        base = st.exp_dir / "contest"
+        if base.exists():
+            reps = sorted(base.glob("*/report.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+            for p in reps[:5]:
+                try:
+                    out["replays"].append({"folder": p.parent.name, **json.loads(p.read_text())})
+                except (OSError, ValueError):
+                    continue
+        out["how"] = "python -m nseql.cli contest --fixture  (synthetic, from a clean checkout); --dataset <id> for a historical replay"
+        return clean(out)
 
     @api.get("/screening/portfolio")
     def screening_portfolio():

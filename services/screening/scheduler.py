@@ -75,11 +75,14 @@ class MinuteScheduler:
     def __init__(self, root: Path, symbols: list[str], n_configs: int | None = None, *, calendar: TradingCalendar | None = None,
                  feed=None, kill=None, checkpoint_every: int = 15, grace_seconds: float = 5.0, mode: str = "replay",
                  clock: Callable[[], datetime] | None = None, execution: str = "realistic", exec_cfg: ExecConfig | None = None,
-                 portfolio: PortfolioRules | None | bool = True, live_from=None, experiments_dir: Path | None = None):
+                 portfolio: PortfolioRules | None | bool = True, live_from=None, experiments_dir: Path | None = None,
+                 engine_factory: Callable | None = None):
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
         t0 = time.perf_counter()
-        self.reg = build(symbols, n_configs)
+        # engine_factory(symbols, exec_cfg, portfolio) -> (registry, engine): another strategy on the same scheduler, ledger,
+        # execution and portfolio code (e.g. the challenger trader). Default: the screening registry.
+        self.reg = build(symbols, n_configs) if engine_factory is None else None
         if execution not in ("realistic", "simple"):
             raise ValueError("execution must be 'realistic' or 'simple'")
         if execution == "simple":
@@ -87,7 +90,10 @@ class MinuteScheduler:
         else:
             exec_cfg = exec_cfg or ExecConfig()
             portfolio = PortfolioRules() if portfolio is True else (portfolio or None)
-        self.engine = ScreeningEngine(self.reg, exec_cfg, portfolio)
+        if engine_factory is None:
+            self.engine = ScreeningEngine(self.reg, exec_cfg, portfolio)
+        else:
+            self.reg, self.engine = engine_factory(symbols, exec_cfg, portfolio)
         self.store = ScreeningStore(self.root / "screening.sqlite")
         r = self.reg
         self.store.register_configs([(str(r.ids[i]), i, r.symbols[r.sym[i]], TF_NAMES[r.tf[i]], HORIZON[TF_NAMES[r.tf[i]]],
@@ -107,6 +113,8 @@ class MinuteScheduler:
         self.overruns = 0
         self.startup_seconds = round(time.perf_counter() - t0, 3)
         self.news_count = None          # optional (symbol, ts) -> headlines about it first seen in the 60 min before ts
+        self.verbose = True                  # end-of-day RCA lines in the log (contest replays turn this off)
+        self.followers: list[MinuteScheduler] = []   # isolated accounts fed EXACTLY the same bars at the same time (contest)
         self.recovery = self._recover()
 
     # ------------------------------------------------------------------ state
@@ -146,11 +154,13 @@ class MinuteScheduler:
     def run_cycle(self, now=None) -> dict:
         now = pd.Timestamp(now if now is not None else self.clock())
         with self.lock:
-            got = self.ingest(self.feed.fetch(now), getattr(self.feed, "label", "feed")) if self.feed is not None else {}
+            fetched = self.feed.fetch(now) if self.feed is not None else []
+            got = self.ingest(fetched, getattr(self.feed, "label", "feed")) if self.feed is not None else {}
             upto = _iso(now - pd.Timedelta(seconds=self.grace))
             before = self.watermark
             minutes = [m for m in self.store.pending_minutes(before, upto) if _in_session(m)]   # older stores may hold pre-open bars
-            gaps = self._gaps(before, minutes[-1] if minutes else None)
+            have = set(minutes)                  # minutes WITH bars are never gaps (review 2026-11-24, finding 4)
+            gaps = [g for g in self._gaps(before, minutes[-1] if minutes else None) if g not in have]
             for g in gaps:
                 self.store.record({"minute": g, "processed_at": time.time(), "latency_ms": 0.0, "lag_s": None, "mode": self.mode,
                                    "status": "no_data", "symbols_with_data": 0, "symbols_expected": len(self.reg.symbols), "closed": "[]",
@@ -166,9 +176,16 @@ class MinuteScheduler:
                     from nseql.screening.rca import analyse
                     with self.store._lock:
                         n = len(analyse(self.store.db, day))
-                    print(f"[screening] {day}: root-cause analysis written for {n} trades", flush=True)
+                    if self.verbose:
+                        print(f"[screening] {day}: root-cause analysis written for {n} trades", flush=True)
                 except Exception as e:      # noqa: BLE001 - documentation must never stop trading
                     print(f"[screening] {day}: RCA failed: {type(e).__name__}: {e}", flush=True)
+            for f in self.followers:                    # same events to every follower, even if it declines to trade
+                try:
+                    f.ingest(fetched, getattr(self.feed, "label", "feed"))
+                    f.run_cycle(now)
+                except Exception as e:      # noqa: BLE001 - a follower must never stop the incumbent
+                    print(f"[screening] follower {f.root.name} cycle error: {type(e).__name__}: {e}", flush=True)
             self.last_cycle = {"at": str(now), "ingested": got, "processed": len(done), "gaps": len(gaps),
                                "latency_ms": [d["latency_ms"] for d in done], "watermark": self.watermark}
             return self.last_cycle
@@ -198,6 +215,7 @@ class MinuteScheduler:
         warm = self.live_from is not None and minute < self.live_from
         allow = not (self.kill is not None and self.kill.engaged) and not warm
         from nseql.screening import journal as jn
+        snap = {k: np.array(v, copy=True) for k, v in self.engine.state().items()}   # restored if the ledger write fails
         ctx = jn.context(self.engine)                    # market state known at decision time (before this minute's bar)
         t0 = time.perf_counter()
         res = self.engine.step(pd.Timestamp(minute), sy, *cols, allow_orders=allow,
@@ -232,7 +250,13 @@ class MinuteScheduler:
                "stale_skips": res.stale_skips, "counts": json.dumps(res.counts), "fills": len(fills),
                "equity_inr": x.equity() / 100 if x.rules else None, "cash_inr": x.cash / 100 if x.rules else None, "halted": int(x.halted_day)}
         jr = jn.rows(fills, ctx, self.engine.fe.index, self.news_count) if fills else []
-        self.store.record(cyc, signals, orders, fills, done, events, [(minute, k, v) for k, v in refused.items()], jr)
+        try:
+            self.store.record(cyc, signals, orders, fills, done, events, [(minute, k, v) for k, v in refused.items()], jr)
+        except Exception:
+            # the ledger write failed (and was rolled back): undo this minute in memory too, so the watermark does not
+            # pass a minute the ledger never recorded and the retry reproduces an uninterrupted run exactly
+            self.engine.load(snap)
+            raise
         self._since_ckpt += 1
         return cyc
 

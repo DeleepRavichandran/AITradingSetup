@@ -78,6 +78,19 @@ export function fixtures(state) {
         rca: { won: 1, lost: 1, by_cause: [{ cause: "stopped out by noise", outcome: "lost", trades: 1, net_inr: -40.5 }, { cause: "the strategy's sell signal came after a gain", outcome: "won", trades: 1, net_inr: 22.1 }],
           latest: [{ time: "10:02", symbol: "ITC", outcome: "lost", summary: "Lost 40.50 INR; stopped out by noise; held 3 min", causes: ["tight 0.5% stop in a volatile market"], net_inr: -40.5 }] }, most_active: [{ strategy: "VWAP reversion -0.3%", symbol: "ITC", trades: 2, profit: -40.5 }],
         limited: [{ label: "cool-down after a sale", value: 12 }, { label: "already holding that stock", value: 30 }], trades_by_hour: [{ hour: "09:00", buys: 1, sells: 0 }, { hour: "10:00", buys: 1, sells: 1 }] } }),
+    "/contest": () => {
+      const days = ["2026-01-12", "2026-01-13", "2026-01-14"];
+      const acct = (v, eq, pnl, dd, tr) => ({ version: v, start_equity: 100000, end_equity: eq[2], net_pnl_inr: pnl, max_drawdown: dd, worst_day: -0.012,
+        turnover: 2.5, charges_inr: 310.5, trades_closed: tr, fills: tr * 2, exposure_avg: 0.12, orders_partial: 3, orders_cancelled_or_rejected: 1,
+        buys_refused_by_limits: 1200, residual_positions: [], daily: days.map((d, k) => ({ day: d, equity: eq[k], return: k ? eq[k] / eq[k - 1] - 1 : eq[0] / 100000 - 1 })), curve: [] });
+      return { forward: null, how: "python -m nseql.cli contest --fixture", replays: [{ folder: "fixture_20260124", kind: "synthetic",
+        kind_label: "SYNTHETIC replay (made-up prices; says nothing about real markets)", sessions: days, capital: 100000,
+        incumbent: acct("screening rules 1.2 (registry v2)", [99200, 98700, 98100], -1900, -0.019, 140),
+        challenger: acct("orb30-breadth-1.0", [99900, 99700, 99850], -150, -0.003, 9), cash: { net_pnl_inr: 0 }, both_lost_money: true,
+        primary: { measure: "paired", mean: 0.0062, low: 0.001, high: 0.011, n: 3, daily_differences: [0.007, 0.003, 0.0076] },
+        verdict: { status: "not a forward verdict", kind: "synthetic", reason: "SYNTHETIC replay: reported for verification only; only forward paper sessions can decide.",
+          rules: { min_sessions: 60, min_challenger_trades: 100 } }, manifest_sha256: "ab12cd34" }] };
+    },
     "/news": () => ({ items: [{ title: "Test headline", source: "Fixture Wire", link: "https://example.invalid/a", published: "2026-11-20T09:00:00Z" }], errors: {} }),
   };
 }

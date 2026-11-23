@@ -72,6 +72,15 @@ def main(argv: list[str] | None = None) -> int:
     tr.add_argument("--account", required=True); tr.add_argument("--day", required=True, help="YYYY-MM-DD")
     rc = sub.add_parser("trade-rca", help="write a root cause for every completed trade of a day (winners and losers) into the account")
     rc.add_argument("--account", required=True); rc.add_argument("--day", required=True, help="YYYY-MM-DD")
+    la = sub.add_parser("ledger-audit", help="read-only check of a paper ledger for traces of the 2026-11-24 measurement bugs")
+    la.add_argument("--account", required=True)
+    co = sub.add_parser("contest", help="incumbent vs challenger in isolated paper accounts: development run, frozen manifest, holdout run, verdict")
+    g = co.add_mutually_exclusive_group(required=True)
+    g.add_argument("--fixture", action="store_true", help="deterministic SYNTHETIC minute data (works from a clean checkout)")
+    g.add_argument("--dataset", help="a stored dataset with 1-minute bars (historical replay)")
+    co.add_argument("--symbols", type=int, default=10); co.add_argument("--dev", type=int, default=5, help="development sessions")
+    co.add_argument("--eval", type=int, default=15, help="holdout (evaluation) sessions"); co.add_argument("--capital", type=float, default=100_000)
+    co.add_argument("--seed", type=int, default=7); co.add_argument("--out", default=None)
     sub.add_parser("brain-verify", help="verify the episodic memory hash chain and the correctness probes")
     v = sub.add_parser("serve", help="start the API server"); v.add_argument("--host", default="127.0.0.1"); v.add_argument("--port", type=int, default=8000)
     a = ap.parse_args(argv)
@@ -140,6 +149,45 @@ def main(argv: list[str] | None = None) -> int:
         for f in a.files:
             out = fs.import_text(Path(f).read_text(encoding="utf-8", errors="replace"), file=Path(f).name)
             print(f"{f}: {out['layout']} layout, {out['schemes']} schemes, {out['new_navs']} new NAVs ({out['duplicates']} already stored, {out['skipped']} skipped)")
+    elif a.cmd == "contest":
+        from datetime import datetime as _dt
+
+        from nseql.screening import contest as C
+        out = Path(a.out) if a.out else s.experiments_dir / "contest" / f"{'fixture' if a.fixture else a.dataset}_{_dt.now():%Y%m%d_%H%M%S}"
+        if a.fixture:
+            rep = C.run_fixture(out, symbols_n=a.symbols, dev_n=a.dev, eval_n=a.eval, seed=a.seed, capital=a.capital)
+        else:
+            from nseql.data.store import Dataset
+            ds = Dataset(s.data_dir / a.dataset)
+            syms = [x for x in ds.symbols("1m") if not x.startswith("NIFTY")]
+            frames = {x: ds.bars(x, "1m") for x in syms}
+            stream = C.stream_from_frames(frames)
+            days = sorted({t.strftime("%Y-%m-%d") for t, _ in stream})
+            if len(days) < a.dev + 2:
+                print(f"dataset {a.dataset} has {len(days)} sessions of 1-minute bars; need at least {a.dev + 2}"); return 2
+            ev = days[a.dev:a.dev + a.eval]
+            rep = C.run_protocol(out, stream, syms, days[:a.dev], ev, a.capital, "synthetic" if ds.synthetic else "historical",
+                                 {"dataset": a.dataset, "synthetic": ds.synthetic})
+        i, c = rep["incumbent"], rep["challenger"]
+        print(f"{rep['kind_label']}: {len(rep['sessions'])} evaluation sessions {rep['sessions'][0]} .. {rep['sessions'][-1]}")
+        print(f"incumbent: {i['version']}; challenger: {c['version']}; starting capital {rep['capital']:,.0f} each")
+        print(f"{'':22}{'net P&L':>12}{'max DD':>9}{'worst day':>10}{'trades':>8}{'charges':>10}{'turnover':>9}{'exposure':>9}")
+        for lab, x in (("incumbent", i), ("challenger", c)):
+            print(f"{lab:22}{x['net_pnl_inr']:>12,.0f}{x['max_drawdown']:>9.2%}{x['worst_day']:>10.2%}{x['trades_closed']:>8}"
+                  f"{x['charges_inr']:>10,.0f}{x['turnover']:>9.2f}{x['exposure_avg']:>9.1%}")
+        print(f"{'cash (reference)':22}{0:>12,.0f}{0:>9.2%}")
+        p = rep["primary"]
+        print(f"paired daily advantage (challenger - incumbent): mean {p['mean']:+.4%}, 95% block-bootstrap [{p['low']:+.4%}, {p['high']:+.4%}]")
+        if rep["both_lost_money"]:
+            print("both traders lost money; cash did better than either")
+        print(f"verdict: {rep['verdict']['status']} - {rep['verdict']['reason']}")
+        print(f"manifest sha256 {rep['manifest_sha256']}; report {out / 'report.json'}")
+        return 0
+    elif a.cmd == "ledger-audit":
+        from nseql.screening.ledger_audit import audit
+        rep = audit(s.experiments_dir / "screening" / a.account)
+        print(json.dumps(rep, indent=2))
+        return 0
     elif a.cmd == "trade-rca":
         import sqlite3 as _sq
         from nseql.screening.rca import analyse, summary

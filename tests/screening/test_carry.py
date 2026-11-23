@@ -57,3 +57,48 @@ def test_open_positions_block_the_carry(prev, tmp_path):
     con.close()
     with pytest.raises(CarryError, match="still holds positions in AAA"):
         carry_state(dst)
+
+
+def test_three_successive_accounts_keep_all_inherited_evidence(tmp_path):
+    """Regression (review 2026-11-24, finding 5): A trades, B continues A and trades, C continues B. C must hold the
+    evidence of A's AND B's round trips; the second migration used to keep only B's own ledger."""
+    from nseql.screening.carry import save_inherited
+    base = tmp_path / "screening"
+    days = ["2026-11-16", "2026-11-17"]
+    a_root = base / "live_angelone_100000_r2"
+    a = MinuteScheduler(a_root, symbols(8), portfolio=PortfolioRules(capital=100_000))
+    for ts, bars in minute_stream(8, days[:1], seed=5):
+        a.ingest(bars)
+        a.run_cycle(ts + pd.Timedelta(seconds=6))
+    (a_root / "live.json").write_text(json.dumps({"capital": 100_000}))
+    ca = carry_state(a_root)
+    b_root = base / "live_angelone_100000_r2_v11"
+    b = MinuteScheduler(b_root, symbols(8), portfolio=PortfolioRules(capital=ca["cash_inr"]))
+    apply_evidence(b, ca["evidence"])
+    save_inherited(b_root, ca)
+    (b_root / "live.json").write_text(json.dumps({"capital": 100_000, "original_capital": 100_000}))
+    for ts, bars in minute_stream(8, days, seed=5)[375:]:
+        b.ingest(bars)
+        b.run_cycle(ts + pd.Timedelta(seconds=6))
+    cb = carry_state(b_root)
+    own_b = int(b.engine.x.alloc.ev_n.sum()) - ca["round_trips"]
+    assert own_b > 0 and cb["round_trips"] == ca["round_trips"] + own_b
+    c = MinuteScheduler(base / "live_angelone_100000_r2_v12", symbols(8), portfolio=PortfolioRules.live(cb["cash_inr"]))
+    apply_evidence(c, cb["evidence"])
+    assert np.allclose(c.engine.x.alloc.ev_n, b.engine.x.alloc.ev_n) and np.allclose(c.engine.x.alloc.ev_sum, b.engine.x.alloc.ev_sum, atol=1e-9)
+
+
+def test_account_migrated_before_the_fix_rebuilds_inherited_evidence(tmp_path):
+    """An account created before inherited evidence was stored only names its source in live.json (carried_from)."""
+    base = tmp_path / "screening"
+    a_root = base / "live_angelone_100000_r2"
+    a = MinuteScheduler(a_root, symbols(8), portfolio=PortfolioRules(capital=100_000))
+    for ts, bars in minute_stream(8, ["2026-11-16"], seed=5):
+        a.ingest(bars)
+        a.run_cycle(ts + pd.Timedelta(seconds=6))
+    (a_root / "live.json").write_text(json.dumps({"capital": 100_000}))
+    ca = carry_state(a_root)
+    b_root = base / "live_angelone_100000_r2_v12"
+    b = MinuteScheduler(b_root, symbols(8), portfolio=PortfolioRules(capital=ca["cash_inr"]))
+    (b_root / "live.json").write_text(json.dumps({"capital": 100_000, "start_cash": ca["cash_inr"], "carried_from": {"from_account": a_root.name}}))
+    assert carry_state(b_root)["round_trips"] == ca["round_trips"]      # B never traded; A's record is not lost

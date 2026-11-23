@@ -123,6 +123,7 @@ class Executor:
         self.day_start = self.cash
         self.halted_day = False
         self.events: list[dict] = []
+        self.qty_cap: dict[int, int] | None = None     # optional per-order share cap set by a strategy (risk-based sizing)
 
     @property
     def mode(self) -> str:
@@ -208,6 +209,8 @@ class Executor:
         b = np.array(buys, dtype=np.int64)
         px = close[r.sym[b]]
         q0 = np.where(px > 0, (rules.per_trade_pct * lim) // np.where(px > 0, px, 1), 0).astype(np.int64)
+        if self.qty_cap:                           # a strategy's own size limit; the portfolio limits below still apply
+            q0 = np.minimum(q0, np.array([self.qty_cap.get(int(i), int(q)) for i, q in zip(b, q0)], dtype=np.int64))
         ranked = rules.allocation == "ranked"
         info: dict[int, dict] = {}
         if ranked:

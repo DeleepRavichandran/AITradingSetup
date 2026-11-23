@@ -27,7 +27,7 @@ import numpy as np
 import pandas as pd
 
 from nseql.backtester import margin as margin_mod
-from nseql.backtester.execution import ExecutionConfig, fillable_qty, is_stop_like, match_price
+from nseql.backtester.execution import ExecutionConfig, fillable_qty, is_stop_like, match_price, stop_hit
 from nseql.backtester.orders import Fill, Order, OrderStatus, OrderType
 from nseql.backtester.portfolio import Account
 from nseql.data.portal import Bar, DataPortal
@@ -436,6 +436,16 @@ class BacktestEngine:
 
     # =============================================================== matching
     def _match(self, k: int, bars: dict[str, Bar], t: pd.Timestamp) -> None:
+        try:
+            self._match_bar(k, bars, t)
+        finally:
+            # stop-limit trigger discovery happens once per bar, after every matching pass has priced the bar
+            for o in self._open:
+                bar = bars.get(o.symbol)
+                if o.active and not o.triggered and bar is not None and o.eligible_seq <= k and stop_hit(o, bar):
+                    o.triggered = True
+
+    def _match_bar(self, k: int, bars: dict[str, Bar], t: pd.Timestamp) -> None:
         """Match resting orders against this step's bars.
 
         Three passes, so that liquidity is only ever consumed by orders that actually fill:

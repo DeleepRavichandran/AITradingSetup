@@ -56,7 +56,7 @@ class MinuteResult:
 
 
 class ScreeningEngine:
-    def __init__(self, reg: Registry, exec_cfg: ExecConfig | None = None, portfolio: PortfolioRules | None = None):
+    def __init__(self, reg: Registry, exec_cfg: ExecConfig | None = None, portfolio: PortfolioRules | None = None, alloc_cfg=None):
         self.reg = reg
         self.fe = FeatureEngine(reg.symbols)
         n = len(reg)
@@ -72,7 +72,7 @@ class ScreeningEngine:
         self.last_minute = -1                                # epoch minutes of the last processed minute
         self._by_tf = {k: np.flatnonzero(reg.tf == k) for k in range(len(TF_NAMES))}
         self._charges = ChargeSchedule(allow_extrapolation=True)
-        self.x = Executor(self, exec_cfg, portfolio)
+        self.x = Executor(self, exec_cfg, portfolio, alloc_cfg)
 
     # ------------------------------------------------------------------ helpers
     @staticmethod

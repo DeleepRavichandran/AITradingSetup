@@ -61,7 +61,10 @@ def fillable_qty(order: Order, inst: Instrument, bar: Bar, cfg: ExecutionConfig,
 
 def match_price(order: Order, inst: Instrument, bar: Bar, cfg: ExecutionConfig, qty: int,
                 prev_close: float | None) -> float | None:
-    """Price (rupees, on the tick grid) at which `qty` of the order would fill on this bar, or None."""
+    """Price (rupees, on the tick grid) at which `qty` of the order would fill on this bar, or None.
+    Pure: it never changes the order, so every matching pass prices the same order the same way. A stop-limit
+    order is marked triggered by the engine only AFTER the bar on which its stop was hit (`stop_hit`); on that
+    bar it is priced from the trigger, on later bars it rests as a limit order."""
     side = order.side
     o, h, l = bar.open, bar.high, bar.low
     band = inst.price_band_pct
@@ -108,14 +111,12 @@ def match_price(order: Order, inst: Instrument, bar: Bar, cfg: ExecutionConfig, 
     elif typ is OrderType.STOP_LIMIT:
         S, L = order.stop_price, order.limit_price
         if side > 0 and h >= S:
-            order.triggered = True
-            trig = max(S, o)
+            trig = max(S, o)            # triggered on THIS bar: no price before the trigger is available
             if trig <= L:
                 px = trig
             elif l < L:
                 px = L
         elif side < 0 and l <= S:
-            order.triggered = True
             trig = min(S, o)
             if trig >= L:
                 px = trig
@@ -130,6 +131,13 @@ def match_price(order: Order, inst: Instrument, bar: Bar, cfg: ExecutionConfig, 
     if upper is not None:
         px = min(max(px, lower), upper)
     return max(px, inst.tick_size)
+
+
+def stop_hit(order: Order, bar: Bar) -> bool:
+    """True when a stop-limit order's stop is reached on `bar`."""
+    if order.type is not OrderType.STOP_LIMIT or order.stop_price is None:
+        return False
+    return bar.high >= order.stop_price if order.side > 0 else bar.low <= order.stop_price
 
 
 def is_stop_like(order: Order) -> bool:

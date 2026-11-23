@@ -60,19 +60,21 @@ def find_previous(screening_dir: Path, name: str) -> Path | None:
     return best
 
 
-def carry_state(prev: Path) -> dict:
+def carry_state(prev: Path, _check_open: bool = True) -> dict:
     meta = json.loads((prev / "live.json").read_text())
     con = sqlite3.connect(f"file:{prev / 'screening.sqlite'}?mode=ro", uri=True)
     try:
         open_ = con.execute("SELECT symbol, SUM(CASE WHEN side='BUY' THEN qty ELSE -qty END) q FROM paper_fills GROUP BY config_id, symbol "
                             "HAVING q != 0").fetchall()
-        if open_:
+        if open_ and _check_open:
             held = sorted({s for s, _ in open_})
             raise CarryError(f"previous account {prev.name} still holds positions in {', '.join(held)}; nothing carried. "
                              "Restart after they are sold, or set NSEQL_LIVE_RUN to start a separate fresh account.")
         row = con.execute("SELECT minute, cash_inr, equity_inr FROM cycles WHERE cash_inr IS NOT NULL ORDER BY minute DESC LIMIT 1").fetchone()
         if not row:
-            raise CarryError(f"previous account {prev.name} has no recorded cash")
+            if meta.get("start_cash") is None:
+                raise CarryError(f"previous account {prev.name} has no recorded cash")
+            row = (None, float(meta["start_cash"]), float(meta["start_cash"]))      # never ran a cycle: its starting cash
         rt = pd.read_sql_query(
             "SELECT b.config_id, b.price AS entry_px, s.qty, s.realized_paise FROM paper_orders s "
             "JOIN paper_orders b ON b.config_id = s.config_id AND b.side = 'BUY' AND b.status IN ('filled','partial') "
@@ -82,6 +84,15 @@ def carry_state(prev: Path) -> dict:
     finally:
         con.close()
     ev: dict[str, list[float]] = {}
+    inh = prev / INHERITED                  # evidence this account itself inherited: carried on, never dropped
+    src = (meta.get("carried_from") or {}).get("from_account")
+    if inh.exists():
+        for cid, v in json.loads(inh.read_text())["evidence"].items():
+            ev[cid] = [float(x) for x in v]
+    elif src and (prev.parent / src / "live.json").exists():
+        # migrated before inherited evidence was stored: rebuild it from the account it continued (recursively)
+        for cid, v in carry_state(prev.parent / src, _check_open=False)["evidence"].items():
+            ev[cid] = [float(x) for x in v]
     for r in rt.itertuples():
         basis = float(r.entry_px) * int(r.qty) * 100
         if basis <= 0:
@@ -110,3 +121,13 @@ def apply_evidence(sch, evidence: dict) -> int:
         a.ev_sum[k] += s
         n += 1
     return n
+
+
+INHERITED = "inherited_evidence.json"
+
+
+def save_inherited(root: Path, carried: dict) -> None:
+    """Store the evidence an account inherited, so the NEXT migration carries it on (finding 5, review 2026-11-24)."""
+    Path(root).mkdir(parents=True, exist_ok=True)
+    (Path(root) / INHERITED).write_text(json.dumps({"from_account": carried["from_account"], "round_trips": carried["round_trips"],
+                                                    "evidence": carried["evidence"]}))

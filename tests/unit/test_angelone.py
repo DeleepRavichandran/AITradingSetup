@@ -218,6 +218,31 @@ def test_unattended_api_start_with_angel_one(data_dir, tmp_path, monkeypatch):
     assert st["live"]["history"].startswith("dataset angel_daily")
     assert st["portfolio"]["equity_inr"] == 1_000_000 and st["live"]["account"] == "live_angelone_r2_v12"
     assert st["portfolio"]["rules"]["cooldown_minutes"] == 15 and st["portfolio"]["rules"]["max_open_per_symbol"] == 1
+    # Regression (review 2026-11-24, finding 3): finishing a replay must not replace the running live account on the
+    # dashboard. Each run has an explicit identity.
+    assert st["run_id"] == "live:live_angelone_r2_v12"
+    # the challenger runs beside the live bot in its own account, fed the same bars (forward contest)
+    fw = c.get("/api/contest").json()["forward"]
+    assert fw["kind"] == "forward" and fw["challenger"]["version"] == "orb30-breadth-1.0" and fw["verdict"]["status"] == "inconclusive"
+    assert (tmp_path / "exp" / "screening" / "live_angelone_r2_v12_challenger_orb30-breadth-1_0" / "live.json").exists()
+    import shutil
+    shutil.copytree(data_dir / "synthetic_v1", tmp_path / "data" / "synthetic_v1")      # 1-minute bars for a replay
+    rp = c.post("/api/screening/replay", json={"sessions": 1, "configs": 60})
+    assert rp.status_code == 200, rp.text
+    jid = rp.json()["id"]
+    for _ in range(600):
+        j = c.get(f"/api/jobs/{jid}").json()
+        if j["status"] != "running":
+            break
+        time.sleep(0.2)
+    assert j["status"] == "done", j
+    after = c.get("/api/screening/status").json()
+    assert after["run_id"] == "live:live_angelone_r2_v12" and after["mode"] == "live" and after["running"] is True
+    runs = c.get("/api/screening/runs").json()["runs"]
+    assert {r["run_id"].split(":")[0] for r in runs} == {"live", "replay"} and sum(r["active"] for r in runs) == 1
+    replay_id = next(r["run_id"] for r in runs if r["run_id"].startswith("replay:"))
+    rs = c.get("/api/screening/status", params={"run": replay_id}).json()
+    assert rs["run_id"] == replay_id and rs["mode"] == "replay"
     # a different starting capital is a separate paper account, starting from scratch.
     # A slow login opens the race seen on 2026-11-23: dashboard requests during start-up must not reopen the
     # previous account read-only and hide the live bot.

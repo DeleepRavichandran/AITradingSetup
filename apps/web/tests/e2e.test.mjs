@@ -203,7 +203,7 @@ describe("Command Deck safety", () => {
 });
 
 describe("Accessibility and layout", () => {
-  for (const path of ["/", "/today", "/deck", "/screening", "/universe", "/planner", "/funds"]) for (const colorScheme of ["light", "dark"]) {
+  for (const path of ["/", "/today", "/contest", "/deck", "/screening", "/universe", "/planner", "/funds"]) for (const colorScheme of ["light", "dark"]) {
     test(`${path} (${colorScheme}): no serious or critical axe violations`, async () => {
       const { page, ctx } = await open(path, { colorScheme });
       await page.waitForLoadState("networkidle");
@@ -265,6 +265,20 @@ describe("Accessibility and layout", () => {
     await page.getByTestId("limited").getByText("Trading rules 1.1. Buys held back today: cool-down after a sale 12 · already holding that stock 30.").waitFor();
     await page.getByRole("img", { name: "1 winning and 1 losing exits today" }).waitFor();
     await page.getByTestId("chart-alloc").getByText("Free cash", { exact: true }).waitFor();
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  });
+
+  test("Incumbent vs challenger: verdict with data source and versions, curves, costs, both-lost warning", async () => {
+    const { page, ctx, errors } = await open("/contest");
+    await page.getByTestId("contest-verdict").getByText("not a forward verdict").waitFor();
+    await page.getByTestId("contest-source").getByText("SYNTHETIC replay (made-up prices; says nothing about real markets)").waitFor();
+    await page.getByTestId("contest-verdict").getByText("orb30-breadth-1.0").waitFor();
+    await page.getByTestId("contest-verdict").getByText("screening rules 1.2 (registry v2)").waitFor();
+    await page.getByTestId("contest-verdict").getByText("2026-01-12 → 2026-01-14 (3)").waitFor();
+    await page.getByTestId("both-lost").waitFor();
+    for (const id of ["contest-equity", "contest-drawdown", "contest-table"]) await page.getByTestId(id).waitFor();
+    await page.getByTestId("contest-table").getByText("−₹1,900").waitFor();
     assert.deepEqual(errors, []);
     await ctx.close();
   });

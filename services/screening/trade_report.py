@@ -24,11 +24,10 @@ def round_trips(db_path, day: str) -> pd.DataFrame:
                               "o.realized_paise, c.family, c.timeframe, c.stop_pct, c.params, s.reason AS exit_reason "
                               "FROM paper_orders o JOIN configs c ON c.id = o.config_id "
                               "LEFT JOIN signals s ON s.config_id = o.config_id AND s.bar_ts = o.decided_at "
-                              "WHERE o.status IN ('filled','partial') AND substr(o.fill_ts,1,10) = ? ORDER BY o.fill_ts", db, params=(day,))
+                              "WHERE o.status IN ('filled','partial') AND substr(o.fill_ts,1,10) <= ? ORDER BY o.fill_ts", db, params=(day,))
     finally:
         if own:
             db.close()
-    buys = o[o.side == "BUY"]
     rows = []
     last_buy: dict[str, pd.Series] = {}
     for _, r in o.iterrows():
@@ -45,8 +44,12 @@ def round_trips(db_path, day: str) -> pd.DataFrame:
                      "entry_px": b.price if b is not None else None, "exit_px": r.price, "qty": r.qty,
                      "hold_min": (exit_ts - entry_ts).total_seconds() / 60 if b is not None else None,
                      "net_inr": net, "charges_inr": ch / 100, "gross_inr": net + ch / 100})
+    # pair across dates FIRST, then keep the round trips that EXITED on `day` (review 2026-11-24, finding 6: an overnight
+    # swing exit used to lose its entry time and buy-side charges because orders were filtered by day before pairing)
     rt = pd.DataFrame(rows)
-    rt.attrs["open_buys"] = len(buys) - len(rt)
+    if not rt.empty:
+        rt = rt[rt.exit_ts.dt.strftime("%Y-%m-%d") == day].reset_index(drop=True)
+    rt.attrs["open_buys"] = len(last_buy)
     return rt
 
 

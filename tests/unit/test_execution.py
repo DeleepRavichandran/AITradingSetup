@@ -113,3 +113,22 @@ def test_latency_delays_fills_by_extra_bars():
     rows = flat([100, 101, 102, 103])
     res = run({"AAA": frame(rows)}, [EQ], {0: lambda c: c.order("AAA", 10, tif="GTC")}, exec_kw={"latency_bars": 1})
     assert _fills(res)[0][3] == 102.0
+
+
+def test_stop_limit_buy_never_fills_below_its_trigger_across_matching_passes():
+    """Regression (review 2026-11-24): stop 105, limit 106; the bar opens at 100 and later reaches 106.
+    The reachability pass marked the order triggered, and the allocation pass then priced it as a plain
+    limit order at the 100 open, i.e. before the stop could have been hit. The fill must be at 105 or worse."""
+    rows = [(100, 100, 100, 100), (100, 106, 99, 105), (105, 106, 104, 105)]
+    res = run({"AAA": frame(rows)}, [EQ], {0: lambda c: c.order("AAA", 10, type="STOP_LIMIT", stop=105, limit=106, tif="GTC")})
+    (ts, side, qty, px), = _fills(res)
+    assert ts == frame(rows)["ts"][1] and 105.0 <= px <= 106.0, px
+
+
+def test_stop_limit_triggered_on_one_bar_rests_as_a_limit_on_later_bars():
+    """The stop is hit on bar 1 but the limit is not reachable there (opens above the limit); on bar 2 the order
+    is a resting limit, so a lower open is a legitimate fill at that open."""
+    rows = [(100, 100, 100, 100), (107, 108, 107, 107.5), (105, 105.5, 104, 105)]
+    res = run({"AAA": frame(rows)}, [EQ], {0: lambda c: c.order("AAA", 10, type="STOP_LIMIT", stop=105, limit=106, tif="GTC")})
+    (ts, side, qty, px), = _fills(res)
+    assert ts == frame(rows)["ts"][2] and px == 105.0
