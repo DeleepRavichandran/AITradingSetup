@@ -267,6 +267,7 @@ Counters reset at the day boundary and are part of the checkpoint (a restart rep
 tested). Indices (NIFTY 50) are never traded. New rules open a new account folder
 (`live_angelone_<capital>_r2_v11`); the old account is kept for review.
 
-`nseql what-if --account <folder> --day YYYY-MM-DD` replays an account's stored bars for that day under
+`nseql what-if --account <folder> --day YYYY-MM-DD` (on Windows, where Application Control may block the
+`nseql.exe` launcher: `.venv\Scripts\python.exe -m nseql.cli what-if ...`) replays an account's stored bars for that day under
 rules 1.0 and 1.1 side by side (trades, charges, realised P&L, end value, refusals). It replays a day the
 rules were designed from, so it is a sanity check, not evidence: judge 1.1 on the days after.
