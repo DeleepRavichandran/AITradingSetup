@@ -91,6 +91,11 @@ export function fixtures(state) {
         verdict: { status: "not a forward verdict", kind: "synthetic", reason: "SYNTHETIC replay: reported for verification only; only forward paper sessions can decide.",
           rules: { min_sessions: 60, min_challenger_trades: 100 } }, manifest_sha256: "ab12cd34" }] };
     },
+    "/market/pulse": () => ({ every_s: 900, pulses: [{ at: "2026-11-23T10:15:00", session: "2026-11-23", data: "Live 1-minute candles (adapter not verified)",
+      breadth: { up: 12, down: 7, symbols: 19 }, top_gainers: [["INFY", 1.42], ["TCS", 0.88]], top_losers: [["AXISBANK", -1.31], ["HDFCBANK", -0.97]],
+      paper_equity_inr: 99820, open_positions: 1, realised_today_inr: -40.5, buy_signals_by_family: {}, news_since_open: { headlines: 3, by_symbol: {}, by_theme: {} } }] }),
+    "/news/recent": () => ({ items: [{ title: "RBI keeps repo rate unchanged", source: "Fixture Wire", first_seen: "2026-11-23T10:05:00", link: "https://example.invalid/b",
+      symbols: [], themes: ["rbi"] }], status: {} }),
     "/news": () => ({ items: [{ title: "Test headline", source: "Fixture Wire", link: "https://example.invalid/a", published: "2026-11-20T09:00:00Z" }], errors: {} }),
   };
 }

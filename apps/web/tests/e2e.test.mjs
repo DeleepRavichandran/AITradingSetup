@@ -203,7 +203,7 @@ describe("Command Deck safety", () => {
 });
 
 describe("Accessibility and layout", () => {
-  for (const path of ["/", "/today", "/contest", "/deck", "/screening", "/universe", "/planner", "/funds"]) for (const colorScheme of ["light", "dark"]) {
+  for (const path of ["/", "/today", "/hud", "/contest", "/deck", "/screening", "/universe", "/planner", "/funds"]) for (const colorScheme of ["light", "dark"]) {
     test(`${path} (${colorScheme}): no serious or critical axe violations`, async () => {
       const { page, ctx } = await open(path, { colorScheme });
       await page.waitForLoadState("networkidle");
@@ -265,6 +265,19 @@ describe("Accessibility and layout", () => {
     await page.getByTestId("limited").getByText("Trading rules 1.1. Buys held back today: cool-down after a sale 12 · already holding that stock 30.").waitFor();
     await page.getByRole("img", { name: "1 winning and 1 losing exits today" }).waitFor();
     await page.getByTestId("chart-alloc").getByText("Free cash", { exact: true }).waitFor();
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  });
+
+  test("Mission control: core gauge, bot, money, breadth, contest and event stream from real API data", async () => {
+    const { page, ctx, errors } = await open("/hud");
+    await page.getByRole("img", { name: /Account value ₹99,820, -0\.18% today, 5% invested/ }).waitFor();
+    await page.getByTestId("hud-bot").getByText("Working").waitFor();
+    await page.getByTestId("hud-source").getByText("Live 1-minute candles (adapter not verified)").waitFor();
+    await page.getByTestId("hud-breadth").getByText("12 up").waitFor();
+    await page.getByTestId("hud-contest").getByText("The forward contest starts with live screening.").waitFor();
+    await page.getByTestId("hud-stream").getByText("RBI keeps repo rate unchanged").waitFor();
+    await page.getByTestId("hud-stream").getByText(/ITC: Lost 40.50 INR/).waitFor();
     assert.deepEqual(errors, []);
     await ctx.close();
   });
