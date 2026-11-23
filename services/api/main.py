@@ -1349,6 +1349,7 @@ def create_app() -> FastAPI:
 
     class _CopilotCtx:
         reg = st.registry
+        news = staticmethod(lambda: getattr(st, "news_watch", None))
         sch = staticmethod(_screening_open)
         readiness = staticmethod(_readiness)
         brain_status = staticmethod(_brain_status)
@@ -1464,6 +1465,31 @@ def create_app() -> FastAPI:
         if "desk" not in news_desk:
             news_desk["desk"] = NewsDesk(st.exp_dir)
         return clean(news_desk["desk"].headlines(min(max(limit, 1), 100), topic or None, refresh))
+
+    def _desk():
+        from nseql.data.news import NewsDesk
+        if "desk" not in news_desk:
+            news_desk["desk"] = NewsDesk(st.exp_dir)
+        return news_desk["desk"]
+
+    from nseql.data.news_watch import NewsWatch
+    watch = NewsWatch(st.exp_dir, _desk(), symbols=lambda: (_screening_open().reg.symbols if _screening_open() is not None else []),
+                      scheduler=_screening_open, market_open=lambda: _calendar().is_open(datetime.now(views.IST).replace(tzinfo=None)))
+    st.news_watch = watch
+
+    @api.get("/news/live")
+    def news_live(limit: int = 50, symbol: str = "", theme: str = ""):
+        """Headlines recorded by the watcher, newest first, with the time this lab first saw each one."""
+        return clean({"items": watch.recent(min(max(limit, 1), 300), symbol, theme), "status": watch.status()})
+
+    @api.get("/news/watch")
+    def news_watch_status():
+        today = datetime.now(views.IST).strftime("%Y-%m-%d")
+        return clean({**watch.status(), "today": watch.counts(f"{today}T00:00:00")})
+
+    @api.get("/market/pulse")
+    def market_pulse(limit: int = 30):
+        return clean({"pulses": watch.pulses(min(max(limit, 1), 200)), "every_s": watch.pulse_every})
 
     @api.get("/screening/fills")
     def screening_fills(symbol: str = "", side: str = "", config_id: str = "", order_key: str = "", limit: int = 50, offset: int = 0):
@@ -1590,6 +1616,9 @@ def create_app() -> FastAPI:
     _restore_sessions()
     if os.environ.get("NSEQL_LIVE_SCREENING", "").lower() == "angelone":
         threading.Thread(target=_start_live_screening, name="live-screening-bootstrap", daemon=True).start()
+    if os.environ.get("NSEQL_NEWS_WATCH", "").lower() == "true" or (
+            os.environ.get("NSEQL_LIVE_SCREENING", "").lower() == "angelone" and os.environ.get("NSEQL_NEWS_WATCH", "").lower() != "false"):
+        st.news_watch.start()                       # news every 5 min, market pulse every 15 min while open
     if os.environ.get("NSEQL_SCHEDULER", "").lower() == "true":
         scheduler.start(float(os.environ.get("NSEQL_SCHEDULER_TICK_SECONDS", "60")))
     app.mount("/api", api)

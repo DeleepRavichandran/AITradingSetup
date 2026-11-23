@@ -20,6 +20,7 @@ HYP_ID = re.compile(r"\bh[0-9a-z]{6,}\b")
 
 SUPPORTED = [
     ("market", "What changed in the market?"),
+    ("news", "What is in the news for my stocks?"),
     ("strongest", "Which strategies have the strongest validated evidence?"),
     ("why_rejected", "Why was this strategy rejected? (include a configuration or hypothesis id)"),
     ("correlated", "Which strategies are correlated?"),
@@ -41,6 +42,7 @@ ROUTES = [
     ("brain", r"\b(learning brain|brain|learn(ed|ing)?|discover)"),
     ("next", r"\b(next|investigate|should .*research|what to (try|test))\b"),
     ("strongest", r"\b(strong|best|validated|evidence|top|qualified|winning)\b"),
+    ("news", r"\b(news|headlines?)\b"),
     ("market", r"\b(market|moved|movers?|changed|happen)"),
 ]
 
@@ -249,6 +251,23 @@ def _next(q, ctx):
         text += "Platform gaps that limit research: " + ", ".join(gaps) + ". "
     text += "These are suggestions from recorded evidence, not predictions."
     return _ans(text, [{"label": "Experiment Memory", "href": "/memory", "kind": "page"}], ["lessons", "forward ledger", "capability list"], [], "next")
+
+
+def _news(q, ctx):
+    w = ctx.news() if hasattr(ctx, "news") else None
+    if w is None:
+        return _ans("The news watcher is not running (it starts with live screening, or NSEQL_NEWS_WATCH=true).", [], [], [], "news")
+    st = w.status()
+    since = (st.get("last_news_poll") or {}).get("at", "")[:10] or ""
+    c = w.counts(f"{since}T00:00:00") if since else {"headlines": 0, "by_symbol": {}, "by_theme": {}}
+    mine = [h for h in w.recent(200) if h["symbols"]][:5]
+    text = (f"The watcher has stored {st['headlines_stored']} headlines (first {str(st['since'])[:16]}); {c['headlines']} seen today. "
+            + ("Most mentioned of your stocks today: " + ", ".join(f"{k} ({v})" for k, v in list(c["by_symbol"].items())[:5]) + ". " if c["by_symbol"] else
+               "None of today's headlines mention your watchlist stocks by name. ")
+            + ("Themes: " + ", ".join(f"{k} ({v})" for k, v in list(c["by_theme"].items())[:5]) + ". " if c["by_theme"] else "")
+            + ("Latest about your stocks: " + " | ".join(f"{', '.join(h['symbols'])}: {h['title']}" for h in mine[:3]) + ". " if mine else "")
+            + "Headlines are recorded for later evaluation; no strategy trades on them, and tagging is by keywords, not by reading the article.")
+    return _ans(text, [{"label": "Command Center: news", "href": "/#news", "kind": "page"}], ["recorded RSS headlines"], ["full articles", "paid news wires"], "news")
 
 
 def _market(q, ctx):

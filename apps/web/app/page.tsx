@@ -14,6 +14,8 @@ export default function CommandCenter() {
   const sys = useApi<any>("/system", 30000);
   const runs = useApi<any[]>("/runs?limit=8", 30000);
   const jobs = useApi<any[]>("/jobs", 5000);
+  const news = useApi<any>("/news/live?limit=12", 60000);
+  const pulse = useApi<any>("/market/pulse?limit=1", 60000);
   const [jobId, setJobId] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const { job, running } = useJob(jobId);
@@ -137,6 +139,30 @@ export default function CommandCenter() {
           </Panel>
           <Panel title="Module readiness" id="ready" prov={<Prov source="/api/readiness logic, evaluated now" updated={d.generated_at} />}>
             <StatusGrid items={p.readiness.map((m: any) => ({ name: m.module, status: m.status, detail: m.detail }))} />
+          </Panel>
+        </div>
+
+        <div className="grid g21" style={{ marginBottom: 14 }} id="news">
+          <Panel title="News watch" hint="headlines tagged to your stocks and themes; not used for trading"
+            prov={news.data && <Prov source="public RSS feeds, polled every 5 minutes" updated={news.data.status?.last_news_poll?.at}
+              note={`${news.data.status?.headlines_stored ?? 0} stored since ${String(news.data.status?.since || "—").slice(0, 16).replace("T", " ")}${Object.keys(news.data.status?.errors || {}).length ? ` · unavailable: ${Object.keys(news.data.status.errors).join(", ")}` : ""}`} />}>
+            {!news.data?.status?.running && <Unavailable title="News watcher off">It starts with live screening (or set NSEQL_NEWS_WATCH=true).</Unavailable>}
+            {news.data?.items?.length ? <ul className="list">{news.data.items.map((h: any) => <li key={h.id}>
+              <a href={h.link} target="_blank" rel="noreferrer" className="t" style={{ color: "var(--ink)" }}>{h.title}</a>
+              <div className="d">{String(h.first_seen).slice(11, 16)} · {h.source}{h.symbols.length ? <> · <span className="data">{h.symbols.join(", ")}</span></> : null}{h.themes.length ? ` · ${h.themes.join(", ")}` : ""}</div></li>)}</ul>
+              : news.data?.status?.running ? <p className="dim" style={{ margin: 0 }}>No headlines stored yet; the first poll runs within a minute of start.</p> : null}
+          </Panel>
+          <Panel title="Market pulse" hint="every 15 minutes while the market is open" prov={pulse.data?.pulses?.[0] && <Prov source="screening loop's own bars and paper ledger" updated={pulse.data.pulses[0].at} note={pulse.data.pulses[0].data} />}>
+            {pulse.data?.pulses?.[0] ? (() => { const x = pulse.data.pulses[0]; return <div className="stack">
+              <div className="metrics">
+                <Metric sm k="Breadth" v={`${x.breadth.up} ↑ / ${x.breadth.down} ↓`} h={`${x.breadth.symbols} symbols since the open`} />
+                <Metric sm k="Paper equity" v={inr(x.paper_equity_inr)} h={`${x.open_positions} open · realised ${inr(x.realised_today_inr)}`} />
+              </div>
+              <p className="ink2" style={{ fontSize: 14, margin: 0 }}>Gainers: {x.top_gainers.map((m: any) => `${m[0]} ${m[1] > 0 ? "+" : ""}${num(m[1], 2)}%`).join(", ") || "—"}<br />
+                Losers: {x.top_losers.map((m: any) => `${m[0]} ${num(m[1], 2)}%`).join(", ") || "—"}<br />
+                BUY signals by family: {Object.entries(x.buy_signals_by_family).map(([k, v]) => `${k} ${v}`).join(" · ") || "none"}<br />
+                News since the open: {x.news_since_open.headlines} headlines{Object.keys(x.news_since_open.by_symbol).length ? ` · ${Object.entries(x.news_since_open.by_symbol).slice(0, 4).map(([k, v]) => `${k} ${v}`).join(", ")}` : ""}</p>
+            </div>; })() : <p className="dim" style={{ margin: 0 }}>No pulse yet: the first one is taken during market hours once live screening runs.</p>}
           </Panel>
         </div>
 
