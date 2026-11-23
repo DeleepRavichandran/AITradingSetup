@@ -15,8 +15,10 @@ import pandas as pd
 HOLD_BUCKETS = [(0, 2, "under 2 min"), (2, 5, "2-5 min"), (5, 15, "5-15 min"), (15, 60, "15-60 min"), (60, 10**6, "over 1 hour")]
 
 
-def round_trips(db_path: Path, day: str) -> pd.DataFrame:
-    db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+def round_trips(db_path, day: str) -> pd.DataFrame:
+    """db_path: the account's screening.sqlite path, or an open sqlite3 connection (left open)."""
+    own = not isinstance(db_path, sqlite3.Connection)
+    db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) if own else db_path
     try:
         o = pd.read_sql_query("SELECT o.order_key, o.config_id, o.symbol, o.side, o.decided_at, o.fill_ts, o.qty, o.price, o.charges_paise, "
                               "o.realized_paise, c.family, c.timeframe, c.stop_pct, c.params, s.reason AS exit_reason "
@@ -24,7 +26,8 @@ def round_trips(db_path: Path, day: str) -> pd.DataFrame:
                               "LEFT JOIN signals s ON s.config_id = o.config_id AND s.bar_ts = o.decided_at "
                               "WHERE o.status IN ('filled','partial') AND substr(o.fill_ts,1,10) = ? ORDER BY o.fill_ts", db, params=(day,))
     finally:
-        db.close()
+        if own:
+            db.close()
     buys = o[o.side == "BUY"]
     rows = []
     last_buy: dict[str, pd.Series] = {}
@@ -37,7 +40,7 @@ def round_trips(db_path: Path, day: str) -> pd.DataFrame:
         exit_ts = pd.Timestamp(r.fill_ts)
         ch = (r.charges_paise or 0) + ((b.charges_paise or 0) if b is not None else 0)
         net = (r.realized_paise or 0) / 100
-        rows.append({"symbol": r.symbol, "family": r.family, "timeframe": r.timeframe, "stop_pct": r.stop_pct, "params": r.params,
+        rows.append({"config_id": r.config_id, "symbol": r.symbol, "family": r.family, "timeframe": r.timeframe, "stop_pct": r.stop_pct, "params": r.params,
                      "exit_reason": r.exit_reason or "unknown", "entry_ts": entry_ts, "exit_ts": exit_ts,
                      "entry_px": b.price if b is not None else None, "exit_px": r.price, "qty": r.qty,
                      "hold_min": (exit_ts - entry_ts).total_seconds() / 60 if b is not None else None,
@@ -86,8 +89,14 @@ def report(account: Path, day: str) -> dict:
     rep_tf = rt.groupby("timeframe").size()
     if "1m" in rep_tf and rep_tf["1m"] / len(rt) > 0.5:
         f.append(f"{rep_tf['1m'] / len(rt):.0%} of trades came from 1-minute rules.")
+    from nseql.screening.rca import analyse, summary
+    con = sqlite3.connect(f"file:{Path(account) / 'screening.sqlite'}?mode=ro", uri=True)
+    try:
+        rca = summary(analyse(con, day, write=False))
+    finally:
+        con.close()
     worst = rt.nsmallest(10, "net_inr")[["symbol", "family", "timeframe", "stop", "exit_reason", "entry_ts", "exit_ts", "hold_min", "net_inr"]]
-    return {"account": Path(account).name, "day": day, "totals": tot, "findings": f, "by": groups,
+    return {"account": Path(account).name, "day": day, "totals": tot, "findings": f, "by": groups, "rca": rca,
             "worst_10": [{k: (str(v) if isinstance(v, pd.Timestamp) else (round(v, 2) if isinstance(v, float) else v)) for k, v in r.items()}
                          for r in worst.to_dict("records")],
             "caution": "Facts from one day of paper trading. They show where money was lost, not proven causes; judge fixes on later days."}

@@ -74,7 +74,9 @@ export function fixtures(state) {
       signals_today: { accepted: 3, not_taken: 41 },
       charts: { session: "2026-11-23", day_open_value: 100000, equity_curve: [{ t: "09:16", v: 100000 }, { t: "09:45", v: 100060 }, { t: "10:02", v: 99900 }, { t: "10:14", v: 99820 }],
         allocation: [{ label: "SBIN", value: 1630.2 }, { label: "Free cash", value: 95000 }], pnl_by_family: [{ label: "vwap", value: -40.5 }, { label: "orb", value: 22.1 }],
-        wins: 1, losses: 1, rules_version: "1.1", most_active: [{ strategy: "VWAP reversion -0.3%", symbol: "ITC", trades: 2, profit: -40.5 }],
+        wins: 1, losses: 1, rules_version: "1.1",
+        rca: { won: 1, lost: 1, by_cause: [{ cause: "stopped out by noise", outcome: "lost", trades: 1, net_inr: -40.5 }, { cause: "the strategy's sell signal came after a gain", outcome: "won", trades: 1, net_inr: 22.1 }],
+          latest: [{ time: "10:02", symbol: "ITC", outcome: "lost", summary: "Lost 40.50 INR; stopped out by noise; held 3 min", causes: ["tight 0.5% stop in a volatile market"], net_inr: -40.5 }] }, most_active: [{ strategy: "VWAP reversion -0.3%", symbol: "ITC", trades: 2, profit: -40.5 }],
         limited: [{ label: "cool-down after a sale", value: 12 }, { label: "already holding that stock", value: 30 }], trades_by_hour: [{ hour: "09:00", buys: 1, sells: 0 }, { hour: "10:00", buys: 1, sells: 1 }] } }),
     "/news": () => ({ items: [{ title: "Test headline", source: "Fixture Wire", link: "https://example.invalid/a", published: "2026-11-20T09:00:00Z" }], errors: {} }),
   };

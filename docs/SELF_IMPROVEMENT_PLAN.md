@@ -15,6 +15,15 @@ approved by a person, and can be rolled back with one click. Real-money orders s
 | 6 | Promote only if it beats the current version **and the operator signs off** | Exists for research policy (human-only approval) |
 | 7 | Deploy small, **shadow mode first**, one-click rollback; v1.0 -> v1.1 -> v1.2 | Exists for research policy (forward shadow, automatic rollback); not for trading rules |
 
+## Standing rule: root cause for every trade (operator, 2026-11-23)
+
+Every completed trade, won or lost, is documented with a root cause (`services/screening/rca.py`, table
+`trade_rca`): exit reason, holding time, best and worst move while held, profit before and after charges,
+market context at the buy (trade journal), a primary cause and contributing causes in plain words.
+Written automatically when the 15:30 bar is processed; shown live on My trading ("Why trades won or lost");
+any day on demand with `python -m nseql.cli trade-rca --account <folder> --day YYYY-MM-DD`.
+"Recovered after the sale" uses prices after the exit: hindsight for learning, never a trading input.
+
 ## Build order
 
 1. **Trade journal with market context** (first, tonight): at every entry and exit store the symbol's ATR

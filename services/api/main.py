@@ -1607,6 +1607,16 @@ def create_app() -> FastAPI:
         charts["most_active"] = [{"strategy": rule(cid), "symbol": sym, "trades": int(n), "profit": rp / 100} for cid, sym, n, rp in busy]
         charts["limited"] = [{"label": k, "value": v} for k, v in limited.items() if v]
         charts["rules_version"] = (screening.get("meta") or {}).get("rules_version") or "1.0"
+        from nseql.screening import rca as _rca
+        try:
+            with sch.store._lock:
+                rc = _rca.analyse(sch.store.db, curve_day or day, write=False) if curve_day or day else []
+            sm = _rca.summary(rc)
+            charts["rca"] = {**sm, "latest": [{"time": str(t["exit_ts"])[11:16], "symbol": t["symbol"], "outcome": t["outcome"],
+                                               "summary": t["summary"], "causes": t["causes"], "net_inr": round(t["net_inr"], 2)}
+                                              for t in sorted(rc, key=lambda t: str(t["exit_ts"]), reverse=True)[:12]]}
+        except Exception as e:      # noqa: BLE001 - shown, never breaks the page
+            charts["rca"] = {"error": f"{type(e).__name__}: {e}"}
         start_cap = x.rules.capital if x.rules else None
         age = None
         if last:
@@ -1637,6 +1647,17 @@ def create_app() -> FastAPI:
             "signals_today": {"accepted": sig.get("accepted", 0), "not_taken": sig.get("deferred", 0) + sig.get("rejected", 0)},
         })
         return clean(out)
+
+    @api.get("/screening/rca")
+    def screening_rca(day: str = ""):
+        """Root cause for every completed round trip of a day (winners and losers). Documentation, not a trading input."""
+        from nseql.screening import rca as _rca
+        sch = _need_screening()
+        d = day or datetime.now(views.IST).strftime("%Y-%m-%d")
+        with sch.store._lock:
+            rc = _rca.analyse(sch.store.db, d, write=False)
+        return clean({"day": d, **_rca.summary(rc), "trades": rc,
+                      "note": "'recovered after the sale' uses prices after the exit (hindsight): documentation only."})
 
     @api.get("/screening/portfolio")
     def screening_portfolio():

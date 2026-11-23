@@ -160,6 +160,15 @@ class MinuteScheduler:
                 last = pd.Timestamp(minutes[-1])
                 if self._since_ckpt >= self.checkpoint_every or (last.hour * 60 + last.minute - SESSION_OPEN_MIN) >= SESSION_MINUTES:
                     self.checkpoint()
+            closes = sorted({m[:10] for m in minutes if m[11:16] == "15:30"})
+            for day in closes:                          # end of session: document every round trip of the day (RCA)
+                try:
+                    from nseql.screening.rca import analyse
+                    with self.store._lock:
+                        n = len(analyse(self.store.db, day))
+                    print(f"[screening] {day}: root-cause analysis written for {n} trades", flush=True)
+                except Exception as e:      # noqa: BLE001 - documentation must never stop trading
+                    print(f"[screening] {day}: RCA failed: {type(e).__name__}: {e}", flush=True)
             self.last_cycle = {"at": str(now), "ingested": got, "processed": len(done), "gaps": len(gaps),
                                "latency_ms": [d["latency_ms"] for d in done], "watermark": self.watermark}
             return self.last_cycle

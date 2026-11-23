@@ -309,7 +309,7 @@ class Executor:
             exp_net = rel * mu_bps[j] - impact_bps[j]
             why = "no liquidity: recent volume too low" if q[j] <= 0 < q0[j] else ""
             if not why and c.reject_negative and a.ev_n[i] >= c.min_trades and exp_net < 0:
-                why = f"expected net return after costs {exp_net:.1f} bps over {int(a.ev_n[i])} forward trades"
+                why = f"expected net return after costs below zero over at least {c.min_trades} forward trades"
             gg = self.rules.group_gate_trades
             if not why and gg and est["group_n"][self.group[i]] >= gg:
                 g_net = rel * est["group_mu"][self.group[i]] * 1e4 - impact_bps[j]

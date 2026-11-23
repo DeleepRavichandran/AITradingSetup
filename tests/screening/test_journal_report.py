@@ -21,6 +21,11 @@ def run(tmp_path_factory):
     return sch, root, calls
 
 
+def test_rca_is_written_automatically_at_the_close(run):
+    sch, _, _ = run
+    assert sch.store.db.execute("SELECT COUNT(*) FROM trade_rca").fetchone()[0] > 0
+
+
 def test_every_fill_has_a_journal_row_with_point_in_time_context(run):
     sch, _, calls = run
     db = sch.store.db
@@ -62,3 +67,24 @@ def test_trade_report_groups_every_round_trip(run):
     assert rep["findings"] and "not proven" in rep["caution"]
     with pytest.raises(ValueError):
         report(root, "2026-12-01")
+
+
+def test_every_round_trip_gets_a_root_cause_won_or_lost(run):
+    from nseql.screening.rca import analyse, classify, summary
+    sch, root, _ = run
+    with sch.store._lock:
+        rc = analyse(sch.store.db, DAY)
+    n = report(root, DAY)["totals"]["round_trips"]
+    assert len(rc) == n and all(t["primary_cause"] and t["summary"] for t in rc)
+    assert {t["outcome"] for t in rc} <= {"won", "lost"} and all((t["outcome"] == "won") == (t["net_inr"] > 0) for t in rc)
+    stored = sch.store.db.execute("SELECT COUNT(*) FROM trade_rca WHERE day = ?", (DAY,)).fetchone()[0]
+    assert stored == n
+    sm = summary(rc)
+    assert sm["won"] + sm["lost"] == n and sum(g["trades"] for g in sm["by_cause"]) == n
+    base = {"net_inr": -5.0, "gross_inr": -2.0, "charges_inr": 3.0, "exit_reason": "stop", "hold_min": 3.0, "stop_pct": 0.005,
+            "entry_px": 100.0, "qty": 10, "best_move": 0.001, "worst_move": -0.006, "recovered_after_exit": 1, "regime": "volatile", "trend": -0.01}
+    o, cause, contrib, _ = classify(base)
+    assert o == "lost" and cause.startswith("stopped out by noise") and any("tight 0.5% stop" in c for c in contrib)
+    assert classify({**base, "gross_inr": 1.0})[1] == "charges were larger than the gain"
+    assert classify({**base, "net_inr": 4.0, "gross_inr": 7.0})[0] == "won"
+

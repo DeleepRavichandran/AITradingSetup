@@ -149,5 +149,5 @@ def test_proven_loser_gets_no_capital_but_unproven_configurations_still_trade():
     for _ in range(8):
         eng.x.alloc.record_round_trip(hi, -0.003)          # eight forward losses after costs
     out = {o["config"]: o for o in eng.x.submit([lo, hi], {lo: "BUY", hi: "BUY"}, 10**7, True)}
-    assert out[hi]["alloc"] == "rejected" and out[hi]["reason"].startswith("expected net return after costs -")
+    assert out[hi]["alloc"] == "rejected" and out[hi]["reason"].startswith("expected net return after costs below zero")
     assert out[lo]["alloc"] == "accepted"                   # no evidence yet: allowed to explore

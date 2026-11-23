@@ -175,6 +175,29 @@ function Charts({ c, ds }: { c: any; ds: any }) {
           {prov}
         </section>
       </div>
+      {c.rca && !c.rca.error && <section className="panel" style={{ marginBottom: 14 }} aria-labelledby="rca-h" data-testid="rca">
+        <H id="rca-h" icon="target" color="var(--s5)">Why trades won or lost</H>
+        {(c.rca.by_cause || []).length ? <>
+          <p className="ink2" style={{ margin: "0 0 8px" }}>Every completed trade gets a root cause: <b className="up">{c.rca.won} won</b>, <b className="down">{c.rca.lost} lost</b>.</p>
+          <ul className="list" style={{ margin: 0 }}>
+            {c.rca.by_cause.map((g: any) => (
+              <li key={g.cause} style={{ display: "flex", gap: 10, padding: "5px 0", alignItems: "baseline", flexWrap: "wrap" }}>
+                <i style={{ width: 10, height: 10, borderRadius: 3, background: g.outcome === "won" ? "var(--good)" : "var(--crit)", display: "inline-block", flex: "none" }} />
+                <span style={{ flex: 1, minWidth: 200 }}>{g.cause}</span><span className="num">{g.trades} trades</span>
+                <span className={`num ${g.net_inr >= 0 ? "up" : "down"}`} style={{ minWidth: 80, textAlign: "right" }}>{signed(g.net_inr)}</span>
+              </li>))}
+          </ul>
+          <details style={{ marginTop: 10 }}><summary>Latest trades with their cause</summary>
+            <ul className="list" style={{ margin: "6px 0 0" }}>
+              {c.rca.latest.map((t: any, k: number) => (
+                <li key={k} style={{ padding: "6px 0" }}><span className="dim num">{t.time}</span> <b>{t.symbol}</b> {t.summary}
+                  {t.causes?.length ? <div className="dim" style={{ fontSize: 13 }}>Also: {t.causes.join("; ")}</div> : null}</li>))}
+            </ul>
+          </details>
+        </> : <p className="dim" style={{ margin: 0 }}>No completed trades yet today. Each one gets its root cause as soon as it is sold.</p>}
+        <p className="dim" style={{ fontSize: 12.5, margin: "8px 0 0" }}>"Recovered after the sale" looks at prices after the exit: hindsight, used for learning only, never for trading.</p>
+        {prov}
+      </section>}
       <section className="panel" style={{ marginBottom: 14 }} aria-labelledby="busy-h" data-testid="chart-busy">
         <H id="busy-h" icon="bars" color="var(--s8)">Busiest strategies today</H>
         {(c.most_active || []).length ? <ul className="list" style={{ margin: 0 }}>
