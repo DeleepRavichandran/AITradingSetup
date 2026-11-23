@@ -1477,8 +1477,8 @@ def create_app() -> FastAPI:
                       scheduler=_screening_open, market_open=lambda: _calendar().is_open(datetime.now(views.IST).replace(tzinfo=None)))
     st.news_watch = watch
 
-    @api.get("/news/live")
-    def news_live(limit: int = 50, symbol: str = "", theme: str = ""):
+    @api.get("/news/recent")
+    def news_recent(limit: int = 50, symbol: str = "", theme: str = ""):
         """Headlines recorded by the watcher, newest first, with the time this lab first saw each one."""
         return clean({"items": watch.recent(min(max(limit, 1), 300), symbol, theme), "status": watch.status()})
 

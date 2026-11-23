@@ -14,7 +14,7 @@ export default function CommandCenter() {
   const sys = useApi<any>("/system", 30000);
   const runs = useApi<any[]>("/runs?limit=8", 30000);
   const jobs = useApi<any[]>("/jobs", 5000);
-  const news = useApi<any>("/news/live?limit=12", 60000);
+  const news = useApi<any>("/news/recent?limit=12", 60000);
   const pulse = useApi<any>("/market/pulse?limit=1", 60000);
   const [jobId, setJobId] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
