@@ -170,3 +170,50 @@ export function Bars({ items, fmt = compact }: { items: { label: string; value: 
     </div>
   );
 }
+
+/** Donut of parts of a whole (e.g. cash vs each holding). Legend lists every slice with its value and share. */
+export function Donut({ items, fmt = compact, centre, label }: { items: { label: string; value: number }[]; fmt?: (v: number) => string; centre?: React.ReactNode; label: string }) {
+  const data = items.filter((x) => x.value > 0);
+  const total = data.reduce((a, b) => a + b.value, 0);
+  if (!total) return <div className="empty">Nothing to show yet.</div>;
+  const R = 70, r = 46, C = 90;
+  let a0 = -Math.PI / 2;
+  const arcs = data.map((d, i) => {
+    const a1 = a0 + (d.value / total) * Math.PI * 2 - (data.length > 1 ? 0.012 : 0);
+    const big = a1 - a0 > Math.PI ? 1 : 0;
+    const p = (rad: number, ang: number) => `${C + rad * Math.cos(ang)},${C + rad * Math.sin(ang)}`;
+    const path = data.length === 1
+      ? `M ${C - R},${C} A ${R},${R} 0 1,1 ${C + R},${C} A ${R},${R} 0 1,1 ${C - R},${C} M ${C - r},${C} A ${r},${r} 0 1,0 ${C + r},${C} A ${r},${r} 0 1,0 ${C - r},${C}`
+      : `M ${p(R, a0)} A ${R},${R} 0 ${big},1 ${p(R, a1)} L ${p(r, a1)} A ${r},${r} 0 ${big},0 ${p(r, a0)} Z`;
+    const out = { d, path, color: d.label === "Free cash" ? "var(--axis)" : seriesColor(i) };
+    a0 = a0 + (d.value / total) * Math.PI * 2;
+    return out;
+  });
+  return (
+    <div style={{ display: "flex", gap: 18, alignItems: "center", flexWrap: "wrap" }}>
+      <svg viewBox="0 0 180 180" width="180" height="180" role="img" aria-label={label} style={{ flex: "none" }}>
+        {arcs.map((x) => <path key={x.d.label} d={x.path} fill={x.color} fillRule="evenodd"><title>{`${x.d.label}: ${fmt(x.d.value)} (${((100 * x.d.value) / total).toFixed(1)}%)`}</title></path>)}
+        {centre && <foreignObject x="40" y="62" width="100" height="56"><div style={{ textAlign: "center", fontSize: 12, lineHeight: 1.25 }}>{centre}</div></foreignObject>}
+      </svg>
+      <ul className="list" style={{ flex: 1, minWidth: 160 }}>
+        {arcs.map((x) => <li key={x.d.label} style={{ display: "flex", gap: 8, alignItems: "center", padding: "5px 0" }}>
+          <i style={{ width: 10, height: 10, borderRadius: 3, background: x.color, display: "inline-block", flex: "none" }} />
+          <span style={{ flex: 1 }}>{x.d.label}</span><span className="num">{fmt(x.d.value)}</span>
+          <span className="dim num" style={{ width: 48, textAlign: "right" }}>{((100 * x.d.value) / total).toFixed(0)}%</span></li>)}
+      </ul>
+    </div>
+  );
+}
+
+/** Ring showing a share (e.g. winning trades out of all closed trades). */
+export function Ring({ part, total, label, color = "var(--good)", rest = "var(--crit)" }: { part: number; total: number; label: string; color?: string; rest?: string }) {
+  const f = total ? part / total : 0, R = 42, L = 2 * Math.PI * R;
+  return (
+    <svg viewBox="0 0 110 110" width="110" height="110" role="img" aria-label={label}>
+      <circle cx="55" cy="55" r={R} fill="none" stroke={total ? rest : "var(--border2)"} strokeWidth="12" opacity={total ? 0.85 : 1} />
+      {total > 0 && <circle cx="55" cy="55" r={R} fill="none" stroke={color} strokeWidth="12" strokeDasharray={`${f * L} ${L}`} transform="rotate(-90 55 55)" strokeLinecap="butt" />}
+      <text x="55" y="53" textAnchor="middle" style={{ font: "600 20px var(--cond)", fill: "var(--ink)" }}>{total ? `${Math.round(f * 100)}%` : "—"}</text>
+      <text x="55" y="70" textAnchor="middle" style={{ fontSize: 10.5, fill: "var(--muted)" }}>{total ? "winners" : "no exits"}</text>
+    </svg>
+  );
+}

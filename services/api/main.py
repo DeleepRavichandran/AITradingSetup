@@ -1544,6 +1544,13 @@ def create_app() -> FastAPI:
                                  "FROM paper_orders WHERE status IN ('filled','partial') AND substr(fill_ts,1,10)=?", (day,)).fetchone()
             sig = dict(db.execute("SELECT COALESCE(alloc_status,'-'), COUNT(*) FROM signals WHERE decision='BUY' AND substr(bar_ts,1,10)=? GROUP BY 1", (day,)).fetchall())
             last = db.execute("SELECT minute, evaluated, latency_ms FROM cycles WHERE status='processed' ORDER BY minute DESC LIMIT 1").fetchone()
+            curve_day = db.execute("SELECT MAX(substr(minute,1,10)) FROM cycles WHERE equity_inr IS NOT NULL").fetchone()[0]
+            curve = db.execute("SELECT substr(minute,12,5), equity_inr FROM cycles WHERE substr(minute,1,10)=? AND equity_inr IS NOT NULL ORDER BY minute",
+                               (curve_day,)).fetchall() if curve_day else []
+            sells = db.execute("SELECT config_id, realized_paise, substr(fill_ts,12,2) FROM paper_orders WHERE side='SELL' AND status IN ('filled','partial') "
+                               "AND substr(fill_ts,1,10)=?", (curve_day or day,)).fetchall()
+            hours = db.execute("SELECT substr(fill_ts,12,2), side, COUNT(*) FROM paper_orders WHERE status IN ('filled','partial') AND substr(fill_ts,1,10)=? "
+                               "GROUP BY 1, 2", (curve_day or day,)).fetchall()
         from nseql.screening.registry import FAMILIES
         from nseql.screening.universe import _rule_name
         idx = {str(i): k for k, i in enumerate(sch.reg.ids)}
@@ -1551,6 +1558,27 @@ def create_app() -> FastAPI:
             k = idx.get(cid)
             return _rule_name(FAMILIES[sch.reg.fam[k]], sch.reg.params[k]) if k is not None else "strategy"
         base = (day_start or first_today or [snap["equity_inr"]])[0]
+        fam_pnl: dict[str, float] = {}
+        wins = losses = 0
+        for cid, rp, _h in sells:
+            k = idx.get(cid)
+            f = FAMILIES[sch.reg.fam[k]] if k is not None else "other"
+            fam_pnl[f] = fam_pnl.get(f, 0.0) + (rp or 0) / 100
+            wins += (rp or 0) > 0
+            losses += (rp or 0) < 0
+        per_hour: dict[str, dict] = {}
+        for h, side, n in hours:
+            per_hour.setdefault(h, {"hour": f"{h}:00", "buys": 0, "sells": 0})["buys" if side == "BUY" else "sells"] = n
+        step = max(1, len(curve) // 120)
+        holdings_rows = screening_positions()["rows"]
+        alloc = {}
+        for h in holdings_rows:
+            alloc[h["symbol"]] = alloc.get(h["symbol"], 0.0) + h["value_inr"]
+        charts = {"session": curve_day, "equity_curve": [{"t": t, "v": v} for t, v in curve[::step]] + ([{"t": curve[-1][0], "v": curve[-1][1]}] if curve and (len(curve) - 1) % step else []),
+                  "day_open_value": base, "allocation": [{"label": k, "value": round(v, 2)} for k, v in sorted(alloc.items(), key=lambda z: -z[1])]
+                  + [{"label": "Free cash", "value": round(snap["cash_inr"] - snap["reserved_inr"], 2)}],
+                  "pnl_by_family": [{"label": k, "value": round(v, 2)} for k, v in sorted(fam_pnl.items(), key=lambda z: z[1])],
+                  "wins": int(wins), "losses": int(losses), "trades_by_hour": [per_hour[h] for h in sorted(per_hour)]}
         start_cap = x.rules.capital if x.rules else None
         age = None
         if last:
@@ -1572,7 +1600,8 @@ def create_app() -> FastAPI:
                         "invested": snap["gross_exposure_inr"], "since_start": round(snap["equity_inr"] - start_cap, 2) if start_cap else None,
                         "today": round(snap["equity_inr"] - base, 2), "today_trades": today_n[0], "today_realised": today_n[1] / 100,
                         "today_charges": today_n[2] / 100, "halted_today": snap["halted_today"]},
-            "holdings": screening_positions()["rows"],
+            "holdings": holdings_rows,
+            "charts": charts,
             "recent_trades": [{"time": str(f["fill_ts"]).replace("T", " ")[:16], "action": "Bought" if f["side"] == "BUY" else "Sold", "symbol": f["symbol"],
                                "qty": f["qty"], "price": f["price"], "strategy": rule(f["config_id"]), "horizon": f["horizon"],
                                "profit": (f["realized_paise"] or 0) / 100 if f["side"] == "SELL" else None, "charges": (f["charges_paise"] or 0) / 100,

@@ -71,7 +71,10 @@ export function fixtures(state) {
         last_price: 815.1, stop_price: 808.4, value_inr: 1630.2, unrealised_inr: 4.6, unrealised_pct: 0.32, exit_pending: false }],
       recent_trades: [{ time: "2026-11-23 10:14", action: "Bought", symbol: "SBIN", qty: 2, price: 812.5, strategy: "Opening range breakout 15 min", horizon: "intraday", profit: null, charges: 0.6, config_id: "0123456789abcdef" },
         { time: "2026-11-23 10:02", action: "Sold", symbol: "ITC", qty: 4, price: 410.2, strategy: "VWAP reversion -0.3%", horizon: "intraday", profit: -40.5, charges: 0.9, config_id: "fedcba9876543210" }],
-      signals_today: { accepted: 3, not_taken: 41 } }),
+      signals_today: { accepted: 3, not_taken: 41 },
+      charts: { session: "2026-11-23", day_open_value: 100000, equity_curve: [{ t: "09:16", v: 100000 }, { t: "09:45", v: 100060 }, { t: "10:02", v: 99900 }, { t: "10:14", v: 99820 }],
+        allocation: [{ label: "SBIN", value: 1630.2 }, { label: "Free cash", value: 95000 }], pnl_by_family: [{ label: "vwap", value: -40.5 }, { label: "orb", value: 22.1 }],
+        wins: 1, losses: 1, trades_by_hour: [{ hour: "09:00", buys: 1, sells: 0 }, { hour: "10:00", buys: 1, sells: 1 }] } }),
     "/news": () => ({ items: [{ title: "Test headline", source: "Fixture Wire", link: "https://example.invalid/a", published: "2026-11-20T09:00:00Z" }], errors: {} }),
   };
 }
