@@ -77,7 +77,8 @@ class ScreeningStore:
         self.db.executescript(SCHEMA)
         for table, col, typ in (("paper_orders", "requested_qty", "INTEGER"), ("paper_orders", "reason", "TEXT"),
                                 ("signals", "alloc_status", "TEXT"), ("signals", "alloc_reason", "TEXT"), ("signals", "alloc_score", "REAL"),
-                                ("cycles", "equity_inr", "REAL"), ("cycles", "cash_inr", "REAL"), ("cycles", "halted", "INTEGER")):
+                                ("cycles", "equity_inr", "REAL"), ("cycles", "cash_inr", "REAL"), ("cycles", "halted", "INTEGER"),
+                                ("cycles", "decided_at", "TEXT"), ("cycles", "arrived_at", "REAL"), ("cycles", "earliest_fill", "TEXT")):
             cols = {r[1] for r in self.db.execute(f"PRAGMA table_info({table})")}
             if col not in cols:                                  # runs created before these columns existed
                 self.db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
@@ -119,6 +120,14 @@ class ScreeningStore:
         return [r[0] for r in self.db.execute(q, (upto, after) if after else (upto,))]
 
     @_locked
+    def decided_at(self, minute: str) -> str | None:
+        """When this minute was first decided (a restart replays it with the same time, so it decides the same way)."""
+        r = self.db.execute("SELECT decided_at FROM cycles WHERE minute = ? AND status = 'processed'", (minute,)).fetchone()
+        return r[0] if r else None
+
+    def arrived_at(self, ts: str) -> float | None:
+        return self.db.execute("SELECT MAX(received_at) FROM events WHERE ts = ? AND late = 0", (ts,)).fetchone()[0]
+
     def bars_at(self, ts: str) -> list[sqlite3.Row]:
         return self.db.execute("SELECT symbol, open, high, low, close, volume FROM events WHERE ts = ? AND late = 0 ORDER BY symbol", (ts,)).fetchall()
 
@@ -129,14 +138,15 @@ class ScreeningStore:
         """orders: (order_key, config_id, symbol, side, horizon, decided_at, status, requested_qty, reason)
         fills: (fill_key, order_key, config_id, symbol, side, ts, qty, price, charges_paise, realized_paise)
         done: (status, last_fill_ts, filled_qty, avg_price, product, charges_paise, realized_paise, reason, order_key)"""
-        cycle = {"equity_inr": None, "cash_inr": None, "halted": None, **cycle}
+        cycle = {"equity_inr": None, "cash_inr": None, "halted": None, "decided_at": None, "arrived_at": None, "earliest_fill": None, **cycle}
         cur = self.db.cursor()
         cur.execute("BEGIN")
         try:
             cur.execute("INSERT OR IGNORE INTO cycles (minute, processed_at, latency_ms, lag_s, mode, status, symbols_with_data, symbols_expected, "
-                        "closed, eligible, evaluated, skipped_pending, stale_skips, counts, fills, equity_inr, cash_inr, halted) VALUES "
+                        "closed, eligible, evaluated, skipped_pending, stale_skips, counts, fills, equity_inr, cash_inr, halted, decided_at, arrived_at, "
+                        "earliest_fill) VALUES "
                         "(:minute,:processed_at,:latency_ms,:lag_s,:mode,:status,:symbols_with_data,:symbols_expected,:closed,:eligible,"
-                        ":evaluated,:skipped_pending,:stale_skips,:counts,:fills,:equity_inr,:cash_inr,:halted)", cycle)
+                        ":evaluated,:skipped_pending,:stale_skips,:counts,:fills,:equity_inr,:cash_inr,:halted,:decided_at,:arrived_at,:earliest_fill)", cycle)
             cur.executemany("INSERT OR IGNORE INTO signals (config_id, bar_ts, horizon, symbol, decision, price, reason, alloc_status, alloc_reason, "
                             "alloc_score) VALUES (?,?,?,?,?,?,?,?,?,?)", signals)
             cur.executemany("INSERT OR IGNORE INTO paper_orders (order_key, config_id, symbol, side, horizon, decided_at, status, requested_qty, reason) "

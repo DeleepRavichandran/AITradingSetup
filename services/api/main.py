@@ -1116,6 +1116,9 @@ def create_app() -> FastAPI:
                   "live_from": now.strftime("%Y-%m-%dT%H:%M:00"),
                   "contest_from": (first_day or (pd.Timestamp(now.date()) + pd.offsets.BDay(1)).date()).isoformat(),
                   "symbols": syms, "note": "forward contest: sessions counted from contest_from (first full session)"}
+            from nseql.screening.contest import freeze_forward
+            cm["manifest"] = freeze_forward(cm)              # frozen at inception, before the first contest session
+            cm["manifest_sha256"] = cm["manifest"]["sha256"]
         ch = MinuteScheduler(croot, syms, kill=st.kill, mode="live", calendar=_calendar(), live_from=cm["live_from"],
                              experiments_dir=st.exp_dir, portfolio=challenger_rules(cm["start_cash"]), engine_factory=factory())
         if not cf.exists():

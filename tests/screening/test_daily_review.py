@@ -51,7 +51,7 @@ def test_review_runs_every_step_and_writes_plain_findings(lab):
     out = R.review_dir(exp, "live_test", DAY)
     st = json.loads((out / "status.json").read_text())
     assert st["state"] == "done" and all(v["state"] == "done" for v in st["steps"].values())
-    assert rev["loss_study"]["replay_matches_live"] and rev["day_backtest"]["strategies"] > 0
+    assert rev["loss_study"]["reconciliation"]["reconciled"] and rev["day_backtest"]["strategies"] > 0
     assert rev["monte_carlo"]["trades"] == rev["loss_study"]["trades"]
     assert rev["monte_carlo"]["net_pnl_inr"] == pytest.approx(rev["loss_study"]["net_inr"], abs=0.05)
     assert rev["headline"][0].startswith(f"The bot closed {rev['loss_study']['trades']} round trips")

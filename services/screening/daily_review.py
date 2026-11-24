@@ -157,6 +157,11 @@ def build(account: str, day: str, r: dict, st: dict) -> dict:
     """The review document: plain sentences first, each derived from a saved number, then the compact results."""
     ls, bt, mc = r.get("loss_study"), r.get("day_backtest"), r.get("monte_carlo")
     head: list[str] = []
+    rec = (ls or {}).get("reconciliation") or {}
+    if ls and not rec.get("reconciled"):
+        head.append(f"Not published: the study did not reconcile with the paper ledger ({rec.get('analysed_round_trips')} analysed vs "
+                    f"{rec.get('ledger_round_trips')} ledger round trips; {rec.get('mismatched')} mismatched). The tables below are withheld.")
+        ls = None
     if ls:
         head.append(f"The bot closed {ls['trades']} round trips, net {_inr(ls['net_inr'])} after charges; "
                     f"{ls['win_rate']:.0%} were winners, average {ls['mean_inr']:+.2f} INR per trade.")
@@ -192,7 +197,7 @@ def build(account: str, day: str, r: dict, st: dict) -> dict:
     compact_ls = None
     if ls:
         compact_ls = {k: ls.get(k) for k in ("trades", "net_inr", "mean_inr", "win_rate", "findings", "factors", "two_factor",
-                                             "replay_matches_live", "replay_net_inr", "live_net_inr")}
+                                             "reconciliation", "journal_coverage", "source")}
     compact_bt = None
     if bt:
         compact_bt = {k: bt.get(k) for k in ("strategies", "symbols", "traded", "trades", "net_inr", "charges_inr", "positive", "share_positive",

@@ -1,4 +1,5 @@
-"""Read-only audit of an existing paper ledger for traces of the measurement bugs fixed on 2026-11-24.
+"""Read-only audit of an existing paper ledger for traces of the measurement bugs fixed on 2026-11-24, and of execution
+assumptions changed on 2026-11-25 (X: version, X3: cash below zero, X4: retrospective decisions traded).
 
 Ledgers are never modified. The audit writes LIMITATIONS.json beside the ledger, so that reports made from that
 ledger before the fixes can be read with their limitations:
@@ -31,6 +32,9 @@ def audit(account: Path) -> dict:
         f6 = q("SELECT DISTINCT substr(s.fill_ts, 1, 10) FROM paper_orders s WHERE s.side = 'SELL' AND s.status IN ('filled','partial') "
                "AND (SELECT substr(MAX(b.fill_ts), 1, 10) FROM paper_orders b WHERE b.config_id = s.config_id AND b.side = 'BUY' "
                "AND b.status IN ('filled','partial') AND b.fill_ts <= s.fill_ts) < substr(s.fill_ts, 1, 10) ORDER BY 1")
+        x3 = q("SELECT DISTINCT substr(minute,1,10) FROM cycles WHERE cash_inr < 0 ORDER BY 1")
+        x4 = q("SELECT DISTINCT substr(c.minute,1,10) FROM cycles c WHERE c.mode = 'live' AND c.lag_s > 55 AND EXISTS "
+               "(SELECT 1 FROM paper_orders o WHERE o.decided_at = c.minute) ORDER BY 1")
     finally:
         con.close()
     meta = json.loads((account / "live.json").read_text()) if (account / "live.json").exists() else {}
@@ -51,6 +55,19 @@ def audit(account: Path) -> dict:
     if chained:
         findings.append({"id": "F5", "limitation": f"continued from {src}, which itself continued an account: evidence inherited before the fix "
                                                    "may be incomplete (rebuilt automatically at the next migration)"})
+    from nseql.screening.execution import EXECUTION_VERSION
+    ex = json.loads((account / "execution.json").read_text()) if (account / "execution.json").exists() else None
+    old_versions = [h for h in (ex or {}).get("history", []) if h["version"] != EXECUTION_VERSION]
+    if ex is None or old_versions:
+        findings.append({"id": "X", "versions": [h["version"] for h in old_versions] or ["1.x (before execution versioning)"],
+                         "limitation": f"results produced before execution {EXECUTION_VERSION}: recompute them (kill-switch fills after a halt, "
+                                       "exposure and cash not rechecked at the fill price, retrospective catch-up decisions traded). "
+                                       "The ledger itself is kept unchanged."})
+    if x3:
+        findings.append({"id": "X3", "days": [d[0] for d in x3], "limitation": "cash went below zero after charges on these days"})
+    if x4:
+        findings.append({"id": "X4", "days": [d[0] for d in x4],
+                         "limitation": "orders were decided more than 55 s after their candle closed (retrospective) on these days"})
     out = {"account": account.name, "ledger_modified": False, "findings": findings,
            "clean": not findings, "not_detectable": {"F1": "backtester only", "F3": "dashboard display only"}}
     (account / "LIMITATIONS.json").write_text(json.dumps(out, indent=2))

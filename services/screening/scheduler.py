@@ -41,6 +41,9 @@ from nseql.screening.registry import FAMILIES, HORIZON, TF_NAMES, build
 from nseql.screening.store import ScreeningStore, _iso
 
 
+MAX_DECISION_LAG_S = 55.0     # under one bar: the fill bar (next minute) must not have closed when the decision is made
+
+
 def _in_session(ts) -> bool:
     m = minute_of_session(pd.Timestamp(ts))
     return 1 <= m <= SESSION_MINUTES
@@ -103,6 +106,7 @@ class MinuteScheduler:
         self.experiments_dir = experiments_dir
         self.live_from = _iso(live_from) if live_from is not None else None   # minutes before this: no paper orders (warm-up)
         self.checkpoint_every, self.grace = checkpoint_every, grace_seconds
+        self.max_decision_lag_s = float(os.environ.get("NSEQL_MAX_DECISION_LAG_S", MAX_DECISION_LAG_S))
         self.clock = clock or (lambda: datetime.now(IST).replace(tzinfo=None))
         self.ckpt = self.root / "checkpoint.npz"
         self._since_ckpt = 0
@@ -116,7 +120,25 @@ class MinuteScheduler:
         self.verbose = True                  # end-of-day RCA lines in the log (contest replays turn this off)
         self.on_session_close = None                 # callable(day) after the 15:30 minute and its RCA (e.g. the daily review)
         self.followers: list[MinuteScheduler] = []   # isolated accounts fed EXACTLY the same bars at the same time (contest)
+        self._stamp_execution()
         self.recovery = self._recover()
+
+    def _stamp_execution(self) -> None:
+        """execution.json: the execution-assumption versions this ledger was produced under, in order. Never rewritten
+        away: an account opened by newer code appends the new version (from its next minute) and keeps the old entries."""
+        from nseql.screening.execution import EXECUTION_CHANGES, EXECUTION_VERSION
+        f = self.root / "execution.json"
+        now = datetime.now().isoformat(timespec="seconds")
+        if f.exists():
+            st = json.loads(f.read_text())
+        else:
+            had = self.store.db.execute("SELECT MAX(minute) FROM cycles").fetchone()[0]
+            st = {"history": [{"version": "1.x (before execution versioning)", "until_minute": had, "recompute": True}] if had else []}
+        if not st["history"] or st["history"][-1]["version"] != EXECUTION_VERSION:
+            st["history"].append({"version": EXECUTION_VERSION, "from_minute_after": self.store.db.execute("SELECT MAX(minute) FROM cycles").fetchone()[0],
+                                  "opened_at": now, "changes": EXECUTION_CHANGES.get(EXECUTION_VERSION, [])})
+        st["version"] = EXECUTION_VERSION
+        f.write_text(json.dumps(st, indent=2))
 
     # ------------------------------------------------------------------ state
     @property
@@ -219,13 +241,22 @@ class MinuteScheduler:
         sy = [x["symbol"] for x in known]
         cols = [np.array([x[k] for x in known], dtype=float) for k in ("open", "high", "low", "close", "volume")]
         warm = self.live_from is not None and minute < self.live_from
-        allow = not (self.kill is not None and self.kill.engaged) and not warm
+        # forward-data integrity: a live decision must be made before its fill bar (the next minute) has closed. A minute
+        # processed later than that (outage, restart, a whole session delivered late) is CATCH-UP: indicators are rebuilt,
+        # but its decisions are retrospective and never become orders. A restart reuses the recorded decision time.
+        decided = pd.Timestamp(self.store.decided_at(minute) or now)
+        lag_dec = (decided - pd.Timestamp(minute)).total_seconds()
+        catch_up = self.mode == "live" and not warm and lag_dec > self.max_decision_lag_s
+        killed = self.kill is not None and self.kill.engaged
+        allow = not killed and not warm and not catch_up
+        why = ("warm-up history (before live start)" if warm else
+               f"catch-up: decided {lag_dec:.0f} s after the candle closed (retrospective; not traded)" if catch_up else "kill switch engaged")
         from nseql.screening import journal as jn
         snap = {k: np.array(v, copy=True) for k, v in self.engine.state().items()}   # restored if the ledger write fails
         ctx = jn.context(self.engine)                    # market state known at decision time (before this minute's bar)
         t0 = time.perf_counter()
-        res = self.engine.step(pd.Timestamp(minute), sy, *cols, allow_orders=allow,
-                               block_reason="warm-up history (before live start)" if warm else "kill switch engaged")
+        res = self.engine.step(pd.Timestamp(minute), sy, *cols, allow_orders=allow, block_reason=why,
+                               reduce_only=killed and not warm and not catch_up)
         lat = (time.perf_counter() - t0) * 1000
         if res.status == "duplicate":
             return {"minute": minute, "status": "duplicate", "latency_ms": lat}
@@ -250,7 +281,10 @@ class MinuteScheduler:
         events = [(ev["ts"], ev["event"], json.dumps(ev)) for ev in res.events]
         x = self.engine.x
         lag = (now - pd.Timestamp(minute)).total_seconds() + lat / 1000
-        cyc = {"minute": minute, "processed_at": time.time(), "latency_ms": round(lat, 3), "lag_s": round(lag, 3), "mode": "warmup" if warm else self.mode,
+        cyc = {"minute": minute, "processed_at": time.time(), "latency_ms": round(lat, 3), "lag_s": round(lag, 3), "mode": "warmup" if warm else "catch-up" if catch_up else self.mode,
+               "decided_at": _iso(decided) if decided.second == 0 and decided.microsecond == 0 else decided.isoformat(),
+               "arrived_at": self.store.arrived_at(minute),
+               "earliest_fill": _iso(pd.Timestamp(minute) + pd.Timedelta(minutes=1 + (self.engine.x.cfg.delay_bars if self.engine.x.cfg else 0))),
                "status": "processed", "symbols_with_data": res.symbols_with_data, "symbols_expected": len(r.symbols),
                "closed": json.dumps(res.closed), "eligible": res.eligible, "evaluated": res.evaluated, "skipped_pending": res.skipped_pending,
                "stale_skips": res.stale_skips, "counts": json.dumps(res.counts), "fills": len(fills),

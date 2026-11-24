@@ -94,7 +94,7 @@ function Loss({ ls }: { ls: any }) {
   return (
     <Panel id="rv-loss" title="Why trades lost" hint={`${ls.trades} round trips · win rate ${pct(ls.win_rate, 0)} · ${signed(ls.mean_inr)} ₹ per trade`}>
       <p className="ink2" style={{ marginTop: 0 }}>A group is called out only when it has at least 15 trades and loses more than the day’s average beyond chance.
-        {ls.replay_matches_live === false && <b className="down"> The replay did not reproduce the live ledger exactly ({inr(ls.replay_net_inr)} vs {inr(ls.live_net_inr)}); treat this study with care.</b>}</p>
+        {ls.reconciliation && <> Reconciled with the paper ledger: {ls.reconciliation.matched} of {ls.reconciliation.ledger_round_trips} round trips by order, quantity, price and net P&amp;L{ls.journal_coverage != null && <>; market context recorded for {pct(ls.journal_coverage, 0)} of them</>}.</>}</p>
       {ls.factors?.length > 0 && (
         <div className="seg" role="group" aria-label="Factor" style={{ marginBottom: 10, flexWrap: "wrap" }}>
           {ls.factors.map((x: any, k: number) => <button key={x.factor} type="button" aria-pressed={k === f} onClick={() => setF(k)}>{x.label}</button>)}

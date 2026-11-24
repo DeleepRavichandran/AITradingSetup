@@ -15,6 +15,7 @@ Account (paper, from the screening ledger)
 
 Session decisions (BUY signals of one session, from the `signals` table, by RECORDED allocation reason)
   warm_up             decided on historical bars before the account's live start (never tradable)
+  catch_up            decided more than 55 s after the candle closed (late data; retrospective, never traded)
   eligible            BUY signals at or after the live start: the paper-tradable population
     accepted          eligible and given an order
     deferred          eligible but a higher-ranked signal used the room this minute
@@ -37,6 +38,8 @@ CATEGORIES = (  # (category, reason prefix) in priority order; recorded reasons 
     ("losing-strategy gates", ("expected net return", "strategy type losing")),
     ("size or liquidity", ("price above trade size", "no liquidity")),
     ("higher-ranked signal first", ("redundant",)),
+    ("catch-up (late data, not traded)", ("catch-up",)),
+    ("selection: holding cash", ("holding cash", "no entries in the first")),
 )
 
 
@@ -94,13 +97,16 @@ def session_decisions(db, day: str, live_from: str | None) -> dict:
     lo, hi = day, _next_day(day)
     rows = db.execute("SELECT alloc_status, alloc_reason, CASE WHEN ? IS NOT NULL AND bar_ts < ? THEN 1 ELSE 0 END, COUNT(*) FROM signals "
                       "WHERE bar_ts >= ? AND bar_ts < ? AND decision='BUY' GROUP BY 1, 2, 3", (live_from, live_from, lo, hi)).fetchall()
-    warm, eligible, acc, dfr = 0, 0, 0, 0
+    warm, eligible, acc, dfr, late = 0, 0, 0, 0, 0
     rej: dict[str, int] = {}
     reasons: dict[str, int] = {}
     for status, why, pre, n in rows:
         cat = reason_category(why) if status in ("rejected", "deferred") else None
         if pre or cat == "warm-up history":
             warm += n
+            continue
+        if cat == "catch-up (late data, not traded)":      # decided after the fill bar had closed: never tradable
+            late += n
             continue
         eligible += n
         if status == "accepted":
@@ -116,7 +122,7 @@ def session_decisions(db, day: str, live_from: str | None) -> dict:
     fills = db.execute("SELECT COUNT(*), COALESCE(SUM(side='BUY'),0), COALESCE(SUM(side='SELL'),0) FROM paper_fills WHERE ts >= ? AND ts < ?",
                        (lo, hi)).fetchone()
     last = db.execute("SELECT MAX(minute) FROM cycles WHERE status='processed' AND minute >= ? AND minute < ?", (lo, hi)).fetchone()[0]
-    return {"day": day, "warm_up": warm, "eligible": eligible, "accepted": acc, "deferred": dfr,
+    return {"day": day, "warm_up": warm, "catch_up": late, "eligible": eligible, "accepted": acc, "deferred": dfr,
             "rejected": sum(rej.values()), "rejected_by_category": dict(sorted(rej.items(), key=lambda kv: -kv[1])),
             "top_reasons": [{"reason": k, "n": v, "category": reason_category(k)} for k, v in sorted(reasons.items(), key=lambda kv: -kv[1])[:5]],
             "orders": int(orders), "fills": int(fills[0]), "buy_fills": int(fills[1]), "sell_fills": int(fills[2]),

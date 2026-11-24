@@ -110,6 +110,7 @@ def test_ledger_audit_labels_old_ledgers_without_modifying_them(tmp_path):
     st.db.close()
     before = hashlib.sha256((tmp_path / "screening.sqlite").read_bytes()).hexdigest()
     rep = audit(tmp_path)
-    assert {f["id"] for f in rep["findings"]} == {"F2", "F4"} and not rep["clean"] and rep["ledger_modified"] is False
+    # X: this hand-built ledger has no execution.json, i.e. it predates execution versioning (2026-11-25): flagged for recompute
+    assert {f["id"] for f in rep["findings"]} == {"F2", "F4", "X"} and not rep["clean"] and rep["ledger_modified"] is False
     assert hashlib.sha256((tmp_path / "screening.sqlite").read_bytes()).hexdigest() == before
     assert (tmp_path / "LIMITATIONS.json").exists()

@@ -41,6 +41,7 @@ import pandas as pd
 from nseql.instruments.models import Instrument, Kind
 from nseql.money import to_paise
 from nseql.screening.allocator import Allocator, AllocatorConfig
+from nseql.screening.features import minute_of_session
 
 NOTIONAL = 100_000.0
 
@@ -52,6 +53,7 @@ class ExecConfig:
     impact_bps: float = 25.0
     entry_ttl_minutes: int = 5
     tick: float = 0.05
+    delay_bars: int = 0                 # extra bars between the decision bar and the first fill bar (stress test: 1)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -75,6 +77,10 @@ class PortfolioRules:
     max_open_per_symbol: int = 0        # positions + working entries per symbol at a time
     group_gate_trades: int = 0          # refuse a strategy type (family x timeframe, all symbols) whose round trips
                                         # reach this count with an expected net return after costs below zero
+    # experiment switches (off by default; see services/screening/experiment.py, hypotheses H1 and H2)
+    fund_qualified_only: bool = False   # H1: hold cash unless the configuration's forward evidence is qualified (>= min_trades
+                                        # round trips with a shrunk mean net return above zero)
+    no_entry_first_minutes: int = 0     # H2: no new entries in the first N minutes of the session (opening-range noise)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -91,6 +97,18 @@ class PortfolioRules:
 
 
 LIVE_RULES_VERSION = "1.2"
+
+# Execution assumptions (review of 1376b45, 2026-11-25). A ledger produced under an earlier version keeps its rows; the
+# ledger audit flags it for recomputation (results are not comparable across versions).
+EXECUTION_VERSION = "2.0"
+EXECUTION_CHANGES = {
+    "2.0": ["kill switch / daily loss halt cancels working buys (and the rest of partial buys) BEFORE the next bar; exits continue",
+            "symbol, gross and cash limits rechecked at the actual fill price, with the dated charges; reservations cover the "
+            "worst-case price plus charges",
+            "live minutes decided more than 55 s after their candle closed are catch-up: never traded (no retrospective fills)",
+            "standalone configurations (no shared portfolio) each get their own liquidity allowance",
+            "optional execution delay (ExecConfig.delay_bars) for stress tests"],
+}
 
 
 def _tick(px: float, tick: float, up: bool) -> float:
@@ -159,14 +177,20 @@ class Executor:
 
     # ------------------------------------------------------------------ order submission
     def submit(self, actionable: list[int], decisions: dict[int, str], minute_em: int, allow: bool,
-               block_reason: str = "kill switch engaged") -> list[dict]:
-        """Turn BUY/EXIT decisions into orders. Returns order records (accepted and refused)."""
+               block_reason: str = "kill switch engaged", reduce_only: bool = False) -> list[dict]:
+        """Turn BUY/EXIT decisions into orders. Returns order records (accepted and refused).
+
+        allow=False refuses new orders. With reduce_only (the kill switch) exits are still accepted: they only reduce
+        exposure, and a protective stop must not be switched off by a halt. Working buys are cancelled in fill(),
+        BEFORE the next bar is matched (see `block`)."""
         e, r, out = self.e, self.e.reg, []
         if not allow:
-            for i in np.flatnonzero(e.pend == 1):
-                out.append(self._close_order(int(i), "cancelled", block_reason))
-            return out + [{"config": i, "side": "BUY" if decisions[i] == "BUY" else "SELL", "decided": minute_em, "status": "rejected",
-                           "qty": 0, "reason": block_reason} for i in actionable]
+            keep = [i for i in actionable if reduce_only and decisions[i] != "BUY"]
+            out = [{"config": i, "side": "BUY" if decisions[i] == "BUY" else "SELL", "decided": minute_em, "status": "rejected",
+                    "qty": 0, "reason": block_reason} for i in actionable if i not in keep]
+            if not keep:
+                return out
+            actionable, decisions = keep, {i: decisions[i] for i in keep}
         eq = self.equity() if self.rules else 0
         close = e.fe.last_close
         buys = []
@@ -226,7 +250,7 @@ class Executor:
             d = info.get(i, {})
             q = int(d["q"]) if ranked else q_of[i]
             p = float(close[s])
-            need = q * p * (1 + rules.cost_buffer)
+            need = self._need(i, q, p, minute_em, rules.cost_buffer)
             why, kind = "", "rejected"
             if d.get("why"):
                 why = d["why"]
@@ -234,6 +258,10 @@ class Executor:
                 why = "price above trade size"
             elif self.halted_day:
                 why = "daily loss limit reached"
+            elif rules.no_entry_first_minutes and minute_of_session(pd.Timestamp(int(minute_em) * 60_000_000_000)) <= rules.no_entry_first_minutes:
+                why = f"no entries in the first {rules.no_entry_first_minutes} minutes of the session"
+            elif rules.fund_qualified_only and not bool(est["qualified"][i]):
+                why = "holding cash: no qualified forward evidence that this configuration earns more than its costs"
             elif rules.cooldown_minutes and minute_em - self.sym_exit[s] < rules.cooldown_minutes:
                 why = f"cool-down: this stock was sold less than {rules.cooldown_minutes} min ago"
             elif rules.max_entries_per_config_day and self.cfg_day_n[i] >= rules.max_entries_per_config_day:
@@ -280,6 +308,28 @@ class Executor:
             self.alloc.record_entry(i, float(est["p_win"][i]))
             out.append(self._buy_rec(i, minute_em, "pending", q, "", "accepted", expl, d.get("score")))
         return out
+
+    def _worst_px(self, q: int, p: float, vol: float) -> float:
+        """Highest plausible fill price for a buy decided at close p: spread, impact for q shares, one tick of rounding."""
+        if self.cfg is None:
+            return p
+        frac = (self.cfg.half_spread_bps + self.cfg.impact_bps * math.sqrt(q / max(vol, 1.0))) / 1e4
+        return _tick(p * (1 + frac), self.cfg.tick, True) + self.cfg.tick
+
+    def _charges_for(self, i: int, side: int, q: int, px: float, day) -> int:
+        r = self.e.reg
+        if q <= 0:
+            return 0
+        return int(self.e._charges.compute(Instrument(r.symbols[r.sym[i]], Kind.EQ), side, q, to_paise(px), "MIS" if r.intraday[i] else "CNC",
+                                           day).total)
+
+    def _need(self, i: int, q: int, p: float, minute_em: int, buffer: float) -> float:
+        """Rupees reserved for a buy: the larger of the flat buffer and the worst-case price plus the dated charges for q shares."""
+        if q <= 0:
+            return 0.0
+        day = pd.Timestamp(int(minute_em) * 60_000_000_000).date()
+        wp = self._worst_px(q, p, float(self.alloc.ewma_vol[self.e.reg.sym[i]]))
+        return max(q * p * (1 + buffer), q * wp + self._charges_for(i, 1, q, wp, day) / 100)
 
     @property
     def cfg_alloc(self) -> AllocatorConfig:
@@ -334,11 +384,23 @@ class Executor:
             getattr(self, k)[i] = 0
 
     # ------------------------------------------------------------------ fills
-    def fill(self, ts: pd.Timestamp, has_bar: np.ndarray, open_px: np.ndarray, volume: np.ndarray) -> tuple[list[dict], list[dict]]:
-        """Execute working orders against this minute's bars. Returns (fills, completed orders)."""
+    def fill(self, ts: pd.Timestamp, has_bar: np.ndarray, open_px: np.ndarray, volume: np.ndarray,
+             block: str | None = None) -> tuple[list[dict], list[dict]]:
+        """Execute working orders against this minute's bars. Returns (fills, completed orders).
+
+        Before anything is matched: if `block` is set (kill switch) or the day is halted by the loss limit, every
+        working BUY is cancelled, including the unfilled rest of a partial one. Working exits continue: they only
+        reduce exposure. An order fills no earlier than `delay_bars` + 1 bars after its decision bar."""
         e, r = self.e, self.e.reg
         fills, done = [], []
-        idx = np.flatnonzero((e.pend != 0) & has_bar[r.sym])
+        why = block or ("daily loss limit reached" if self.halted_day else None)
+        if why:
+            for i in np.flatnonzero(e.pend == 1):
+                i = int(i)
+                done.append(self._close_order(i, "partial" if self.ord_fill[i] > 0 else "cancelled", f"{why}: rest of the buy cancelled before the next bar"))
+        em = int(ts.value // 60_000_000_000)
+        delay = self.cfg.delay_bars if self.cfg else 0
+        idx = np.flatnonzero((e.pend != 0) & has_bar[r.sym] & (e.pend_key < em - delay))
         if not len(idx):
             return fills, self._expire(ts, done)
         if self.cfg is None:                                        # simple: whole order at the open
@@ -354,22 +416,67 @@ class Executor:
             return fills, done
         order = sorted(idx, key=lambda i: (int(r.sym[i]), 0 if e.pend[i] < 0 else 1, int(e.pend_key[i]), int(i)))
         cap_left: dict[int, int] = {}
+        lim = self._fill_limits(open_px) if self.rules else None
         for i in order:
             i, s = int(i), int(r.sym[i])
-            if s not in cap_left:
-                cap_left[s] = int(self.cfg.participation * volume[s])
-            q = int(min(self.pend_qty[i], cap_left[s]))
+            # one liquidity allowance per symbol for orders competing inside ONE portfolio; without a shared portfolio every
+            # configuration is its own account and gets its own allowance (its result must not depend on unrelated configurations)
+            key = s if self.rules else -1 - i
+            if key not in cap_left:
+                cap_left[key] = int(self.cfg.participation * volume[s])
+            q = int(min(self.pend_qty[i], cap_left[key]))
             if q <= 0:
                 continue
-            side = int(e.pend[i])
-            frac = (self.cfg.half_spread_bps + self.cfg.impact_bps * math.sqrt(q / max(volume[s], 1.0))) / 1e4
-            px = _tick(open_px[s] * (1 + frac) if side > 0 else open_px[s] * (1 - frac), self.cfg.tick, side > 0)
+            side, why = int(e.pend[i]), ""
+            px_of = lambda k: _tick(open_px[s] * (1 + (self.cfg.half_spread_bps + self.cfg.impact_bps * math.sqrt(k / max(volume[s], 1.0))) / 1e4)
+                                    if side > 0 else open_px[s] * (1 - (self.cfg.half_spread_bps + self.cfg.impact_bps * math.sqrt(k / max(volume[s], 1.0))) / 1e4),
+                                    self.cfg.tick, side > 0)
+            px = px_of(q)
+            if side > 0 and lim is not None:
+                q, why = self._cap_at_fill(i, s, q, px, px_of, ts, lim)
+                if q <= 0:
+                    done.append(self._close_order(i, "partial" if self.ord_fill[i] > 0 else "cancelled", why))
+                    continue
+                px = px_of(q)
             fills.append(self._apply(i, side, q, px, ts))
-            cap_left[s] -= q
+            if side > 0 and lim is not None:
+                lim["sym"][s] += q * px
+                lim["gross"] += q * px
+            cap_left[key] -= q
             self.pend_qty[i] -= q
-            if self.pend_qty[i] == 0:
-                done.append(self._close_order(i, "filled", ""))
+            if self.pend_qty[i] == 0 or (side > 0 and lim is not None and why):
+                done.append(self._close_order(i, "filled" if self.pend_qty[i] == 0 else "partial", "" if self.pend_qty[i] == 0 else why))
         return fills, self._expire(ts, done)
+
+    def _fill_limits(self, open_px: np.ndarray) -> dict:
+        """Exposure at this bar's prices (held shares at the open where a bar exists, else the last close)."""
+        e, r = self.e, self.e.reg
+        mark = np.where(np.isnan(open_px), np.nan_to_num(e.fe.last_close), open_px)
+        held = np.where(e.pos == 1, e.qty * mark[r.sym], 0.0)
+        eq = self.cash / 100 + float(held.sum())
+        return {"sym": np.bincount(r.sym, weights=held, minlength=len(r.symbols)), "gross": float(held.sum()), "equity": eq}
+
+    def _cap_at_fill(self, i: int, s: int, q: int, px: float, px_of, ts, lim) -> tuple[int, str]:
+        """Largest q' <= q this buy may fill at the actual price: free cash after the dated charges (other working
+        orders' reservations stay untouched), the symbol cap and the gross cap at this bar's prices."""
+        rules = self.rules
+        other_res = (self.reserved - int(self.ord_res[i])) / 100
+        res_sym = float(((self.e.pend == 1) & (self.e.reg.sym == s) & (np.arange(len(self.e.reg)) != i)) @ self.ord_res) / 100
+        room = {"not enough cash at the fill price (after charges)": self.cash / 100 - other_res,
+                f"symbol exposure above {rules.max_symbol_pct:.0%} at the fill price": rules.max_symbol_pct * lim["equity"] - lim["sym"][s] - res_sym,
+                f"gross exposure above {rules.max_gross_pct:.0%} at the fill price": rules.max_gross_pct * lim["equity"] - lim["gross"] - (other_res - 0)}
+        why = ""
+        k = q
+        while k > 0:
+            p = px_of(k)
+            cost = k * p + self._charges_for(i, 1, k, p, ts.date()) / 100
+            value = k * p
+            bad = [w for w, left in room.items() if (cost if w.startswith("not enough cash") else value) > left + 1e-9]
+            if not bad:
+                break
+            why = bad[0]
+            k = min(k - 1, int(max(min(left for left in room.values()), 0) // max(p, 1e-9))) if k > 1 else 0
+        return k, (why if k < q else "")
 
     def _expire(self, ts, done: list[dict]) -> list[dict]:
         """Count down unfinished entries; cancel the rest of any whose time is up."""

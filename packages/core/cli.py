@@ -93,6 +93,8 @@ def main(argv: list[str] | None = None) -> int:
     ls.add_argument("--account", required=True); ls.add_argument("--day", required=True, help="YYYY-MM-DD"); ls.add_argument("--out", default=None)
     db_ = sub.add_parser("day-backtest", help="every registered strategy on its own (own Rs 1,00,000) over one stored session, plus the challenger")
     db_.add_argument("--account", required=True); db_.add_argument("--day", required=True, help="YYYY-MM-DD"); db_.add_argument("--out", default=None)
+    xp = sub.add_parser("experiment", help="chronological challenger + learning experiment (dev / walk-forward validation / holdout), SYNTHETIC")
+    xp.add_argument("--out", default=None); xp.add_argument("--workers", type=int, default=3)
     dr = sub.add_parser("daily-review", help="the automatic after-close review for one session (loss study, day backtest, Monte Carlo); "
                                              "the lab runs it by itself after 15:30")
     dr.add_argument("--account", required=True); dr.add_argument("--day", required=True, help="YYYY-MM-DD")
@@ -239,6 +241,16 @@ def main(argv: list[str] | None = None) -> int:
         rep = audit(s.experiments_dir / "screening" / a.account)
         print(json.dumps(rep, indent=2))
         return 0
+    elif a.cmd == "experiment":
+        from datetime import datetime as _dt
+
+        from nseql.screening.experiment import run as _xp
+        out = Path(a.out) if a.out else s.experiments_dir / "experiment" / f"{_dt.now():%Y%m%d_%H%M%S}"
+        print(f"running the experiment into {out} (synthetic data; tens of minutes)...")
+        rep = _xp(out, workers=a.workers)
+        print(json.dumps({k: rep[k] for k in ("final_challenger", "holdout", "final_vs", "learning")}, indent=2, default=str)[:6000])
+        print(f"full report: {out / 'report.json'}")
+        return 0
     elif a.cmd == "daily-review":
         from nseql.screening.daily_review import review_dir, run as _rv
         rev = _rv(s.experiments_dir / "screening" / a.account, a.day, s.experiments_dir, force=a.force)
@@ -275,11 +287,11 @@ def main(argv: list[str] | None = None) -> int:
 
         from nseql.screening.loss_study import run as _ls
         out = Path(a.out) if a.out else s.experiments_dir / "loss_study" / f"{a.account}_{a.day}_{_dt.now():%H%M%S}"
-        print("replaying the stored day with the trade journal on (a few minutes)...")
+        print("reading the account's ledger and live trade journal...")
         rep = _ls(s.experiments_dir / "screening" / a.account, a.day, out)
         print(f"{rep['day']}: {rep['trades']} round trips, net {rep['net_inr']:,.0f} INR, win rate {rep['win_rate']:.0%}, "
-              f"mean {rep['mean_inr']:.2f} INR per trade; replay matches the live ledger: {rep['replay_matches_live']} "
-              f"(replay {rep['replay_net_inr']:,.2f}, live {rep['live_net_inr']:,.2f})")
+              f"mean {rep['mean_inr']:.2f} INR per trade; reconciled with the ledger: {rep['reconciliation']['reconciled']} "
+              f"({rep['reconciliation']['matched']}/{rep['reconciliation']['ledger_round_trips']} round trips; journal coverage {rep['journal_coverage']:.0%})")
         print("FINDINGS (lose more than the day's average, beyond chance on this day):")
         for f in rep["findings"] or [{"plain": "none: no factor separates losers from winners clearly on this day"}]:
             print("  -", f["plain"])

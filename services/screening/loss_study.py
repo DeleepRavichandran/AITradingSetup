@@ -124,31 +124,56 @@ def two_factor(trades: pd.DataFrame) -> list[dict]:
     return out
 
 
+def reconcile(db: sqlite3.Connection, day: str, rc: pd.DataFrame) -> dict:
+    """Every analysed round trip must be a SELL order the ledger closed on `day`, with the same quantity, exit price and
+    net P&L; and every such ledger order must be analysed. Only a reconciled study may publish a headline."""
+    from nseql.screening.metrics import _next_day
+    led = pd.read_sql_query("SELECT order_key, config_id, fill_ts, qty, price, realized_paise, charges_paise FROM paper_orders "
+                            "WHERE side='SELL' AND status IN ('filled','partial') AND fill_ts >= ? AND fill_ts < ?", db, params=(day, _next_day(day)))
+    fills = db.execute("SELECT COUNT(*), COALESCE(SUM(qty),0), COALESCE(SUM(charges_paise),0) FROM paper_fills f WHERE f.side='SELL' AND f.order_key IN "
+                       "(SELECT order_key FROM paper_orders WHERE side='SELL' AND status IN ('filled','partial') AND fill_ts >= ? AND fill_ts < ?)",
+                       (day, _next_day(day))).fetchone()
+    a = pd.DataFrame({"config_id": rc.config_id if len(rc) else [], "fill_ts": pd.to_datetime(rc.exit_ts).dt.strftime("%Y-%m-%dT%H:%M:%S") if len(rc) else [],
+                      "qty_a": rc.qty if len(rc) else [], "px_a": rc.exit_px if len(rc) else [], "net_a": rc.net_inr if len(rc) else []})
+    m = led.merge(a, on=["config_id", "fill_ts"], how="outer", indicator=True)
+    only_ledger, only_study = int((m._merge == "left_only").sum()), int((m._merge == "right_only").sum())
+    both = m[m._merge == "both"]
+    bad = both[(both.qty != both.qty_a) | ((both.price - both.px_a).abs() > 1e-6) | ((both.realized_paise / 100 - both.net_a).abs() > 0.005)]
+    ok = only_ledger == 0 and only_study == 0 and bad.empty
+    return {"reconciled": bool(ok), "ledger_round_trips": int(len(led)), "analysed_round_trips": int(len(rc)), "matched": int(len(both)),
+            "missing_from_study": only_ledger, "not_in_ledger": only_study, "mismatched": int(len(bad)),
+            "ledger_net_inr": round(float(led.realized_paise.sum()) / 100, 2), "analysed_net_inr": round(float(rc.net_inr.sum()) if len(rc) else 0.0, 2),
+            "ledger_sell_fills": int(fills[0]), "ledger_sell_qty": int(fills[1]),
+            "keys": "order identity (configuration, exit fill time), quantity, exit price, net P&L after both legs' charges"}
+
+
 def run(account: Path, day: str, out: Path) -> dict:
+    """Why the account's trades of `day` lost, from the ACCOUNT'S OWN LEDGER (round trips, fills, charges) and the trade
+    journal it recorded live (context at each fill). Nothing is reconstructed, so the study describes exactly the trades
+    the account made under its own rules, starting state and inherited evidence. Read-only."""
     account, out = Path(account), Path(out)
     if out.exists() and any(out.iterdir()):
         raise FileExistsError(f"{out} is not empty")
-    sch = replay_with_journal(account, day, out)
-    db = sch.store.db
-    with sch.store._lock:
+    db = sqlite3.connect(f"file:{account / 'screening.sqlite'}?mode=ro", uri=True)
+    try:
         rc = pd.DataFrame(analyse(db, day, write=False))
-        j = pd.read_sql_query("SELECT config_id, ts AS entry_key, minute_of_session, stock_move, vol_session, market_move FROM journal WHERE side='BUY'", db)
-        live = sqlite3.connect(f"file:{account / 'screening.sqlite'}?mode=ro", uri=True)
-        try:
-            live_net = live.execute("SELECT COALESCE(SUM(realized_paise),0) FROM paper_orders WHERE side='SELL' AND status IN ('filled','partial') "
-                                    "AND substr(fill_ts,1,10)=?", (day,)).fetchone()[0] / 100
-        finally:
-            live.close()
+        has_j = db.execute("SELECT 1 FROM sqlite_master WHERE name='journal'").fetchone() is not None
+        j = (pd.read_sql_query("SELECT config_id, ts AS entry_key, minute_of_session, stock_move, vol_session, market_move FROM journal WHERE side='BUY'", db)
+             if has_j else pd.DataFrame(columns=["config_id", "entry_key", "minute_of_session", "stock_move", "vol_session", "market_move"]))
+        rec = reconcile(db, day, rc)
+    finally:
+        db.close()
     if rc.empty:
         raise ValueError(f"no completed round trips on {day}")
     rc["entry_key"] = pd.to_datetime(rc.entry_ts).dt.strftime("%Y-%m-%dT%H:%M:%S")
-    t = rc.merge(j.drop_duplicates(["config_id", "entry_key"]), on=["config_id", "entry_key"], how="left")      # RCA already carries trend, breadth, regime
+    t = rc.merge(j.drop_duplicates(["config_id", "entry_key"]), on=["config_id", "entry_key"], how="left")
     t["session_part"] = t["minute_of_session"]
     t["stop"] = t["stop_pct"]
     rep = study(t)
     rep["two_factor"] = two_factor(t)
-    rep.update({"account": account.name, "day": day, "replay_matches_live": abs(round(float(rc.net_inr.sum()), 2) - round(live_net, 2)) < 0.05,
-                "replay_net_inr": round(float(rc.net_inr.sum()), 2), "live_net_inr": round(live_net, 2),
+    rep.update({"account": account.name, "day": day, "source": "the account's own ledger and live trade journal (no replay)",
+                "reconciliation": rec, "journal_coverage": round(float(t.minute_of_session.notna().mean()), 4),
                 "caution": "One day is one sample. Findings are hypotheses for a challenger filter, to be tested on days not used to find them."})
+    out.mkdir(parents=True, exist_ok=True)
     (out / "loss_study.json").write_text(json.dumps(rep, indent=2, default=str))
     return rep

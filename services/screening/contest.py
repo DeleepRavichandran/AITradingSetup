@@ -52,6 +52,12 @@ KINDS = {"synthetic": "SYNTHETIC replay (made-up prices; says nothing about real
          "forward": "forward paper trading (live prices, simulated orders)"}
 
 
+# A forward session counts only if BOTH accounts processed at least this share of the 375 session minutes as tradable
+# minutes (live or replay; not warm-up, not catch-up, not no-data), including the 15:30 close. Declared before any result
+# and frozen into the forward manifest. A session that meets it counts even if neither account traded (return 0).
+COVERAGE = {"min_share": 0.9, "session_minutes": 375, "must_include_close": True, "counted_modes": ["live", "replay"]}
+
+
 def incumbent_label() -> str:
     return f"screening rules {LIVE_RULES_VERSION} (registry v{REGISTRY_VERSION})"
 
@@ -263,14 +269,74 @@ def stream_from_frames(frames: dict[str, pd.DataFrame]) -> list[tuple]:
     return sorted(by.items(), key=lambda x: x[0])
 
 
+def _tradable_minutes(sch: MinuteScheduler, day: str) -> tuple[int, bool]:
+    from nseql.screening.metrics import _next_day
+    q = ("SELECT COUNT(*), MAX(CASE WHEN substr(minute,12,5)='15:30' THEN 1 ELSE 0 END) FROM cycles WHERE status='processed' AND minute >= ? "
+         "AND minute < ? AND mode IN (" + ",".join("?" * len(COVERAGE["counted_modes"])) + ")")
+    n, close = sch.store.db.execute(q, (day, _next_day(day), *COVERAGE["counted_modes"])).fetchone()
+    return int(n or 0), bool(close)
+
+
+def session_coverage(incumbent: MinuteScheduler, challenger: MinuteScheduler, days: list[str], rule: dict = COVERAGE) -> list[dict]:
+    """Per session: tradable minutes in each account and whether the predeclared coverage rule is met by BOTH."""
+    need = math.ceil(rule["min_share"] * rule["session_minutes"])
+    out = []
+    for d in days:
+        (ni, ci), (nc, cc) = _tradable_minutes(incumbent, d), _tradable_minutes(challenger, d)
+        ok = ni >= need and nc >= need and (not rule["must_include_close"] or (ci and cc))
+        why = "" if ok else (f"coverage below the rule: incumbent {ni}, challenger {nc} of {need} required tradable minutes"
+                             + ("" if (ci and cc) or not rule["must_include_close"] else "; the 15:30 close was not processed by both"))
+        out.append({"day": d, "incumbent_minutes": ni, "challenger_minutes": nc, "required": need, "complete": bool(ok), "reason": why})
+    return out
+
+
+def freeze_forward(meta: dict) -> dict:
+    """The forward contest's manifest, frozen when the challenger account is created (before its first session)."""
+    cap = float(meta["start_cash"])
+    m = {"contest_version": CONTEST_VERSION, "frozen_at": pd.Timestamp.now().isoformat(timespec="seconds"), "contest_from": meta["contest_from"],
+         "incumbent_account": meta.get("incumbent_account"), "start_cash": cap, "code": code_version(),
+         "incumbent": incumbent_label(), "challenger": CHALLENGER_VERSION, **_comparable(cap)}
+    m["sha256"] = sha({k: v for k, v in m.items() if k != "sha256"})
+    return m
+
+
+def _comparable(cap: float) -> dict:
+    """The parts of a manifest that current code must still match for the contest to continue as the same evaluation."""
+    from nseql.screening.execution import EXECUTION_VERSION
+    return {"challenger_config": CHALLENGER_CONFIG.to_dict(), "challenger_rules": challenger_rules(cap).to_dict(),
+            "incumbent_rules": PortfolioRules.live(cap).to_dict(), "execution": ExecConfig().to_dict(), "execution_version": EXECUTION_VERSION,
+            "coverage_rule": COVERAGE, "primary_measure": "paired daily after-cost return difference, challenger minus incumbent",
+            "bootstrap": BOOTSTRAP, "verdict_rules": {"min_sessions": MIN_SESSIONS, "min_challenger_trades": MIN_TRADES}}
+
+
+def verify_forward(meta: dict) -> dict:
+    m = meta.get("manifest")
+    if not m:
+        return {"status": "not frozen at inception", "matches_current_code": None,
+                "note": "this challenger account was created before manifests were frozen; its sessions are reported with that limitation"}
+    body = {k: v for k, v in m.items() if k != "sha256"}
+    if sha(body) != meta.get("manifest_sha256") or sha(body) != m.get("sha256"):
+        return {"status": "altered", "matches_current_code": None, "note": "the stored manifest does not match its frozen hash"}
+    cur = _comparable(float(m["start_cash"]))
+    diff = sorted(k for k in cur if json.dumps(cur[k], sort_keys=True, default=str) != json.dumps(m.get(k), sort_keys=True, default=str))
+    return {"status": "frozen", "frozen_at": m.get("frozen_at"), "sha256": m["sha256"], "matches_current_code": not diff, "changed": diff,
+            "note": "" if not diff else "current code differs from the frozen manifest in: " + ", ".join(diff) + "; sessions after the change are a new evaluation"}
+
+
 def forward_report(incumbent: MinuteScheduler, challenger: MinuteScheduler, meta: dict) -> dict:
-    """Forward paper contest from the two live ledgers (sessions from contest_from with processed minutes)."""
+    """Forward paper contest from the two live ledgers. A session counts only if it meets the frozen coverage rule in BOTH
+    accounts; sessions that miss it are listed with their coverage, never silently counted or dropped."""
+    check = verify_forward(meta)
+    rule = (meta.get("manifest") or {}).get("coverage_rule") or COVERAGE
     with incumbent.store._lock, challenger.store._lock:
-        days = [r[0] for r in challenger.store.db.execute(
-            "SELECT DISTINCT substr(minute,1,10) FROM cycles WHERE status='processed' AND mode != 'warmup' AND substr(minute,1,10) >= ? ORDER BY 1",
+        seen = [r[0] for r in challenger.store.db.execute(
+            "SELECT DISTINCT substr(minute,1,10) FROM cycles WHERE status='processed' AND substr(minute,1,10) >= ? ORDER BY 1",
             (meta["contest_from"],))]
-        rep = compare(Pair(incumbent, challenger), days, float(meta["start_cash"]), "forward",
+        cov = session_coverage(incumbent, challenger, seen, rule)
+        days = [c["day"] for c in cov if c["complete"]]
+        rep = compare(Pair(incumbent, challenger), days, float(meta["start_cash"]), "forward", meta.get("manifest") or
                       {"contest_from": meta["contest_from"], "challenger": meta.get("challenger"), "incumbent_account": meta.get("incumbent_account"),
-                       "start_cash": meta["start_cash"], "code": code_version(), "verdict_rules": {"min_sessions": MIN_SESSIONS,
-                                                                                                    "min_challenger_trades": MIN_TRADES}})
+                       "start_cash": meta["start_cash"], "frozen": False})
+    rep["coverage"] = {"rule": rule, "sessions": cov, "completed": len(days), "incomplete": [c for c in cov if not c["complete"]]}
+    rep["manifest_check"] = check
     return rep

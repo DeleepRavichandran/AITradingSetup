@@ -103,7 +103,7 @@ class ChallengerEngine(ScreeningEngine):
 
     # ------------------------------------------------------------------ one minute
     def step(self, ts: pd.Timestamp, symbols: list[str], o, h, lo, c, v, *, allow_orders: bool = True,
-             block_reason: str = "kill switch engaged") -> MinuteResult:
+             block_reason: str = "kill switch engaged", reduce_only: bool = False) -> MinuteResult:
         ts = pd.Timestamp(ts)
         em = self.epoch_min(ts)
         if em <= self.last_minute:
@@ -127,7 +127,7 @@ class ChallengerEngine(ScreeningEngine):
         if new.any():
             self.or_day[new], self.or_hi[new], self.or_lo[new], self.or_n[new], self.decided[new] = day, -np.inf, np.inf, 0, False
         # 1. working orders execute against this bar (shared execution model)
-        res.fills, res.done = self.x.fill(ts, has_bar, open_px, vol)
+        res.fills, res.done = self.x.fill(ts, has_bar, open_px, vol, block=block_reason if (reduce_only and not allow_orders) else None)
         held = self.pos == 1
         self.stop_px[held] = self.or_lo[r.sym[held]]          # the stop is the opening-range low, not a % of the fill
         # 2. features and opening range (completed 1-minute bars only)
@@ -186,7 +186,7 @@ class ChallengerEngine(ScreeningEngine):
             res.signals.append((i, DECISIONS[dec[i]], float(fe.last_close[r.sym[i]]), names[reason[i]]))
         self.x.qty_cap = cap
         try:
-            res.orders = self.x.submit(act, {i: DECISIONS[dec[i]] for i in act}, em, allow_orders, block_reason)
+            res.orders = self.x.submit(act, {i: DECISIONS[dec[i]] for i in act}, em, allow_orders, block_reason, reduce_only)
         finally:
             self.x.qty_cap = None
         self.last_minute = em

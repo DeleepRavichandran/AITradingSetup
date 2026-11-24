@@ -38,7 +38,9 @@ def test_replay_reproduces_the_live_day_and_reports_factors(tmp_path):
         sch.run_cycle(ts + pd.Timedelta(seconds=6))
     (acct / "live.json").write_text(json.dumps({"live_from": live_from, "symbols": syms, "capital": 100_000}))
     rep = L.run(acct, DAY, tmp_path / "study")
-    assert rep["replay_matches_live"] and rep["trades"] > 0
+    rec = rep["reconciliation"]
+    assert rec["reconciled"] and rec["matched"] == rec["ledger_round_trips"] == rep["trades"] > 0
+    assert rep["journal_coverage"] == 1.0
     assert {f["factor"] for f in rep["factors"]} >= {"trend", "breadth", "session_part", "family", "timeframe"}
     assert all(sum(b["trades"] for b in f["buckets"]) == rep["trades"] for f in rep["factors"])
     assert (tmp_path / "study" / "loss_study.json").exists() and "hypotheses" in rep["caution"]

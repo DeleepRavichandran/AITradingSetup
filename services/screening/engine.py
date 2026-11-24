@@ -89,7 +89,7 @@ class ScreeningEngine:
 
     # ------------------------------------------------------------------ one minute
     def step(self, ts: pd.Timestamp, symbols: list[str], o, h, lo, c, v, *, allow_orders: bool = True,
-             block_reason: str = "kill switch engaged") -> MinuteResult:
+             block_reason: str = "kill switch engaged", reduce_only: bool = False) -> MinuteResult:
         ts = pd.Timestamp(ts)
         em = self.epoch_min(ts)
         if em <= self.last_minute:
@@ -109,7 +109,7 @@ class ScreeningEngine:
         vol = np.zeros(fe.S)
         vol[sel] = v
         self.x.new_day(ts)
-        res.fills, res.done = self.x.fill(ts, has_bar, open_px, vol)
+        res.fills, res.done = self.x.fill(ts, has_bar, open_px, vol, block=block_reason if (reduce_only and not allow_orders) else None)
         # 2. features
         res.closed = fe.update(ts, sel, o, h, lo, c, v)
         self.x.alloc.observe(has_bar, fe.last_close, vol)                # recent returns and volume, for ranking entries
@@ -163,7 +163,7 @@ class ScreeningEngine:
         names = ("rule", "stop", "square-off", "no new intraday entries")
         for i in act:
             res.signals.append((i, DECISIONS[dec[i]], float(fe.last_close[r.sym[i]]), names[reason[i]]))
-        res.orders = self.x.submit(act, {i: DECISIONS[dec[i]] for i in act}, em, allow_orders, block_reason)
+        res.orders = self.x.submit(act, {i: DECISIONS[dec[i]] for i in act}, em, allow_orders, block_reason, reduce_only)
         self.last_minute = em
         return res
 

@@ -129,7 +129,7 @@ export function fixtures(state) {
       review: { headline: ["The bot closed 363 round trips, net -Rs 2,248 after charges; 31% were winners, average -6.19 INR per trade.",
         "Buys when time of day was 'first 30 min (09:16-09:45)' lost 8.94 INR per trade on average"],
         caution: "One day is one sample. These findings are ideas to test on later days, not proof; no rule is changed by this review.",
-        loss_study: { trades: 363, win_rate: 0.31, mean_inr: -6.19, replay_matches_live: true,
+        loss_study: { trades: 363, win_rate: 0.31, mean_inr: -6.19, reconciliation: { reconciled: true, matched: 363, ledger_round_trips: 363 }, journal_coverage: 1,
           factors: [{ factor: "session_part", label: "time of day", buckets: [{ bucket: "first 30 min (09:16-09:45)", trades: 120, win_rate: 0.25, net_inr: -1072.8, mean_inr: -8.94, ci95: [-11.2, -6.6], finding: true }] }] },
         day_backtest: { strategies: 6120, traded: 4000, share_positive: 0.41, challenger: { trades: 2, net_inr: -120 },
           by_family: [{ group: "vwap", strategies: 600, traded: 500, trades: 1500, net_inr: -9000, net_per_trade: -6, share_positive: 0.3, charges_inr: 3000 }] },

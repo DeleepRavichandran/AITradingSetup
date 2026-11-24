@@ -158,3 +158,40 @@ The analyses in sections 4 and 6 no longer need to be typed by hand. After the 1
 
 The review is analysis only: it never trades, never changes a rule, and only reads the account's ledger. Its
 headline sentences are built from the saved numbers. One day is one sample.
+
+## 8. Execution 2.0 and evidence rules (review of 1376b45, 2026-11-25)
+
+Execution assumptions are versioned (`EXECUTION_VERSION` in `services/screening/execution.py`). Every account folder
+has `execution.json` with the versions its ledger was produced under; old rows are never rewritten.
+`python -m nseql.cli ledger-audit --account <name>` flags results produced before 2.0 (finding `X`) and
+any day with cash below zero (`X3`) or retrospective decisions that were traded (`X4`).
+
+| Rule | Behaviour |
+|---|---|
+| Kill switch | Reduce-only. Working buys, including the unfilled rest of a partial buy, are cancelled **before** the next bar is matched. Working exits continue, and new exits (stops, square-off, rule exits) are accepted. The incumbent and the challenger behave the same. |
+| Daily loss halt | Same as the kill switch for working buys; no new entries that day. |
+| Exposure | Symbol, gross and cash limits apply at submission (working orders reserved) **and again at the fill price**. A gap or slippage cuts the fill to what the limits allow and records the reason. |
+| Cash | The reservation is the larger of the flat buffer and the worst-case price plus the dated charges. At the fill, cash after charges never goes below the other orders' reservations. |
+| Forward data | Each cycle records `decided_at`, `arrived_at` and `earliest_fill`. A live minute decided more than 55 s after its candle closed (less than one bar, so the fill bar has not closed) is **catch-up**: indicators are rebuilt, nothing is traded, and it is labelled `catch-up`. A restart reuses the recorded decision time, so a replay after a crash matches the uninterrupted run. |
+| Standalone replays | Without a shared portfolio, each configuration has its own liquidity allowance, so its result does not depend on unrelated configurations. Inside one portfolio, orders in a symbol share the bar. |
+| Daily Review | Built from the account's own ledger and live trade journal (no replay). Each analysed round trip is reconciled with the ledger by order identity, quantity, exit price and net P&L. An unreconciled study publishes no headline. |
+| Forward contest | The manifest is frozen when the challenger account is created (`freeze_forward`). A session counts only if **both** accounts processed at least 90% of the 375 minutes as tradable minutes, including 15:30. Incomplete sessions are listed with their coverage. Zero-trade sessions that meet the rule count. |
+
+Tests: `tests/screening/test_core_defects.py` (D1-D4) and `tests/screening/test_evidence_trust.py` (E2-E4).
+
+## 9. Chronological experiment (`python -m nseql.cli experiment`)
+
+`services/screening/experiment.py` runs these phases in order:
+1. development, 6 days
+2. walk-forward validation, 3 windows of 5 days
+3. holdout, 15 days, opened once after `manifest.json` is frozen
+
+The manifest freezes the parameters, the selection result and the primary metric. Every variant tried is recorded in
+`variants.jsonl`.
+- **Hypotheses:** H1 hold cash unless qualified; H2 no entries in the first 30 minutes; H3 participation cap of 2%. Each is one isolated change.
+- **Learning:** the learned selector against a fixed selector, on planted-edge synthetic data and on a random-walk null control.
+- **Stress:** slippage doubled, and a one-bar delay.
+- **Baselines:** cash, and an exposure-matched buy-the-watchlist baseline.
+
+All of this runs on SYNTHETIC data: it tests the machinery, not the market. On real data, the same protocol needs
+licensed 1-minute history; see the report for the exact missing input.
