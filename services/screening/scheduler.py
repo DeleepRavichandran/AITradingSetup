@@ -114,6 +114,7 @@ class MinuteScheduler:
         self.startup_seconds = round(time.perf_counter() - t0, 3)
         self.news_count = None          # optional (symbol, ts) -> headlines about it first seen in the 60 min before ts
         self.verbose = True                  # end-of-day RCA lines in the log (contest replays turn this off)
+        self.on_session_close = None                 # callable(day) after the 15:30 minute and its RCA (e.g. the daily review)
         self.followers: list[MinuteScheduler] = []   # isolated accounts fed EXACTLY the same bars at the same time (contest)
         self.recovery = self._recover()
 
@@ -180,6 +181,11 @@ class MinuteScheduler:
                         print(f"[screening] {day}: root-cause analysis written for {n} trades", flush=True)
                 except Exception as e:      # noqa: BLE001 - documentation must never stop trading
                     print(f"[screening] {day}: RCA failed: {type(e).__name__}: {e}", flush=True)
+                if self.on_session_close is not None:   # e.g. queue the daily review (runs outside this loop)
+                    try:
+                        self.on_session_close(day)
+                    except Exception as e:  # noqa: BLE001
+                        print(f"[screening] {day}: session-close hook failed: {type(e).__name__}: {e}", flush=True)
             for f in self.followers:                    # same events to every follower, even if it declines to trade
                 try:
                     f.ingest(fetched, getattr(self.feed, "label", "feed"))

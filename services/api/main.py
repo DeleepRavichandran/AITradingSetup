@@ -1134,6 +1134,16 @@ def create_app() -> FastAPI:
         _register(ch, {"root": str(croot), "mode": "live", "account": croot.name, "challenger": CHALLENGER_VERSION}, activate=False)
         log(f"challenger {CHALLENGER_VERSION}: paper account {croot.name} (start cash {cm['start_cash']:,.2f}), contest from {cm['contest_from']}")
 
+    def _review_busy() -> bool:
+        """The daily review waits while a session is on (09:00-15:35 IST on a trading day): the live bot keeps the CPU."""
+        now = datetime.now(views.IST).replace(tzinfo=None)
+        return _calendar().is_session(now.date()) and 9 * 60 <= now.hour * 60 + now.minute < 15 * 60 + 35
+
+    from nseql.screening.daily_review import ReviewQueue
+    reviews = ReviewQueue(st.exp_dir, busy=_review_busy,
+                          log=lambda m: print(f"[review] {datetime.now():%Y-%m-%d %H:%M:%S} {m}", flush=True))
+    app.state.reviews = reviews
+
     def _start_live_screening() -> None:
         """Unattended: log in to Angel One, fetch daily history once, warm up, then screen every minute.
         Paper orders only from the live start (kept across restarts). Errors are visible in /screening/status."""
@@ -1221,7 +1231,14 @@ def create_app() -> FastAPI:
                     _attach_challenger(sch, name, syms, log)
                 except Exception as e:      # noqa: BLE001 - the challenger never stops the incumbent
                     log(f"challenger not started: {type(e).__name__}: {e}")
+            sch.on_session_close = lambda day, _n=name: reviews.submit(_n, day)     # automatic daily review after 15:30
             sch.start()
+            try:
+                q = reviews.catch_up()
+                if q:
+                    log(f"daily review: queued {', '.join(d for _, d in q)} (runs after the close, one at a time)")
+            except Exception as e:      # noqa: BLE001
+                log(f"daily review catch-up failed: {type(e).__name__}: {e}")
             screening["live"].update(state="running", symbols=len(syms), live_from=live_from, not_found=missing, capital=capital, account=name)
             log(f"running: {len(syms)} symbols, {len(sch.reg):,} configurations, paper account {name} (capital {capital:,.0f}, rules {LIVE_RULES_VERSION}), "
                 f"paper orders from {live_from}" + (f"; not found: {', '.join(missing)}" if missing else ""))
@@ -1790,6 +1807,45 @@ def create_app() -> FastAPI:
                               "deferred": session["deferred"], "rejected": session["rejected"]},
         })
         return clean(out)
+
+    @api.get("/review")
+    def review_list():
+        """Every closed session of the live paper accounts, with its daily-review state (latest first)."""
+        from nseql.screening.daily_review import closed_sessions, live_accounts
+        rows = []
+        for acc in live_accounts(st.exp_dir):
+            for day in closed_sessions(acc):
+                rows.append({"account": acc.name, "day": day, "state": reviews.state(acc.name, day)})
+        rows.sort(key=lambda r: (r["day"], r["account"]), reverse=True)
+        return clean({"sessions": rows, "running": list(reviews.current) if reviews.current else None, "queued": [list(k) for k in reviews.pending],
+                      "schedule": "after the 15:30 candle of each trading day, once the session is over (holidays have no session)"})
+
+    @api.get("/review/{account}/{day}")
+    def review_get(account: str, day: str):
+        from nseql.screening.daily_review import review_dir, status as _status
+        if "/" in account or "\\" in account or ".." in account or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
+            raise HTTPException(400, "bad account or day")
+        f = review_dir(st.exp_dir, account, day) / "review.json"
+        rev = json.loads(f.read_text()) if f.exists() else None
+        return clean({"account": account, "day": day, "state": reviews.state(account, day), "status": _status(st.exp_dir, account, day), "review": rev})
+
+    class ReviewRun(BaseModel):
+        account: str
+        day: str
+        force: bool = False
+
+    @api.post("/review/run")
+    def review_run(body: ReviewRun):
+        """Queue the review of one closed session (analysis only: it never trades or changes rules)."""
+        from nseql.screening.daily_review import closed_sessions
+        acc = st.exp_dir / "screening" / body.account
+        if "/" in body.account or "\\" in body.account or ".." in body.account or not (acc / "live.json").exists():
+            raise HTTPException(404, "unknown paper account")
+        if body.day not in closed_sessions(acc):
+            raise HTTPException(400, f"{body.account} has no closed session on {body.day}")
+        r = reviews.submit(body.account, body.day, force=body.force)
+        return {"account": body.account, "day": body.day, "result": r,
+                "note": "waits until the market closes if a session is on" if _review_busy() else "starts now"}
 
     @api.get("/screening/rca")
     def screening_rca(day: str = ""):

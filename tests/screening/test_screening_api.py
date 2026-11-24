@@ -143,3 +143,37 @@ def test_ledger_drill_down_filters_match_the_session_counts(boot):
     assert all(not (r["alloc_reason"] or "").startswith("warm-up") for r in w["rows"])
     o = c.get(f"/api/screening/orders?day={day}&limit=500").json()
     assert all(r["decided_at"].startswith(day) for r in o["rows"])
+
+
+def test_daily_review_endpoints(boot, tmp_path):
+    """Lists closed sessions of live accounts, serves a saved review, queues a run; refuses unknown accounts and days."""
+    import json as _j
+
+    import pandas as pd
+    from nseql.screening.daily_review import review_dir
+    from nseql.screening.execution import PortfolioRules
+    from nseql.screening.scheduler import MinuteScheduler
+    from nseql.screening.synthetic import minute_stream, symbols
+    exp = tmp_path / "exp"
+    acct = exp / "screening" / "live_x"
+    sch = MinuteScheduler(acct, symbols(3), portfolio=PortfolioRules(capital=100_000), live_from="2026-11-16T09:16:00")
+    sch.verbose = False
+    for ts, bars in minute_stream(3, ["2026-11-16"], seed=2):
+        sch.ingest(bars)
+        sch.run_cycle(ts + pd.Timedelta(seconds=6))
+    sch.store.db.commit()
+    (acct / "live.json").write_text(_j.dumps({"live_from": "2026-11-16T09:16:00", "symbols": symbols(3), "capital": 100_000}))
+    out = review_dir(exp, "live_x", "2026-11-16")
+    out.mkdir(parents=True)
+    (out / "status.json").write_text(_j.dumps({"state": "done", "steps": {}}))
+    (out / "review.json").write_text(_j.dumps({"headline": ["The bot closed 3 round trips"], "caution": "One day is one sample."}))
+    c = boot()
+    lst = c.get("/api/review").json()
+    assert lst["sessions"] == [{"account": "live_x", "day": "2026-11-16", "state": "done"}]
+    r = c.get("/api/review/live_x/2026-11-16").json()
+    assert r["state"] == "done" and r["review"]["headline"] == ["The bot closed 3 round trips"]
+    assert c.get("/api/review/live_x/2026-11-17").json()["review"] is None
+    assert c.get("/api/review/..%2Fx/2026-11-16").status_code in (400, 404)
+    assert c.post("/api/review/run", json={"account": "nope", "day": "2026-11-16"}).status_code == 404
+    assert c.post("/api/review/run", json={"account": "live_x", "day": "2026-11-20"}).status_code == 400
+    assert c.post("/api/review/run", json={"account": "live_x", "day": "2026-11-16"}).json()["result"] == "done"

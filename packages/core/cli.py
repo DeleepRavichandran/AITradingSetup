@@ -93,6 +93,10 @@ def main(argv: list[str] | None = None) -> int:
     ls.add_argument("--account", required=True); ls.add_argument("--day", required=True, help="YYYY-MM-DD"); ls.add_argument("--out", default=None)
     db_ = sub.add_parser("day-backtest", help="every registered strategy on its own (own Rs 1,00,000) over one stored session, plus the challenger")
     db_.add_argument("--account", required=True); db_.add_argument("--day", required=True, help="YYYY-MM-DD"); db_.add_argument("--out", default=None)
+    dr = sub.add_parser("daily-review", help="the automatic after-close review for one session (loss study, day backtest, Monte Carlo); "
+                                             "the lab runs it by itself after 15:30")
+    dr.add_argument("--account", required=True); dr.add_argument("--day", required=True, help="YYYY-MM-DD")
+    dr.add_argument("--force", action="store_true", help="run again even if the review is finished")
     sub.add_parser("brain-verify", help="verify the episodic memory hash chain and the correctness probes")
     v = sub.add_parser("serve", help="start the API server"); v.add_argument("--host", default="127.0.0.1"); v.add_argument("--port", type=int, default=8000)
     a = ap.parse_args(argv)
@@ -234,6 +238,14 @@ def main(argv: list[str] | None = None) -> int:
         from nseql.screening.ledger_audit import audit
         rep = audit(s.experiments_dir / "screening" / a.account)
         print(json.dumps(rep, indent=2))
+        return 0
+    elif a.cmd == "daily-review":
+        from nseql.screening.daily_review import review_dir, run as _rv
+        rev = _rv(s.experiments_dir / "screening" / a.account, a.day, s.experiments_dir, force=a.force)
+        for line in rev["headline"]:
+            print("-", line)
+        print(rev["caution"])
+        print(f"saved: {review_dir(s.experiments_dir, a.account, a.day)}")
         return 0
     elif a.cmd == "day-backtest":
         from datetime import datetime as _dt

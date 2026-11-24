@@ -132,3 +132,29 @@ shown on the Incumbent vs Challenger page.
 The incumbent runs thousands of fixed rules without a parameter search, so walk-forward and sensitivity apply to the
 challenger (the backtester's own walk-forward is in the Walk-Forward workspace); the Monte Carlo check runs on both.
 Synthetic results test the machinery, not the market.
+
+## 7. Automatic daily review (2026-11-24)
+
+The analyses in sections 4 and 6 no longer need to be typed by hand. After the 15:30 candle of each trading day
+(and after the per-trade root cause is written), the live bot queues a **daily review** of the session
+(`services/screening/daily_review.py`):
+
+| Step | What it answers | Module |
+|---|---|---|
+| Loss study | why trades lost: entry context of every round trip, one- and two-factor views | `loss_study.py` |
+| Day backtest | every strategy on its own with its own Rs 1,00,000, plus the challenger | `day_backtest.py` |
+| Monte Carlo | the day's closed trades reshuffled 1,000 times: how deep the dip could have been | `robustness.monte_carlo` |
+
+- Runs in a separate low-priority process, one review at a time, and **never while a session is on**
+  (09:00-15:35 IST on a trading day): the live bot keeps the computer.
+- A failing step is recorded with its error; the other steps still run (state `partial`).
+- On every lab start, the latest closed sessions without a review are queued (catch-up after a restart).
+- Holidays and weekends have no 15:30 candle, so no review.
+- Results: `experiments/daily_review/<account>/<day>/` (`review.json`, `status.json`, the step reports, `review.log`).
+  Scratch replay ledgers are deleted after the run.
+- Dashboard: **Monitor → Daily Review** (`/review`): plain findings first, then the tables. A session without a
+  review has a "Run this review" button; `POST /api/review/run` queues it.
+- By hand, if ever needed: `python -m nseql.cli daily-review --account <account> --day YYYY-MM-DD [--force]`.
+
+The review is analysis only: it never trades, never changes a rule, and only reads the account's ledger. Its
+headline sentences are built from the saved numbers. One day is one sample.

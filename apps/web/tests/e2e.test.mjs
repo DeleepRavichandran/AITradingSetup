@@ -404,6 +404,19 @@ describe("Accessibility and layout", () => {
     await ctx.close();
   });
 
+  test("Daily review: plain findings first, failed step shown, other sessions selectable", async () => {
+    const { page, ctx, errors } = await open("/review");
+    await page.getByTestId("review-headline").getByText("The bot closed 363 round trips", { exact: false }).waitFor();
+    await page.getByTestId("review-state").getByText("Ready").waitFor();
+    await page.getByTestId("review-steps").getByText("RuntimeError: boom", { exact: false }).waitFor();
+    await page.getByText("first 30 min (09:16-09:45)").first().waitFor();
+    await page.getByRole("button", { name: /20 Nov/ }).click();
+    await page.getByTestId("review-state").getByText("Not run yet").waitFor();
+    await page.getByRole("button", { name: "Run this review" }).waitFor();
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  });
+
   test("Incumbent vs challenger: verdict with data source and versions, curves, costs, both-lost warning", async () => {
     const { page, ctx, errors } = await open("/contest");
     await page.getByTestId("contest-verdict").getByText("not a forward verdict").waitFor();
