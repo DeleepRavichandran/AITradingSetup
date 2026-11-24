@@ -1,0 +1,198 @@
+{
+  "protocol": "Chronological experiment: hypotheses, a challenger, and whether learning adds value (review of 1376b45, sections 3-4).",
+  "code": {
+    "commit": "bb518d50a86658d26ec847e987cdf663c98c01af",
+    "uncommitted_changes": true
+  },
+  "execution_version": "2.0",
+  "rules_version": "1.2",
+  "calendar": {
+    "development": [
+      "2026-01-05",
+      "2026-01-06",
+      "2026-01-07",
+      "2026-01-08",
+      "2026-01-09",
+      "2026-01-12"
+    ],
+    "validation": [
+      "2026-01-13",
+      "2026-01-14",
+      "2026-01-15",
+      "2026-01-16",
+      "2026-01-19",
+      "2026-01-20",
+      "2026-01-21",
+      "2026-01-22",
+      "2026-01-23",
+      "2026-01-26",
+      "2026-01-27",
+      "2026-01-28",
+      "2026-01-29",
+      "2026-01-30",
+      "2026-02-02"
+    ],
+    "windows": [
+      [
+        "2026-01-13",
+        "2026-01-14",
+        "2026-01-15",
+        "2026-01-16",
+        "2026-01-19"
+      ],
+      [
+        "2026-01-20",
+        "2026-01-21",
+        "2026-01-22",
+        "2026-01-23",
+        "2026-01-26"
+      ],
+      [
+        "2026-01-27",
+        "2026-01-28",
+        "2026-01-29",
+        "2026-01-30",
+        "2026-02-02"
+      ]
+    ],
+    "holdout": [
+      "2026-02-03",
+      "2026-02-04",
+      "2026-02-05",
+      "2026-02-06",
+      "2026-02-09",
+      "2026-02-10",
+      "2026-02-11",
+      "2026-02-12",
+      "2026-02-13",
+      "2026-02-16",
+      "2026-02-17",
+      "2026-02-18",
+      "2026-02-19",
+      "2026-02-20",
+      "2026-02-23"
+    ],
+    "all": [
+      "2026-01-05",
+      "2026-01-06",
+      "2026-01-07",
+      "2026-01-08",
+      "2026-01-09",
+      "2026-01-12",
+      "2026-01-13",
+      "2026-01-14",
+      "2026-01-15",
+      "2026-01-16",
+      "2026-01-19",
+      "2026-01-20",
+      "2026-01-21",
+      "2026-01-22",
+      "2026-01-23",
+      "2026-01-26",
+      "2026-01-27",
+      "2026-01-28",
+      "2026-01-29",
+      "2026-01-30",
+      "2026-02-02",
+      "2026-02-03",
+      "2026-02-04",
+      "2026-02-05",
+      "2026-02-06",
+      "2026-02-09",
+      "2026-02-10",
+      "2026-02-11",
+      "2026-02-12",
+      "2026-02-13",
+      "2026-02-16",
+      "2026-02-17",
+      "2026-02-18",
+      "2026-02-19",
+      "2026-02-20",
+      "2026-02-23"
+    ]
+  },
+  "capital": 100000.0,
+  "symbols": 20,
+  "seeds": {
+    "edge": 11,
+    "null": 12
+  },
+  "variants": {
+    "INC-L": {
+      "label": "incumbent, learned selector (rules 1.2, ranked by forward evidence)"
+    },
+    "INC-F": {
+      "label": "incumbent, fixed selector (registry order, no evidence gates)",
+      "rules": {
+        "allocation": "first_come",
+        "group_gate_trades": 0
+      },
+      "alloc": {
+        "reject_negative": false
+      }
+    },
+    "H1": {
+      "label": "INC-L + hold cash unless qualified",
+      "rules": {
+        "fund_qualified_only": true
+      }
+    },
+    "H2": {
+      "label": "INC-L + no entries in the first 30 minutes",
+      "rules": {
+        "no_entry_first_minutes": 30
+      }
+    },
+    "H3": {
+      "label": "INC-L + participation cap 2%",
+      "exec": {
+        "participation": 0.02
+      }
+    },
+    "CH-0": {
+      "label": "challenger orb30-breadth-1.0",
+      "engine": "challenger"
+    }
+  },
+  "stress": {
+    "slippage x2": {
+      "half_spread_bps": 10.0,
+      "impact_bps": 50.0
+    },
+    "one-bar delay": {
+      "delay_bars": 1
+    }
+  },
+  "selection_rule": "positive mean paired daily difference vs INC-L on validation AND net P&L above INC-L in >= 2 of 3 windows",
+  "selection": {
+    "H1": {
+      "accepted": true,
+      "windows_won": "2/3"
+    },
+    "H2": {
+      "accepted": true,
+      "windows_won": "2/3"
+    },
+    "H3": {
+      "accepted": true,
+      "windows_won": "2/3"
+    }
+  },
+  "final_challenger": {
+    "name": "FINAL=H1+H2+H3",
+    "spec": {
+      "label": "INC-L + H1 + H2 + H3",
+      "rules": {
+        "fund_qualified_only": true,
+        "no_entry_first_minutes": 30
+      },
+      "exec": {
+        "participation": 0.02
+      },
+      "alloc": {}
+    }
+  },
+  "primary_metric": "paired daily after-cost return difference (candidate - comparator), 95% circular block bootstrap",
+  "data_fingerprint_validation": "673fd5743a319fb790c3dddabc222485975ba083591fce4df6430a1bbed594aa",
+  "sha256": "74a745de2e8912ee0551888ca7962399ee76267007ae538666941226b4e603ad"
+}

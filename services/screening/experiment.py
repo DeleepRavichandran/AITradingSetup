@@ -70,17 +70,46 @@ VARIANTS = {
 STRESS = {"slippage x2": {"half_spread_bps": 10.0, "impact_bps": 50.0}, "one-bar delay": {"delay_bars": 1}}
 
 
-def calendar(iteration: int = 1) -> dict[str, list[str]]:
+def dataset_days(path: Path) -> list[str]:
+    from nseql.data.store import Dataset
+    ds = Dataset(Path(path))
+    sym = [x for x in ds.symbols("1m") if not x.startswith("NIFTY")]
+    days: set[str] = set()
+    for x in sym:
+        days |= set(pd.to_datetime(ds.bars(x, "1m").ts).dt.strftime("%Y-%m-%d"))
+    return sorted(days)
+
+
+def calendar(iteration: int = 1, dataset: Path | None = None) -> dict[str, list[str]]:
     """Iteration k adds a new, untouched holdout of HOLD days after the previous one (the generators are sequential and
-    seeded, so earlier days are identical). Development and validation never change."""
-    days = [d.strftime("%Y-%m-%d") for d in pd.bdate_range("2026-01-05", periods=DEV + VAL_WINDOWS * VAL_LEN + HOLD * iteration)]
+    seeded, so earlier days are identical). Development and validation never change. With a dataset: its first sessions."""
+    n = DEV + VAL_WINDOWS * VAL_LEN + HOLD * iteration
+    if dataset is not None:
+        have = dataset_days(dataset)
+        if len(have) < n:
+            raise ValueError(f"dataset {Path(dataset).name} has {len(have)} sessions of 1-minute bars; the protocol needs {n} "
+                             f"({DEV} development + {VAL_WINDOWS}x{VAL_LEN} validation + {HOLD} holdout)")
+        days = have[:n]
+    else:
+        days = [d.strftime("%Y-%m-%d") for d in pd.bdate_range("2026-01-05", periods=n)]
     val = days[DEV:DEV + VAL_WINDOWS * VAL_LEN]
     return {"development": days[:DEV], "validation": val, "windows": [val[k * VAL_LEN:(k + 1) * VAL_LEN] for k in range(VAL_WINDOWS)],
             "holdout": days[-HOLD:], "previous_holdouts": days[DEV + VAL_WINDOWS * VAL_LEN:-HOLD], "all": days}
 
 
 def stream(kind: str, days: list[str]):
+    """kind: 'edge' / 'null' (SYNTHETIC) or 'dataset:<path>' (stored 1-minute history, e.g. licensed real data)."""
     from nseql.screening.synthetic import factor_stream, minute_stream
+    if kind.startswith("dataset:"):
+        from nseql.data.store import Dataset
+        from nseql.screening.contest import stream_from_frames
+        ds = Dataset(Path(kind.split(":", 1)[1]))
+        keep = set(days)
+        frames = {}
+        for x in [x for x in ds.symbols("1m") if not x.startswith("NIFTY")]:
+            f = ds.bars(x, "1m")
+            frames[x] = f[pd.to_datetime(f.ts).dt.strftime("%Y-%m-%d").isin(keep)]
+        return stream_from_frames(frames)
     return factor_stream(SYMBOLS, days, seed=SEEDS[kind]) if kind == "edge" else minute_stream(SYMBOLS, days, seed=SEEDS[kind], missing=0.0)
 
 
@@ -200,7 +229,7 @@ def exposure_baseline(kind: str, days: list[str], exposure: float, exec_cfg: Exe
     syms = sorted({b["symbol"] for _, bs in st for b in bs})
     eq, rows = CAPITAL, []
     for d in days:
-        start, pnl, charges, slip = eq, 0.0, 0.0, 0.0
+        start, pnl, charges, slip, n = eq, 0.0, 0.0, 0.0, 0
         per = exposure * eq / len(syms)
         for s in syms:
             bi, bo = by.get((s, f"{d} 09:17")), by.get((s, f"{d} 15:16"))
@@ -213,25 +242,27 @@ def exposure_baseline(kind: str, days: list[str], exposure: float, exec_cfg: Exe
             pin, pout = bi["open"] * (1 + fr(bi)), bo["open"] * (1 - fr(bo))
             c = sum(chs.compute(Instrument(s, Kind.EQ), side, q, round(px * 100), "MIS", pd.Timestamp(d).date()).total for side, px in ((1, pin), (-1, pout))) / 100
             pnl += (pout - pin) * q - c
+            n += 1
             charges += c
             slip += (pin - bi["open"]) * q + (bo["open"] - pout) * q
         eq += pnl
-        rows.append({"day": d, "equity": eq, "ret": pnl / start, "charges": charges, "slip": slip})
+        rows.append({"day": d, "equity": eq, "ret": pnl / start, "charges": charges, "slip": slip, "n": n})
     return {"days": days, "equity": [r["equity"] for r in rows], "returns": [r["ret"] for r in rows],
             "pnl": [r["equity"] - (rows[k - 1]["equity"] if k else CAPITAL) for k, r in enumerate(rows)], "exposure": [exposure] * len(rows),
             "charges": [r["charges"] for r in rows], "slippage": [r["slip"] for r in rows], "turnover": [0.0] * len(rows),
-            "trades": [len(syms)] * len(rows), "symbol_realized": {}, "variant": f"exposure-matched baseline ({exposure:.0%} of equity)"}
+            "trades": [r["n"] for r in rows], "symbol_realized": {}, "variant": f"exposure-matched baseline ({exposure:.0%} of equity)"}
 
 
 # ---------------------------------------------------------------------------------------------------- protocol
 def run(root: Path, workers: int = 3, iteration: int = 1, reuse: Path | None = None, hypotheses: tuple[str, ...] = ("H1", "H2", "H3"),
-        carried: dict | None = None) -> dict:
+        carried: dict | None = None, dataset: Path | None = None) -> dict:
     """iteration 1: the predeclared protocol. iteration >= 2: a recorded follow-up with a NEW untouched holdout; phase-1
     results of variants already run on the same development/validation data are reused from `reuse` (identical code and
     data), and `carried` holds earlier selection decisions that stand."""
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
-    cal = calendar(iteration)
+    cal = calendar(iteration, dataset)
+    K = f"dataset:{Path(dataset).resolve()}" if dataset is not None else "edge"      # the data the candidates are judged on
     log = root / "variants.jsonl"                                             # every variant tried, kept or discarded
     tried = lambda rec: log.open("a").write(json.dumps(rec, default=str) + "\n")
     pre = cal["development"] + cal["validation"]
@@ -244,14 +275,14 @@ def run(root: Path, workers: int = 3, iteration: int = 1, reuse: Path | None = N
             r = json.loads(f.read_text())
             if r["variant"] in names:
                 res[(r["data"], r["variant"])] = r
-    jobs = [(root / "phase1" / "edge" / n, "edge", pre, n, spec(n)) for n in names if ("edge", n) not in res]
+    jobs = [(root / "phase1" / K / n, K, pre, n, spec(n)) for n in names if (K, n) not in res]
     with ProcessPoolExecutor(workers) as ex:
         res.update({(r["data"], r["variant"]): r for r in ex.map(run_variant, jobs)})
-    base = res[("edge", "INC-L")]
+    base = res[(K, "INC-L")]
     gross = window(base, cal["validation"])["gross_to_net_inr"]
     sel = dict(carried or {})
     for h in hypotheses:
-        r = res[("edge", h)]
+        r = res[(K, h)]
         p = paired(r, base, cal["validation"])
         wins = sum(window(r, w)["net_inr"] > window(base, w)["net_inr"] for w in cal["windows"])
         ok = (p["mean"] or 0) > 0 and wins >= 2
@@ -259,7 +290,7 @@ def run(root: Path, workers: int = 3, iteration: int = 1, reuse: Path | None = N
                   "validation": window(r, cal["validation"])}
         tried({"phase": "validation", "variant": h, "accepted": bool(ok), **sel[h]})
     for n in ("INC-L", "INC-F", "CH-0"):
-        tried({"phase": "validation", "variant": n, "validation": window(res[("edge", n)], cal["validation"])})
+        tried({"phase": "validation", "variant": n, "validation": window(res[(K, n)], cal["validation"])})
     acc = [h for h in sel if sel[h]["accepted"]]
     final = {"name": "CH-0", "spec": spec("CH-0")} if not acc else {"name": "FINAL=" + "+".join(acc), "spec": _combine(acc)}
 
@@ -269,7 +300,7 @@ def run(root: Path, workers: int = 3, iteration: int = 1, reuse: Path | None = N
                 "selection_rule": "positive mean paired daily difference vs INC-L on validation AND net P&L above INC-L in >= 2 of 3 windows",
                 "selection": {h: {"accepted": sel[h]["accepted"], "windows_won": sel[h]["windows_won"]} for h in sel},
                 "final_challenger": final, "primary_metric": PRIMARY,
-                "data_fingerprint_validation": fingerprint(stream("edge", pre))}
+                "data_fingerprint_validation": fingerprint(stream(K, pre))}
     manifest["sha256"] = sha({k: v for k, v in manifest.items() if k != "sha256"})
     mf = root / "manifest.json"
     if mf.exists():                                       # resuming: the frozen manifest stands; the selection must agree with it
@@ -283,34 +314,35 @@ def run(root: Path, workers: int = 3, iteration: int = 1, reuse: Path | None = N
 
     # 3. open the holdout once: every compared account runs the full calendar (indicators and evidence carry through)
     full = cal["all"]
-    jobs = [(root / "phase2" / "edge" / n, "edge", full, n, spec(n)) for n in ("INC-L", "INC-F", "CH-0")]
+    jobs = [(root / "phase2" / K / n, K, full, n, spec(n)) for n in ("INC-L", "INC-F", "CH-0")]
     if final["name"] != "CH-0":
-        jobs.append((root / "phase2" / "edge" / "FINAL", "edge", full, final["name"], final["spec"]))
+        jobs.append((root / "phase2" / K / "FINAL", K, full, final["name"], final["spec"]))
     jobs += [(root / "phase2" / "null" / n, "null", full, n, spec(n)) for n in ("INC-L", "INC-F")]
     fk = "FINAL" if final["name"] != "CH-0" else "CH-0"
     for s, x in STRESS.items():
-        jobs.append((root / "phase2" / "edge" / f"{fk} {s}", "edge", full, f"{final['name']} ({s})", {**final["spec"], "exec": {**final["spec"]["exec"], **x}}))
+        jobs.append((root / "phase2" / K / f"{fk} {s}", K, full, f"{final['name']} ({s})", {**final["spec"], "exec": {**final["spec"]["exec"], **x}}))
     with ProcessPoolExecutor(workers) as ex:
         out = list(ex.map(run_variant, jobs))
     r2 = {(r["data"], r["variant"]): r for r in out}
-    fin = r2[("edge", final["name"])]
+    fin = r2[(K, final["name"])]
     H = cal["holdout"]
     expo = window(fin, H)["exposure_avg"]
-    bl = exposure_baseline("edge", full, expo)
-    rows = {n: window(r2[("edge", n)], H) for n in ("INC-L", "INC-F", "CH-0")}
+    bl = exposure_baseline(K, full, expo)
+    rows = {n: window(r2[(K, n)], H) for n in ("INC-L", "INC-F", "CH-0")}
     rows[final["name"]] = window(fin, H)
     rows["cash"] = {"net_inr": 0.0, "return": 0.0, "max_drawdown": 0.0, "closed_trades": 0, "exposure_avg": 0.0}
     rows[bl["variant"]] = window(bl, H)
-    stress = {s: window(r2[("edge", f"{final['name']} ({s})")], H) for s in STRESS}
+    stress = {s: window(r2[(K, f"{final['name']} ({s})")], H) for s in STRESS}
     learn = {k: {"learned": window(r2[(k, "INC-L")], H), "fixed": window(r2[(k, "INC-F")], H),
-                 "learned_minus_fixed": paired(r2[(k, "INC-L")], r2[(k, "INC-F")], H)} for k in ("edge", "null")}
+                 "learned_minus_fixed": paired(r2[(k, "INC-L")], r2[(k, "INC-F")], H)} for k in (K, "null")}
     sym = fin["symbol_realized"]
     best_sym = max(sym.items(), key=lambda kv: kv[1]) if sym else None
     tot_real = sum(sym.values())
-    rep = {"manifest_sha256": manifest["sha256"], "data": "SYNTHETIC (factor_stream with planted drift; minute_stream random walk as a null control)",
+    rep = {"manifest_sha256": manifest["sha256"], "data": (f"historical 1-minute data: {Path(dataset).name}" if dataset is not None else "SYNTHETIC (factor_stream with planted drift)")
+                   + "; minute_stream random walk (SYNTHETIC) as the learning null control",
            "periods": {k: [v[0], v[-1]] for k, v in cal.items() if k not in ("windows",) and v},
            "hypotheses": sel, "incumbent_gross_validation": gross, "final_challenger": final["name"],
-           "holdout": rows, "final_vs": {n: paired(fin, r2[("edge", n)], H) for n in ("INC-L", "CH-0") if n != final["name"]}
+           "holdout": rows, "final_vs": {n: paired(fin, r2[(K, n)], H) for n in ("INC-L", "CH-0") if n != final["name"]}
                                         | {"cash": paired(fin, {"days": full, "returns": [0.0] * len(full)}, H), "baseline": paired(fin, bl, H)},
            "stress": stress, "learning": learn,
            "concentration": {"best_symbol": best_sym[0] if best_sym else None, "best_symbol_realized_inr": round(best_sym[1], 2) if best_sym else None,

@@ -95,6 +95,7 @@ def main(argv: list[str] | None = None) -> int:
     db_.add_argument("--account", required=True); db_.add_argument("--day", required=True, help="YYYY-MM-DD"); db_.add_argument("--out", default=None)
     xp = sub.add_parser("experiment", help="chronological challenger + learning experiment (dev / walk-forward validation / holdout), SYNTHETIC")
     xp.add_argument("--out", default=None); xp.add_argument("--workers", type=int, default=3)
+    xp.add_argument("--dataset", default=None, help="a stored dataset with 1-minute bars (e.g. licensed history); default: SYNTHETIC data")
     dr = sub.add_parser("daily-review", help="the automatic after-close review for one session (loss study, day backtest, Monte Carlo); "
                                              "the lab runs it by itself after 15:30")
     dr.add_argument("--account", required=True); dr.add_argument("--day", required=True, help="YYYY-MM-DD")
@@ -245,9 +246,9 @@ def main(argv: list[str] | None = None) -> int:
         from datetime import datetime as _dt
 
         from nseql.screening.experiment import run as _xp
-        out = Path(a.out) if a.out else s.experiments_dir / "experiment" / f"{_dt.now():%Y%m%d_%H%M%S}"
-        print(f"running the experiment into {out} (synthetic data; tens of minutes)...")
-        rep = _xp(out, workers=a.workers)
+        out = Path(a.out) if a.out else s.experiments_dir / "experiment" / f"{a.dataset or 'synthetic'}_{_dt.now():%Y%m%d_%H%M%S}"
+        print(f"running the experiment into {out} ({'dataset ' + a.dataset if a.dataset else 'SYNTHETIC data'}; can take hours)...")
+        rep = _xp(out, workers=a.workers, dataset=(s.data_dir / a.dataset) if a.dataset else None)
         print(json.dumps({k: rep[k] for k in ("final_challenger", "holdout", "final_vs", "learning")}, indent=2, default=str)[:6000])
         print(f"full report: {out / 'report.json'}")
         return 0

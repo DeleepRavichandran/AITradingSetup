@@ -254,7 +254,7 @@ class Executor:
             d = info.get(i, {})
             q = int(d["q"]) if ranked else q_of[i]
             p = float(close[s])
-            need = self._need(i, q, p, minute_em, rules.cost_buffer)
+            need = 0.0                                # exact worst-case reservation: computed only for candidates that reach the limit checks
             why, kind = "", "rejected"
             if d.get("why"):
                 why = d["why"]
@@ -277,6 +277,8 @@ class Executor:
             elif ranked and new_in_sym.get(s, 0) >= self.cfg_alloc.max_new_per_symbol:
                 why, kind = "redundant: a higher-ranked configuration already entered this symbol this minute", "deferred"
             else:
+                # the position check does not depend on the reservation; when it decides, skip the exact (charge-model) estimate
+                need = q * p * (1 + rules.cost_buffer) if n_pos >= rules.max_positions else self._need(i, q, p, minute_em, rules.cost_buffer)
                 checks = (("max_positions", n_pos >= rules.max_positions, start[1] >= rules.max_positions, f"max {rules.max_positions} positions"),
                           ("cash", free < need, start[0] < need, "not enough free cash"),
                           ("symbol", held_sym[s] + res_sym[s] + need > rules.max_symbol_pct * lim,
@@ -458,19 +460,23 @@ class Executor:
         mark = np.where(np.isnan(open_px), np.nan_to_num(e.fe.last_close), open_px)
         held = np.where(e.pos == 1, e.qty * mark[r.sym], 0.0)
         eq = self.cash / 100 + float(held.sum())
-        return {"sym": np.bincount(r.sym, weights=held, minlength=len(r.symbols)), "gross": float(held.sum()), "equity": eq}
+        res = np.bincount(r.sym, weights=np.where(e.pend == 1, self.ord_res, 0), minlength=len(r.symbols))   # paise; only shrinks while matching
+        return {"sym": np.bincount(r.sym, weights=held, minlength=len(r.symbols)), "gross": float(held.sum()), "equity": eq, "res_sym": res}
 
     def _cap_at_fill(self, i: int, s: int, q: int, px: float, px_of, ts, lim) -> tuple[int, str]:
         """Largest q' <= q this buy may fill at the actual price: free cash after the dated charges (other working
         orders' reservations stay untouched), the symbol cap and the gross cap at this bar's prices."""
         rules = self.rules
         other_res = (self.reserved - int(self.ord_res[i])) / 100
-        res_sym = float(((self.e.pend == 1) & (self.e.reg.sym == s) & (np.arange(len(self.e.reg)) != i)) @ self.ord_res) / 100
+        res_sym = (float(lim["res_sym"][s]) - float(self.ord_res[i])) / 100
         room = {"not enough cash at the fill price (after charges)": self.cash / 100 - other_res,
                 f"symbol exposure above {rules.max_symbol_pct:.0%} at the fill price": rules.max_symbol_pct * lim["equity"] - lim["sym"][s] - res_sym,
                 f"gross exposure above {rules.max_gross_pct:.0%} at the fill price": rules.max_gross_pct * lim["equity"] - lim["gross"] - (other_res - 0)}
         why = ""
         k = q
+        p0 = px_of(q)                                 # cheap sufficient check: charges never exceed 0.5% + Rs 50 of an equity order
+        if all(left >= (q * p0 * 1.005 + 50 if w.startswith("not enough cash") else q * p0) for w, left in room.items()):
+            return q, ""
         while k > 0:
             p = px_of(k)
             cost = k * p + self._charges_for(i, 1, k, p, ts.date()) / 100

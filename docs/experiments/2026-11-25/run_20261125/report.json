@@ -1,0 +1,400 @@
+{
+  "manifest_sha256": "74a745de2e8912ee0551888ca7962399ee76267007ae538666941226b4e603ad",
+  "data": "SYNTHETIC (factor_stream with planted drift; minute_stream random walk as a null control)",
+  "periods": {
+    "development": [
+      "2026-01-05",
+      "2026-01-12"
+    ],
+    "validation": [
+      "2026-01-13",
+      "2026-02-02"
+    ],
+    "holdout": [
+      "2026-02-03",
+      "2026-02-23"
+    ],
+    "all": [
+      "2026-01-05",
+      "2026-02-23"
+    ]
+  },
+  "hypotheses": {
+    "H1": {
+      "label": "INC-L + hold cash unless qualified",
+      "validation_vs_INC-L": {
+        "mean": 0.002441,
+        "low": -0.005772,
+        "high": 0.00961,
+        "n": 15
+      },
+      "windows_won": "2/3",
+      "accepted": true,
+      "validation": {
+        "days": 15,
+        "from": "2026-01-13",
+        "to": "2026-02-02",
+        "net_inr": 0.0,
+        "return": 0.0,
+        "max_drawdown": 0.0,
+        "turnover_x": 0.0,
+        "exposure_avg": 0.0,
+        "closed_trades": 0,
+        "gross_to_net_inr": {
+          "gross_at_bar_opens": 0.0,
+          "spread_and_impact": -0.0,
+          "charges": -0.0,
+          "net": 0.0
+        },
+        "best_day_inr": 0.0,
+        "best_day_share_of_net": null
+      }
+    },
+    "H2": {
+      "label": "INC-L + no entries in the first 30 minutes",
+      "validation_vs_INC-L": {
+        "mean": 0.000584,
+        "low": -0.000599,
+        "high": 0.001741,
+        "n": 15
+      },
+      "windows_won": "2/3",
+      "accepted": true,
+      "validation": {
+        "days": 15,
+        "from": "2026-01-13",
+        "to": "2026-02-02",
+        "net_inr": -2640.54,
+        "return": -0.028753,
+        "max_drawdown": -0.061995,
+        "turnover_x": 32.524,
+        "exposure_avg": 0.6937,
+        "closed_trades": 181,
+        "gross_to_net_inr": {
+          "gross_at_bar_opens": 1337.44,
+          "spread_and_impact": -1981.91,
+          "charges": -1996.07,
+          "net": -2640.54
+        },
+        "best_day_inr": 1872.25,
+        "best_day_share_of_net": null
+      }
+    },
+    "H3": {
+      "label": "INC-L + participation cap 2%",
+      "validation_vs_INC-L": {
+        "mean": 0.001077,
+        "low": -0.000841,
+        "high": 0.003345,
+        "n": 15
+      },
+      "windows_won": "2/3",
+      "accepted": true,
+      "validation": {
+        "days": 15,
+        "from": "2026-01-13",
+        "to": "2026-02-02",
+        "net_inr": -1963.79,
+        "return": -0.02123,
+        "max_drawdown": -0.05256,
+        "turnover_x": 31.82,
+        "exposure_avg": 0.717,
+        "closed_trades": 197,
+        "gross_to_net_inr": {
+          "gross_at_bar_opens": 1978.33,
+          "spread_and_impact": -1911.94,
+          "charges": -2030.18,
+          "net": -1963.79
+        },
+        "best_day_inr": 1182.29,
+        "best_day_share_of_net": null
+      }
+    }
+  },
+  "incumbent_gross_validation": {
+    "gross_at_bar_opens": 1082.33,
+    "spread_and_impact": -2276.52,
+    "charges": -2238.6,
+    "net": -3432.79
+  },
+  "final_challenger": "FINAL=H1+H2+H3",
+  "holdout": {
+    "INC-L": {
+      "days": 15,
+      "from": "2026-02-03",
+      "to": "2026-02-23",
+      "net_inr": 1834.43,
+      "return": 0.020621,
+      "max_drawdown": -0.063845,
+      "turnover_x": 7.928,
+      "exposure_avg": 0.7189,
+      "closed_trades": 44,
+      "gross_to_net_inr": {
+        "gross_at_bar_opens": 2856.57,
+        "spread_and_impact": -470.95,
+        "charges": -551.19,
+        "net": 1834.43
+      },
+      "best_day_inr": 2452.0,
+      "best_day_share_of_net": 1.337
+    },
+    "INC-F": {
+      "days": 15,
+      "from": "2026-02-03",
+      "to": "2026-02-23",
+      "net_inr": 1098.46,
+      "return": 0.012989,
+      "max_drawdown": -0.056744,
+      "turnover_x": 13.993,
+      "exposure_avg": 0.7312,
+      "closed_trades": 75,
+      "gross_to_net_inr": {
+        "gross_at_bar_opens": 2829.3,
+        "spread_and_impact": -874.9,
+        "charges": -855.94,
+        "net": 1098.46
+      },
+      "best_day_inr": 2188.06,
+      "best_day_share_of_net": 1.992
+    },
+    "CH-0": {
+      "days": 15,
+      "from": "2026-02-03",
+      "to": "2026-02-23",
+      "net_inr": -4146.07,
+      "return": -0.044116,
+      "max_drawdown": -0.05175,
+      "turnover_x": 22.992,
+      "exposure_avg": 0.304,
+      "closed_trades": 128,
+      "gross_to_net_inr": {
+        "gross_at_bar_opens": -1514.6,
+        "spread_and_impact": -1485.55,
+        "charges": -1145.92,
+        "net": -4146.07
+      },
+      "best_day_inr": 1802.76,
+      "best_day_share_of_net": null
+    },
+    "FINAL=H1+H2+H3": {
+      "days": 15,
+      "from": "2026-02-03",
+      "to": "2026-02-23",
+      "net_inr": 0.0,
+      "return": 0.0,
+      "max_drawdown": 0.0,
+      "turnover_x": 0.0,
+      "exposure_avg": 0.0,
+      "closed_trades": 0,
+      "gross_to_net_inr": {
+        "gross_at_bar_opens": 0.0,
+        "spread_and_impact": -0.0,
+        "charges": -0.0,
+        "net": 0.0
+      },
+      "best_day_inr": 0.0,
+      "best_day_share_of_net": null
+    },
+    "cash": {
+      "net_inr": 0.0,
+      "return": 0.0,
+      "max_drawdown": 0.0,
+      "closed_trades": 0,
+      "exposure_avg": 0.0
+    },
+    "exposure-matched baseline (0% of equity)": {
+      "days": 15,
+      "from": "2026-02-03",
+      "to": "2026-02-23",
+      "net_inr": 0.0,
+      "return": 0.0,
+      "max_drawdown": 0.0,
+      "turnover_x": 0.0,
+      "exposure_avg": 0.0,
+      "closed_trades": 300,
+      "gross_to_net_inr": {
+        "gross_at_bar_opens": 0.0,
+        "spread_and_impact": -0.0,
+        "charges": -0.0,
+        "net": 0.0
+      },
+      "best_day_inr": 0.0,
+      "best_day_share_of_net": null
+    }
+  },
+  "final_vs": {
+    "INC-L": {
+      "mean": -0.001444,
+      "low": -0.010542,
+      "high": 0.008313,
+      "n": 15
+    },
+    "CH-0": {
+      "mean": 0.002971,
+      "low": -0.000267,
+      "high": 0.007021,
+      "n": 15
+    },
+    "cash": {
+      "mean": 0.0,
+      "low": 0.0,
+      "high": 0.0,
+      "n": 15
+    },
+    "baseline": {
+      "mean": 0.0,
+      "low": 0.0,
+      "high": 0.0,
+      "n": 15
+    }
+  },
+  "stress": {
+    "slippage x2": {
+      "days": 15,
+      "from": "2026-02-03",
+      "to": "2026-02-23",
+      "net_inr": 0.0,
+      "return": 0.0,
+      "max_drawdown": 0.0,
+      "turnover_x": 0.0,
+      "exposure_avg": 0.0,
+      "closed_trades": 0,
+      "gross_to_net_inr": {
+        "gross_at_bar_opens": 0.0,
+        "spread_and_impact": -0.0,
+        "charges": -0.0,
+        "net": 0.0
+      },
+      "best_day_inr": 0.0,
+      "best_day_share_of_net": null
+    },
+    "one-bar delay": {
+      "days": 15,
+      "from": "2026-02-03",
+      "to": "2026-02-23",
+      "net_inr": 0.0,
+      "return": 0.0,
+      "max_drawdown": 0.0,
+      "turnover_x": 0.0,
+      "exposure_avg": 0.0,
+      "closed_trades": 0,
+      "gross_to_net_inr": {
+        "gross_at_bar_opens": 0.0,
+        "spread_and_impact": -0.0,
+        "charges": -0.0,
+        "net": 0.0
+      },
+      "best_day_inr": 0.0,
+      "best_day_share_of_net": null
+    }
+  },
+  "learning": {
+    "edge": {
+      "learned": {
+        "days": 15,
+        "from": "2026-02-03",
+        "to": "2026-02-23",
+        "net_inr": 1834.43,
+        "return": 0.020621,
+        "max_drawdown": -0.063845,
+        "turnover_x": 7.928,
+        "exposure_avg": 0.7189,
+        "closed_trades": 44,
+        "gross_to_net_inr": {
+          "gross_at_bar_opens": 2856.57,
+          "spread_and_impact": -470.95,
+          "charges": -551.19,
+          "net": 1834.43
+        },
+        "best_day_inr": 2452.0,
+        "best_day_share_of_net": 1.337
+      },
+      "fixed": {
+        "days": 15,
+        "from": "2026-02-03",
+        "to": "2026-02-23",
+        "net_inr": 1098.46,
+        "return": 0.012989,
+        "max_drawdown": -0.056744,
+        "turnover_x": 13.993,
+        "exposure_avg": 0.7312,
+        "closed_trades": 75,
+        "gross_to_net_inr": {
+          "gross_at_bar_opens": 2829.3,
+          "spread_and_impact": -874.9,
+          "charges": -855.94,
+          "net": 1098.46
+        },
+        "best_day_inr": 2188.06,
+        "best_day_share_of_net": 1.992
+      },
+      "learned_minus_fixed": {
+        "mean": 0.000518,
+        "low": -0.001627,
+        "high": 0.002468,
+        "n": 15
+      }
+    },
+    "null": {
+      "learned": {
+        "days": 15,
+        "from": "2026-02-03",
+        "to": "2026-02-23",
+        "net_inr": 293.73,
+        "return": 0.003466,
+        "max_drawdown": -0.013124,
+        "turnover_x": 21.601,
+        "exposure_avg": 0.7403,
+        "closed_trades": 118,
+        "gross_to_net_inr": {
+          "gross_at_bar_opens": 2985.08,
+          "spread_and_impact": -1254.37,
+          "charges": -1436.98,
+          "net": 293.73
+        },
+        "best_day_inr": 970.38,
+        "best_day_share_of_net": 3.304
+      },
+      "fixed": {
+        "days": 15,
+        "from": "2026-02-03",
+        "to": "2026-02-23",
+        "net_inr": 1567.54,
+        "return": 0.019885,
+        "max_drawdown": -0.010337,
+        "turnover_x": 24.244,
+        "exposure_avg": 0.7771,
+        "closed_trades": 132,
+        "gross_to_net_inr": {
+          "gross_at_bar_opens": 4251.3,
+          "spread_and_impact": -1385.48,
+          "charges": -1298.28,
+          "net": 1567.54
+        },
+        "best_day_inr": 893.74,
+        "best_day_share_of_net": 0.57
+      },
+      "learned_minus_fixed": {
+        "mean": -0.001081,
+        "low": -0.002895,
+        "high": 0.000757,
+        "n": 15
+      }
+    }
+  },
+  "concentration": {
+    "best_symbol": null,
+    "best_symbol_realized_inr": null,
+    "best_symbol_share_of_realized": null
+  },
+  "seconds": {
+    "INC-L/edge": 877.3,
+    "INC-F/edge": 834.4,
+    "CH-0/edge": 97.7,
+    "FINAL=H1+H2+H3/edge": 901.9,
+    "INC-L/null": 869.9,
+    "INC-F/null": 831.4,
+    "FINAL=H1+H2+H3 (slippage x2)/edge": 834.8,
+    "FINAL=H1+H2+H3 (one-bar delay)/edge": 593.4
+  }
+}

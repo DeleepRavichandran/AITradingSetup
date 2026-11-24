@@ -1,0 +1,404 @@
+{
+  "manifest_sha256": "ef14a8032726c0749bcf8ff0307831686624ed1ab0f1cbbb917278d24a35c991",
+  "data": "SYNTHETIC (factor_stream with planted drift; minute_stream random walk as a null control)",
+  "periods": {
+    "development": [
+      "2026-01-05",
+      "2026-01-12"
+    ],
+    "validation": [
+      "2026-01-13",
+      "2026-02-02"
+    ],
+    "holdout": [
+      "2026-02-24",
+      "2026-03-16"
+    ],
+    "previous_holdouts": [
+      "2026-02-03",
+      "2026-02-23"
+    ],
+    "all": [
+      "2026-01-05",
+      "2026-03-16"
+    ]
+  },
+  "hypotheses": {
+    "H2": {
+      "label": "INC-L + no entries in the first 30 minutes",
+      "validation_vs_INC-L": {
+        "mean": 0.000584,
+        "low": -0.000599,
+        "high": 0.001741,
+        "n": 15
+      },
+      "windows_won": "2/3",
+      "accepted": true,
+      "validation": {
+        "days": 15,
+        "from": "2026-01-13",
+        "to": "2026-02-02",
+        "net_inr": -2640.54,
+        "return": -0.028753,
+        "max_drawdown": -0.061995,
+        "turnover_x": 32.524,
+        "exposure_avg": 0.6937,
+        "closed_trades": 181,
+        "gross_to_net_inr": {
+          "gross_at_bar_opens": 1337.44,
+          "spread_and_impact": -1981.91,
+          "charges": -1996.07,
+          "net": -2640.54
+        },
+        "best_day_inr": 1872.25,
+        "best_day_share_of_net": null
+      }
+    },
+    "H3": {
+      "label": "INC-L + participation cap 2%",
+      "validation_vs_INC-L": {
+        "mean": 0.001077,
+        "low": -0.000841,
+        "high": 0.003345,
+        "n": 15
+      },
+      "windows_won": "2/3",
+      "accepted": true,
+      "validation": {
+        "days": 15,
+        "from": "2026-01-13",
+        "to": "2026-02-02",
+        "net_inr": -1963.79,
+        "return": -0.02123,
+        "max_drawdown": -0.05256,
+        "turnover_x": 31.82,
+        "exposure_avg": 0.717,
+        "closed_trades": 197,
+        "gross_to_net_inr": {
+          "gross_at_bar_opens": 1978.33,
+          "spread_and_impact": -1911.94,
+          "charges": -2030.18,
+          "net": -1963.79
+        },
+        "best_day_inr": 1182.29,
+        "best_day_share_of_net": null
+      }
+    },
+    "H1b": {
+      "label": "INC-L + quarter size until qualified (hold most of the cash, keep learning)",
+      "validation_vs_INC-L": {
+        "mean": 0.0,
+        "low": 0.0,
+        "high": 0.0,
+        "n": 15
+      },
+      "windows_won": "0/3",
+      "accepted": false,
+      "validation": {
+        "days": 15,
+        "from": "2026-01-13",
+        "to": "2026-02-02",
+        "net_inr": -3432.79,
+        "return": -0.037154,
+        "max_drawdown": -0.067188,
+        "turnover_x": 36.638,
+        "exposure_avg": 0.7042,
+        "closed_trades": 204,
+        "gross_to_net_inr": {
+          "gross_at_bar_opens": 1082.33,
+          "spread_and_impact": -2276.52,
+          "charges": -2238.6,
+          "net": -3432.79
+        },
+        "best_day_inr": 1496.24,
+        "best_day_share_of_net": null
+      }
+    }
+  },
+  "incumbent_gross_validation": {
+    "gross_at_bar_opens": 1082.33,
+    "spread_and_impact": -2276.52,
+    "charges": -2238.6,
+    "net": -3432.79
+  },
+  "final_challenger": "FINAL=H2+H3",
+  "holdout": {
+    "INC-L": {
+      "days": 15,
+      "from": "2026-02-24",
+      "to": "2026-03-16",
+      "net_inr": 776.56,
+      "return": 0.008553,
+      "max_drawdown": -0.060566,
+      "turnover_x": 14.89,
+      "exposure_avg": 0.7435,
+      "closed_trades": 84,
+      "gross_to_net_inr": {
+        "gross_at_bar_opens": 2663.41,
+        "spread_and_impact": -875.14,
+        "charges": -1011.71,
+        "net": 776.56
+      },
+      "best_day_inr": 2341.18,
+      "best_day_share_of_net": 3.015
+    },
+    "INC-F": {
+      "days": 15,
+      "from": "2026-02-24",
+      "to": "2026-03-16",
+      "net_inr": -3511.25,
+      "return": -0.040987,
+      "max_drawdown": -0.075923,
+      "turnover_x": 49.4,
+      "exposure_avg": 0.7442,
+      "closed_trades": 277,
+      "gross_to_net_inr": {
+        "gross_at_bar_opens": 2153.93,
+        "spread_and_impact": -3109.23,
+        "charges": -2555.95,
+        "net": -3511.25
+      },
+      "best_day_inr": 2206.05,
+      "best_day_share_of_net": null
+    },
+    "CH-0": {
+      "days": 15,
+      "from": "2026-02-24",
+      "to": "2026-03-16",
+      "net_inr": -1482.58,
+      "return": -0.016503,
+      "max_drawdown": -0.038824,
+      "turnover_x": 21.641,
+      "exposure_avg": 0.3535,
+      "closed_trades": 124,
+      "gross_to_net_inr": {
+        "gross_at_bar_opens": 918.89,
+        "spread_and_impact": -1370.09,
+        "charges": -1031.38,
+        "net": -1482.58
+      },
+      "best_day_inr": 1983.93,
+      "best_day_share_of_net": null
+    },
+    "FINAL=H2+H3": {
+      "days": 15,
+      "from": "2026-02-24",
+      "to": "2026-03-16",
+      "net_inr": 3396.33,
+      "return": 0.038296,
+      "max_drawdown": -0.058447,
+      "turnover_x": 19.883,
+      "exposure_avg": 0.7656,
+      "closed_trades": 122,
+      "gross_to_net_inr": {
+        "gross_at_bar_opens": 5884.44,
+        "spread_and_impact": -1137.28,
+        "charges": -1350.83,
+        "net": 3396.33
+      },
+      "best_day_inr": 2600.9,
+      "best_day_share_of_net": 0.766
+    },
+    "cash": {
+      "net_inr": 0.0,
+      "return": 0.0,
+      "max_drawdown": 0.0,
+      "closed_trades": 0,
+      "exposure_avg": 0.0
+    },
+    "exposure-matched baseline (77% of equity)": {
+      "days": 15,
+      "from": "2026-02-24",
+      "to": "2026-03-16",
+      "net_inr": -2814.63,
+      "return": -0.031055,
+      "max_drawdown": -0.058189,
+      "turnover_x": 0.0,
+      "exposure_avg": 0.7656,
+      "closed_trades": 300,
+      "gross_to_net_inr": {
+        "gross_at_bar_opens": -1032.63,
+        "spread_and_impact": -969.27,
+        "charges": -812.73,
+        "net": -2814.63
+      },
+      "best_day_inr": 1874.6,
+      "best_day_share_of_net": null
+    }
+  },
+  "final_vs": {
+    "INC-L": {
+      "mean": 0.001928,
+      "low": 0.000306,
+      "high": 0.003345,
+      "n": 15
+    },
+    "CH-0": {
+      "mean": 0.003683,
+      "low": -0.002633,
+      "high": 0.008816,
+      "n": 15
+    },
+    "cash": {
+      "mean": 0.00262,
+      "low": -0.005186,
+      "high": 0.008986,
+      "n": 15
+    },
+    "baseline": {
+      "mean": 0.004661,
+      "low": 0.00147,
+      "high": 0.007335,
+      "n": 15
+    }
+  },
+  "stress": {
+    "slippage x2": {
+      "days": 15,
+      "from": "2026-02-24",
+      "to": "2026-03-16",
+      "net_inr": -2303.65,
+      "return": -0.026107,
+      "max_drawdown": -0.078065,
+      "turnover_x": 24.773,
+      "exposure_avg": 0.6959,
+      "closed_trades": 144,
+      "gross_to_net_inr": {
+        "gross_at_bar_opens": 2000.65,
+        "spread_and_impact": -2649.92,
+        "charges": -1654.38,
+        "net": -2303.65
+      },
+      "best_day_inr": 2408.0,
+      "best_day_share_of_net": null
+    },
+    "one-bar delay": {
+      "days": 15,
+      "from": "2026-02-24",
+      "to": "2026-03-16",
+      "net_inr": 1046.28,
+      "return": 0.011935,
+      "max_drawdown": -0.070827,
+      "turnover_x": 14.322,
+      "exposure_avg": 0.775,
+      "closed_trades": 84,
+      "gross_to_net_inr": {
+        "gross_at_bar_opens": 2820.31,
+        "spread_and_impact": -780.1,
+        "charges": -993.93,
+        "net": 1046.28
+      },
+      "best_day_inr": 2677.36,
+      "best_day_share_of_net": 2.559
+    }
+  },
+  "learning": {
+    "edge": {
+      "learned": {
+        "days": 15,
+        "from": "2026-02-24",
+        "to": "2026-03-16",
+        "net_inr": 776.56,
+        "return": 0.008553,
+        "max_drawdown": -0.060566,
+        "turnover_x": 14.89,
+        "exposure_avg": 0.7435,
+        "closed_trades": 84,
+        "gross_to_net_inr": {
+          "gross_at_bar_opens": 2663.41,
+          "spread_and_impact": -875.14,
+          "charges": -1011.71,
+          "net": 776.56
+        },
+        "best_day_inr": 2341.18,
+        "best_day_share_of_net": 3.015
+      },
+      "fixed": {
+        "days": 15,
+        "from": "2026-02-24",
+        "to": "2026-03-16",
+        "net_inr": -3511.25,
+        "return": -0.040987,
+        "max_drawdown": -0.075923,
+        "turnover_x": 49.4,
+        "exposure_avg": 0.7442,
+        "closed_trades": 277,
+        "gross_to_net_inr": {
+          "gross_at_bar_opens": 2153.93,
+          "spread_and_impact": -3109.23,
+          "charges": -2555.95,
+          "net": -3511.25
+        },
+        "best_day_inr": 2206.05,
+        "best_day_share_of_net": null
+      },
+      "learned_minus_fixed": {
+        "mean": 0.00337,
+        "low": 0.002173,
+        "high": 0.004463,
+        "n": 15
+      }
+    },
+    "null": {
+      "learned": {
+        "days": 15,
+        "from": "2026-02-24",
+        "to": "2026-03-16",
+        "net_inr": -2335.12,
+        "return": -0.027456,
+        "max_drawdown": -0.027456,
+        "turnover_x": 19.417,
+        "exposure_avg": 0.743,
+        "closed_trades": 116,
+        "gross_to_net_inr": {
+          "gross_at_bar_opens": 149.8,
+          "spread_and_impact": -1104.0,
+          "charges": -1380.92,
+          "net": -2335.12
+        },
+        "best_day_inr": 640.36,
+        "best_day_share_of_net": null
+      },
+      "fixed": {
+        "days": 15,
+        "from": "2026-02-24",
+        "to": "2026-03-16",
+        "net_inr": -5516.59,
+        "return": -0.068618,
+        "max_drawdown": -0.084393,
+        "turnover_x": 29.544,
+        "exposure_avg": 0.7815,
+        "closed_trades": 172,
+        "gross_to_net_inr": {
+          "gross_at_bar_opens": -2157.96,
+          "spread_and_impact": -1739.54,
+          "charges": -1619.09,
+          "net": -5516.59
+        },
+        "best_day_inr": 1167.0,
+        "best_day_share_of_net": null
+      },
+      "learned_minus_fixed": {
+        "mean": 0.002848,
+        "low": -0.003349,
+        "high": 0.008753,
+        "n": 15
+      }
+    }
+  },
+  "concentration": {
+    "best_symbol": "SYN009",
+    "best_symbol_realized_inr": 1530.17,
+    "best_symbol_share_of_realized": null
+  },
+  "seconds": {
+    "INC-L/edge": 1138.6,
+    "INC-F/edge": 1086.9,
+    "CH-0/edge": 120.5,
+    "FINAL=H2+H3/edge": 1181.2,
+    "INC-L/null": 1220.5,
+    "INC-F/null": 1175.7,
+    "FINAL=H2+H3 (slippage x2)/edge": 1215.2,
+    "FINAL=H2+H3 (one-bar delay)/edge": 898.9
+  }
+}

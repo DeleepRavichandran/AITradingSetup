@@ -1,0 +1,102 @@
+{
+ "generated_at": "2026-11-24T16:11:18",
+ "hardware": {
+  "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+  "logical_cpus": 4,
+  "memory_gb": 15.7,
+  "python": "3.13.18",
+  "numpy": "2.5.5",
+  "pandas": "3.1.1",
+  "os": "Linux-6.18.44-fc-v819-x86_64-with-glibc2.39"
+ },
+ "data": "SYNTHETIC random-walk 1-minute bars",
+ "execution": "realistic",
+ "symbols": 300,
+ "sessions": 1,
+ "runs": {
+  "50000": {
+   "configs": 50000,
+   "symbols": 300,
+   "sessions": 1,
+   "minutes_with_data": 375,
+   "minutes_processed": 375,
+   "no_data_minutes": 0,
+   "minutes_processed_this_run": 375,
+   "cycle_ms": {
+    "p50": 151.32,
+    "p95": 288.77,
+    "p99": 390.13,
+    "max": 644.19
+   },
+   "engine_ms": {
+    "p50": 25.7,
+    "p95": 55.16,
+    "p99": 72.62,
+    "max": 87.4
+   },
+   "cycles_over_60s_budget": 0,
+   "evaluations": 5490322,
+   "eligible": 5490322,
+   "eligible_not_evaluated": 0,
+   "skipped_pending_order": 2,
+   "decisions": {
+    "NO_TRADE": 4678789,
+    "BUY": 804864,
+    "HOLD": 6203,
+    "EXIT": 466
+   },
+   "evaluations_per_second": 512259,
+   "peak_rss_mb": 236.8,
+   "cpu_seconds": 34.06,
+   "wall_seconds": 55.42,
+   "startup_seconds": 1.004,
+   "stream_generation_seconds": 0.14,
+   "recovery": {
+    "checkpoint": null,
+    "seconds": 0.0
+   },
+   "replay_to_watermark_seconds": null,
+   "db_mb": 226.5,
+   "checkpoint_mb": 16.8,
+   "signals": 805330,
+   "paper_orders": 932,
+   "ledger_hash": "03b39f143b7198fd",
+   "portfolio": {
+    "mode": "realistic",
+    "shared_capital": true,
+    "equity_inr": 978370.0,
+    "open_positions": 0
+   },
+   "paper_fills": 934,
+   "refused_signals": 804398,
+   "process_wall_seconds": 58.88,
+   "recovery_test": {
+    "killed_after_minutes": 232,
+    "killed_at": "2026-11-16 13:07:00",
+    "restart_startup_seconds": 0.748,
+    "checkpoint_load_seconds": 0.039,
+    "checkpoint_watermark": "2026-11-16T13:00:00",
+    "seconds_until_caught_up_to_kill_point": 0.71,
+    "ledger_identical_to_uninterrupted_run": true,
+    "minutes_processed_total": 375
+   }
+  }
+ },
+ "realtime": {
+  "configs": 50000,
+  "wall_minutes": 3,
+  "cycles": 3,
+  "overruns": 0,
+  "lag_s_after_minute_close": {
+   "min": 2.01,
+   "max": 2.02,
+   "mean": 2.01
+  },
+  "latency_ms": [
+   6.6,
+   6.4,
+   16.4
+  ],
+  "grace_seconds": 2.0
+ }
+}
