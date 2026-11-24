@@ -224,7 +224,12 @@ def test_unattended_api_start_with_angel_one(data_dir, tmp_path, monkeypatch):
     # the challenger runs beside the live bot in its own account, fed the same bars (forward contest)
     fw = c.get("/api/contest").json()["forward"]
     assert fw["kind"] == "forward" and fw["challenger"]["version"] == "orb30-breadth-1.0" and fw["verdict"]["status"] == "inconclusive"
-    assert (tmp_path / "exp" / "screening" / "live_angelone_r2_v12_challenger_orb30-breadth-1_0" / "live.json").exists()
+    cf = tmp_path / "exp" / "screening" / "live_angelone_r2_v12_challenger_orb30-breadth-1_0_x20" / "live.json"
+    assert cf.exists()
+    import json as _json
+    cm = _json.loads(cf.read_text())                     # forward manifest frozen when the challenger account is created
+    assert cm["manifest"]["sha256"] == cm["manifest_sha256"] and fw["manifest_check"]["status"] == "frozen"
+    assert fw["manifest_check"]["matches_current_code"] and "coverage" in fw
     import shutil
     shutil.copytree(data_dir / "synthetic_v1", tmp_path / "data" / "synthetic_v1")      # 1-minute bars for a replay
     rp = c.post("/api/screening/replay", json={"sessions": 1, "configs": 60})

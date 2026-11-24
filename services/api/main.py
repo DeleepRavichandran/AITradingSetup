@@ -1105,7 +1105,10 @@ def create_app() -> FastAPI:
         """Forward contest: an isolated challenger paper account fed the incumbent's exact bars every minute."""
         from nseql.screening.challenger import CHALLENGER_VERSION, challenger_rules, factory
         from nseql.screening.scheduler import MinuteScheduler
-        croot = st.exp_dir / "screening" / f"{name}_challenger_{CHALLENGER_VERSION.replace('.', '_')}"
+        from nseql.screening.execution import EXECUTION_VERSION
+        # one forward contest per challenger version AND execution version: a changed execution model starts a new contest
+        # (new folder, manifest frozen at inception); the earlier challenger account is kept unchanged for audit
+        croot = st.exp_dir / "screening" / f"{name}_challenger_{CHALLENGER_VERSION.replace('.', '_')}_x{EXECUTION_VERSION.replace('.', '')}"
         cf = croot / "live.json"
         now = datetime.now()
         if cf.exists():

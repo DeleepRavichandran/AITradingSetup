@@ -81,6 +81,8 @@ class PortfolioRules:
     fund_qualified_only: bool = False   # H1: hold cash unless the configuration's forward evidence is qualified (>= min_trades
                                         # round trips with a shrunk mean net return above zero)
     no_entry_first_minutes: int = 0     # H2: no new entries in the first N minutes of the session (opening-range noise)
+    explore_fraction: float = 0.0       # H1b: configurations without qualified evidence trade at this fraction of the normal
+                                        # size (exploration continues, so evidence can accrue); 0 = off (full size)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -241,6 +243,8 @@ class Executor:
             order, info = self._rank(b, px, q0, est, held_sym, lim)
         else:
             order = list(buys)                                         # registry order
+        if rules.explore_fraction:                 # H1b: small size until the configuration's forward evidence qualifies
+            q0 = np.where(est["qualified"][b], q0, np.floor(q0 * rules.explore_fraction)).astype(np.int64)
         q_of = dict(zip(buys, (int(x) for x in q0)))
         earlier = "higher-ranked" if ranked else "earlier"
         new_in_sym: dict[int, int] = {}

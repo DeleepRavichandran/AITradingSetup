@@ -63,15 +63,20 @@ VARIANTS = {
     "H2": {"label": "INC-L + no entries in the first 30 minutes", "rules": {"no_entry_first_minutes": 30}},
     "H3": {"label": "INC-L + participation cap 2%", "exec": {"participation": 0.02}},
     "CH-0": {"label": "challenger orb30-breadth-1.0", "engine": "challenger"},
+    # iteration 2 (recorded after iteration 1: H1 as specified can never trade, because evidence only accrues from funded
+    # trades, so "fund only qualified" is cash by construction; H1b keeps exploring at a quarter of the size)
+    "H1b": {"label": "INC-L + quarter size until qualified (hold most of the cash, keep learning)", "rules": {"explore_fraction": 0.25}},
 }
 STRESS = {"slippage x2": {"half_spread_bps": 10.0, "impact_bps": 50.0}, "one-bar delay": {"delay_bars": 1}}
 
 
-def calendar() -> dict[str, list[str]]:
-    days = [d.strftime("%Y-%m-%d") for d in pd.bdate_range("2026-01-05", periods=DEV + VAL_WINDOWS * VAL_LEN + HOLD)]
+def calendar(iteration: int = 1) -> dict[str, list[str]]:
+    """Iteration k adds a new, untouched holdout of HOLD days after the previous one (the generators are sequential and
+    seeded, so earlier days are identical). Development and validation never change."""
+    days = [d.strftime("%Y-%m-%d") for d in pd.bdate_range("2026-01-05", periods=DEV + VAL_WINDOWS * VAL_LEN + HOLD * iteration)]
     val = days[DEV:DEV + VAL_WINDOWS * VAL_LEN]
     return {"development": days[:DEV], "validation": val, "windows": [val[k * VAL_LEN:(k + 1) * VAL_LEN] for k in range(VAL_WINDOWS)],
-            "holdout": days[DEV + VAL_WINDOWS * VAL_LEN:], "all": days}
+            "holdout": days[-HOLD:], "previous_holdouts": days[DEV + VAL_WINDOWS * VAL_LEN:-HOLD], "all": days}
 
 
 def stream(kind: str, days: list[str]):
@@ -122,8 +127,13 @@ def run_variant(args) -> dict:
         sch.ingest(bars)
         sch.run_cycle(ts + pd.Timedelta(seconds=6))
     out = measure(sch, days)
-    out.update({"variant": name, "data": kind, "seconds": round(time.perf_counter() - t0, 1), "spec": v})
+    out.update({"variant": name, "data": kind, "seconds": round(time.perf_counter() - t0, 1), "spec": v,
+                "trade_log": [list(r) for r in sch.store.db.execute(
+                    "SELECT side, ts, symbol, qty, price, charges_paise, realized_paise FROM paper_fills ORDER BY ts LIMIT 200").fetchall()]})
     (root / "result.json").write_text(json.dumps(out, indent=2, default=str))
+    sch.store.db.close()
+    for f in list(root.glob("screening.sqlite*")) + [root / "checkpoint.npz"]:     # scratch ledgers are GBs; the result is kept
+        f.unlink(missing_ok=True)
     return out
 
 
@@ -214,23 +224,33 @@ def exposure_baseline(kind: str, days: list[str], exposure: float, exec_cfg: Exe
 
 
 # ---------------------------------------------------------------------------------------------------- protocol
-def run(root: Path, workers: int = 3) -> dict:
+def run(root: Path, workers: int = 3, iteration: int = 1, reuse: Path | None = None, hypotheses: tuple[str, ...] = ("H1", "H2", "H3"),
+        carried: dict | None = None) -> dict:
+    """iteration 1: the predeclared protocol. iteration >= 2: a recorded follow-up with a NEW untouched holdout; phase-1
+    results of variants already run on the same development/validation data are reused from `reuse` (identical code and
+    data), and `carried` holds earlier selection decisions that stand."""
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
-    cal = calendar()
+    cal = calendar(iteration)
     log = root / "variants.jsonl"                                             # every variant tried, kept or discarded
     tried = lambda rec: log.open("a").write(json.dumps(rec, default=str) + "\n")
     pre = cal["development"] + cal["validation"]
 
     # 1. development + validation only (the holdout is not generated yet)
-    jobs = [(root / "phase1" / k / n, k, pre, n, spec(n)) for k in ("edge",) for n in VARIANTS]
-    jobs += [(root / "phase1" / "null" / n, "null", pre, n, spec(n)) for n in ("INC-L", "INC-F")]
+    names = ["INC-L", "INC-F", "CH-0", *hypotheses]
+    res = {}
+    for src in [p for p in (root, reuse) if p is not None]:                 # resume: results already measured are not rerun
+        for f in Path(src).glob("phase1/*/*/result.json"):
+            r = json.loads(f.read_text())
+            if r["variant"] in names:
+                res[(r["data"], r["variant"])] = r
+    jobs = [(root / "phase1" / "edge" / n, "edge", pre, n, spec(n)) for n in names if ("edge", n) not in res]
     with ProcessPoolExecutor(workers) as ex:
-        res = {(r["data"], r["variant"]): r for r in ex.map(run_variant, jobs)}
+        res.update({(r["data"], r["variant"]): r for r in ex.map(run_variant, jobs)})
     base = res[("edge", "INC-L")]
     gross = window(base, cal["validation"])["gross_to_net_inr"]
-    sel = {}
-    for h in ("H1", "H2", "H3"):
+    sel = dict(carried or {})
+    for h in hypotheses:
         r = res[("edge", h)]
         p = paired(r, base, cal["validation"])
         wins = sum(window(r, w)["net_inr"] > window(base, w)["net_inr"] for w in cal["windows"])
@@ -244,14 +264,22 @@ def run(root: Path, workers: int = 3) -> dict:
     final = {"name": "CH-0", "spec": spec("CH-0")} if not acc else {"name": "FINAL=" + "+".join(acc), "spec": _combine(acc)}
 
     # 2. freeze everything before the holdout exists
-    manifest = {"protocol": __doc__.split("\n")[0], "code": code_version(), "execution_version": EXECUTION_VERSION, "rules_version": LIVE_RULES_VERSION,
+    manifest = {"protocol": __doc__.split("\n")[0], "iteration": iteration, "code": code_version(), "execution_version": EXECUTION_VERSION, "rules_version": LIVE_RULES_VERSION,
                 "calendar": cal, "capital": CAPITAL, "symbols": SYMBOLS, "seeds": SEEDS, "variants": VARIANTS, "stress": STRESS,
                 "selection_rule": "positive mean paired daily difference vs INC-L on validation AND net P&L above INC-L in >= 2 of 3 windows",
                 "selection": {h: {"accepted": sel[h]["accepted"], "windows_won": sel[h]["windows_won"]} for h in sel},
                 "final_challenger": final, "primary_metric": PRIMARY,
                 "data_fingerprint_validation": fingerprint(stream("edge", pre))}
-    manifest["sha256"] = sha(manifest)
-    (root / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str))
+    manifest["sha256"] = sha({k: v for k, v in manifest.items() if k != "sha256"})
+    mf = root / "manifest.json"
+    if mf.exists():                                       # resuming: the frozen manifest stands; the selection must agree with it
+        frozen = json.loads(mf.read_text())
+        if frozen["final_challenger"]["name"] != final["name"] or frozen["selection"] != manifest["selection"] or \
+                {k: cal.get(k) for k in frozen["calendar"]} != frozen["calendar"]:
+            raise RuntimeError("recomputed selection differs from the frozen manifest; refusing to open the holdout")
+        manifest = frozen
+    else:
+        mf.write_text(json.dumps(manifest, indent=2, default=str))
 
     # 3. open the holdout once: every compared account runs the full calendar (indicators and evidence carry through)
     full = cal["all"]
@@ -280,7 +308,7 @@ def run(root: Path, workers: int = 3) -> dict:
     best_sym = max(sym.items(), key=lambda kv: kv[1]) if sym else None
     tot_real = sum(sym.values())
     rep = {"manifest_sha256": manifest["sha256"], "data": "SYNTHETIC (factor_stream with planted drift; minute_stream random walk as a null control)",
-           "periods": {k: [v[0], v[-1]] for k, v in cal.items() if k not in ("windows",)},
+           "periods": {k: [v[0], v[-1]] for k, v in cal.items() if k not in ("windows",) and v},
            "hypotheses": sel, "incumbent_gross_validation": gross, "final_challenger": final["name"],
            "holdout": rows, "final_vs": {n: paired(fin, r2[("edge", n)], H) for n in ("INC-L", "CH-0") if n != final["name"]}
                                         | {"cash": paired(fin, {"days": full, "returns": [0.0] * len(full)}, H), "baseline": paired(fin, bl, H)},
