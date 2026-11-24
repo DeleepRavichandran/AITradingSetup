@@ -82,31 +82,40 @@ def account_figures(sch, meta: dict | None, day: str) -> dict:
     }
 
 
+def _next_day(day: str) -> str:
+    from datetime import date, timedelta
+    return (date.fromisoformat(day) + timedelta(days=1)).isoformat()
+
+
 def session_decisions(db, day: str, live_from: str | None) -> dict:
-    """BUY decisions of one IST session by recorded allocation reason, with orders and fills of the same session."""
-    rows = db.execute("SELECT bar_ts, alloc_status, alloc_reason FROM signals WHERE decision='BUY' AND substr(bar_ts,1,10) = ?", (day,)).fetchall()
+    """BUY decisions of one IST session by recorded allocation reason, with orders and fills of the same session.
+    Aggregated in SQL over an index range (the signals table holds lakhs of warm-up rows; scanning them on every
+    dashboard refresh made pages slow and held the ledger lock)."""
+    lo, hi = day, _next_day(day)
+    rows = db.execute("SELECT alloc_status, alloc_reason, CASE WHEN ? IS NOT NULL AND bar_ts < ? THEN 1 ELSE 0 END, COUNT(*) FROM signals "
+                      "WHERE bar_ts >= ? AND bar_ts < ? AND decision='BUY' GROUP BY 1, 2, 3", (live_from, live_from, lo, hi)).fetchall()
     warm, eligible, acc, dfr = 0, 0, 0, 0
     rej: dict[str, int] = {}
     reasons: dict[str, int] = {}
-    for ts, status, why in rows:
+    for status, why, pre, n in rows:
         cat = reason_category(why) if status in ("rejected", "deferred") else None
-        if (live_from and str(ts) < live_from) or cat == "warm-up history":
-            warm += 1
+        if pre or cat == "warm-up history":
+            warm += n
             continue
-        eligible += 1
+        eligible += n
         if status == "accepted":
-            acc += 1
+            acc += n
         elif status == "deferred":
-            dfr += 1
-            reasons[str(why)] = reasons.get(str(why), 0) + 1
+            dfr += n
+            reasons[str(why)] = reasons.get(str(why), 0) + n
         else:
             c = cat or "not recorded"
-            rej[c] = rej.get(c, 0) + 1
-            reasons[str(why)] = reasons.get(str(why), 0) + 1
-    orders = db.execute("SELECT COUNT(*) FROM paper_orders WHERE side='BUY' AND substr(decided_at,1,10) = ?", (day,)).fetchone()[0]
-    fills = db.execute("SELECT COUNT(*), COALESCE(SUM(side='BUY'),0), COALESCE(SUM(side='SELL'),0) FROM paper_fills WHERE substr(ts,1,10) = ?",
-                       (day,)).fetchone()
-    last = db.execute("SELECT MAX(minute) FROM cycles WHERE status='processed' AND substr(minute,1,10) = ?", (day,)).fetchone()[0]
+            rej[c] = rej.get(c, 0) + n
+            reasons[str(why)] = reasons.get(str(why), 0) + n
+    orders = db.execute("SELECT COUNT(*) FROM paper_orders WHERE side='BUY' AND decided_at >= ? AND decided_at < ?", (lo, hi)).fetchone()[0]
+    fills = db.execute("SELECT COUNT(*), COALESCE(SUM(side='BUY'),0), COALESCE(SUM(side='SELL'),0) FROM paper_fills WHERE ts >= ? AND ts < ?",
+                       (lo, hi)).fetchone()
+    last = db.execute("SELECT MAX(minute) FROM cycles WHERE status='processed' AND minute >= ? AND minute < ?", (lo, hi)).fetchone()[0]
     return {"day": day, "warm_up": warm, "eligible": eligible, "accepted": acc, "deferred": dfr,
             "rejected": sum(rej.values()), "rejected_by_category": dict(sorted(rej.items(), key=lambda kv: -kv[1])),
             "top_reasons": [{"reason": k, "n": v, "category": reason_category(k)} for k, v in sorted(reasons.items(), key=lambda kv: -kv[1])[:5]],

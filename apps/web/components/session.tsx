@@ -16,6 +16,7 @@ export function sessionState(d: any, error: any): { key: string; label: string; 
   if (b === "error") return { key: "error", label: "Could not start", tone: "crit", text: d.bot?.message || "" };
   if (b === "stopped") return { key: "stopped", label: "Paused", tone: "crit", text: d.bot?.message || "Kill switch engaged." };
   if (b === "stale") return { key: "stale", label: "Stale feed", tone: "warn", text: d.bot?.message || "No fresh candles." };
+  if (b === "waiting") return { key: "waiting", label: "Waiting for the market", tone: "info", text: d.bot?.message || "The bot starts checking when the market opens." };
   const s = d.session;
   if (s && s.last_processed_minute && s.fills === 0 && !d.market?.open) return { key: "zero-trade", label: "No trades this session", tone: "warn", text: zeroReason(s) };
   if (d.market?.open) return { key: "market-open", label: "Market open", tone: "good", text: d.bot?.message || "" };
@@ -34,6 +35,8 @@ function zeroReason(s: any): string {
 export function whatHappened(d: any): string {
   const s = d?.session;
   if (!s || !s.last_processed_minute) return "No candle has been processed in this session yet.";
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
+  if (s.day !== today) return `No candle processed today yet. Last session (${s.day}): ` + whatHappened({ ...d, session: { ...s, day: today, _last: s.day } }).replace(/^Session \S+, /, "");
   const t = String(s.last_processed_minute).slice(11, 16);
   if (s.fills === 0) return `Session ${s.day}, last candle ${t} IST: no trades. ${zeroReason(s)}`;
   const top = Object.entries(s.rejected_by_category || {})[0] as [string, number] | undefined;

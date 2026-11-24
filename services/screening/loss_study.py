@@ -97,6 +97,33 @@ def study(trades: pd.DataFrame) -> dict:
             "win_rate": round(float((trades.net_inr > 0).mean()), 3), "factors": factors, "findings": findings}
 
 
+PAIRS = (("session_part", "trend"), ("session_part", "regime"), ("trend", "regime"), ("session_part", "breadth"))
+
+
+def two_factor(trades: pd.DataFrame) -> list[dict]:
+    """Losers vs winners on TWO factors at once, to separate overlapping causes (e.g. 'first 30 minutes' and 'volatile'
+    are often the same trades). Same finding rule as the one-factor view, per cell."""
+    overall = float(trades.net_inr.mean())
+    out = []
+    for a, b in PAIRS:
+        if a not in trades or b not in trades:
+            continue
+        (la, fa), (lb, fb) = BUCKETS[a], BUCKETS[b]
+        t = trades.assign(_a=trades[a].map(fa), _b=trades[b].map(fb))
+        cells = []
+        for (va, vb), g in t.groupby(["_a", "_b"]):
+            x = g.net_inr.to_numpy(dtype=float)
+            lo, hi = _ci(x)
+            cells.append({"a": str(va), "b": str(vb), "trades": int(len(x)), "win_rate": round(float((x > 0).mean()), 3),
+                          "net_inr": round(float(x.sum()), 2), "mean_inr": round(float(x.mean()), 2), "ci95": [round(lo, 2), round(hi, 2)],
+                          "finding": bool(len(x) >= MIN_N and hi < 0 and hi < overall)})
+        cells.sort(key=lambda c: c["mean_inr"])
+        out.append({"a": a, "b": b, "label_a": la, "label_b": lb, "cells": cells,
+                    "findings": [f"'{c['a']}' AND '{c['b']}': {c['trades']} trades lost {abs(c['mean_inr']):.2f} INR each "
+                                 f"(95% range {c['ci95'][0]:.2f} to {c['ci95'][1]:.2f}; day average {overall:.2f})" for c in cells if c["finding"]]})
+    return out
+
+
 def run(account: Path, day: str, out: Path) -> dict:
     account, out = Path(account), Path(out)
     if out.exists() and any(out.iterdir()):
@@ -119,6 +146,7 @@ def run(account: Path, day: str, out: Path) -> dict:
     t["session_part"] = t["minute_of_session"]
     t["stop"] = t["stop_pct"]
     rep = study(t)
+    rep["two_factor"] = two_factor(t)
     rep.update({"account": account.name, "day": day, "replay_matches_live": abs(round(float(rc.net_inr.sum()), 2) - round(live_net, 2)) < 0.05,
                 "replay_net_inr": round(float(rc.net_inr.sum()), 2), "live_net_inr": round(live_net, 2),
                 "caution": "One day is one sample. Findings are hypotheses for a challenger filter, to be tested on days not used to find them."})

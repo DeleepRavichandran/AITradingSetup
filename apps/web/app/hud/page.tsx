@@ -148,7 +148,7 @@ export default function MissionControl() {
             </> : <p className={s.dim} style={{ margin: 0 }}>The forward contest starts with live screening.</p>}
           </section>
           <section className={s.panel} aria-labelledby="hud-breadth" data-testid="hud-breadth">
-            <h2 id="hud-breadth" className={s.h}>Market breadth <em>{pulse ? `${String(pulse.at).slice(11, 16)}` : ""}</em></h2>
+            <h2 id="hud-breadth" className={s.h}>Market breadth <em>{pulse ? `${String(pulse.at).slice(8, 10)}/${String(pulse.at).slice(5, 7)} ${String(pulse.at).slice(11, 16)}` : ""}</em></h2>
             {pulse ? <>
               <div className={s.split} aria-hidden="true">
                 <span style={{ width: `${(100 * pulse.breadth.up) / Math.max(1, pulse.breadth.symbols)}%`, background: "var(--green)" }} />

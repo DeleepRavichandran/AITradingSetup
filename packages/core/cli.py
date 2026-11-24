@@ -91,6 +91,8 @@ def main(argv: list[str] | None = None) -> int:
     rb.add_argument("--workers", type=int, default=4); rb.add_argument("--no-incumbent", action="store_true"); rb.add_argument("--out", default=None)
     ls = sub.add_parser("loss-study", help="why a day's paper trades lost: entry context of every round trip, losers vs winners by factor")
     ls.add_argument("--account", required=True); ls.add_argument("--day", required=True, help="YYYY-MM-DD"); ls.add_argument("--out", default=None)
+    db_ = sub.add_parser("day-backtest", help="every registered strategy on its own (own Rs 1,00,000) over one stored session, plus the challenger")
+    db_.add_argument("--account", required=True); db_.add_argument("--day", required=True, help="YYYY-MM-DD"); db_.add_argument("--out", default=None)
     sub.add_parser("brain-verify", help="verify the episodic memory hash chain and the correctness probes")
     v = sub.add_parser("serve", help="start the API server"); v.add_argument("--host", default="127.0.0.1"); v.add_argument("--port", type=int, default=8000)
     a = ap.parse_args(argv)
@@ -233,6 +235,29 @@ def main(argv: list[str] | None = None) -> int:
         rep = audit(s.experiments_dir / "screening" / a.account)
         print(json.dumps(rep, indent=2))
         return 0
+    elif a.cmd == "day-backtest":
+        from datetime import datetime as _dt
+
+        from nseql.screening.day_backtest import run as _db
+        out = Path(a.out) if a.out else s.experiments_dir / "day_backtest" / f"{a.account}_{a.day}_{_dt.now():%H%M%S}"
+        print("running every strategy on its own over the stored day (several minutes)...")
+        r = _db(s.experiments_dir / "screening" / a.account, a.day, out)
+        print(f"{r['day']}: {r['strategies']:,} strategies on {r['symbols']} stocks, each with its own Rs 1,00,000; {r['traded']:,} traded "
+              f"({r['trades']:,} round trips); {r['positive']:,} made money after charges ({(r['share_positive'] or 0):.0%}; luck baseline about 50%)")
+        print(f"all strategies together: net {r['net_inr']:,.0f} INR after {r['charges_inr']:,.0f} INR charges")
+        print(f"challenger: {r['challenger']['trades']} trades, net {r['challenger']['net_inr']:,.0f} INR")
+        for key, label in (("by_family", "strategy type"), ("by_timeframe", "chart speed"), ("by_stop", "stop size")):
+            print(f"BY {label}:")
+            for g in r[key]:
+                print(f"   {g['group']:<12} strategies {g['strategies']:>5}  traded {g['traded']:>5}  trades {g['trades']:>5}  net {g['net_inr']:>10,.0f}  "
+                      f"per trade {g['net_per_trade'] if g['net_per_trade'] is not None else '-':>7}  positive {('%d%%' % round(100 * g['share_positive'])) if g['share_positive'] is not None else '-':>5}")
+        for key, label in (("best_10", "BEST 10 (one day, partly luck)"), ("worst_10", "WORST 10")):
+            print(label + ":")
+            for x in r[key]:
+                print(f"   {x['symbol']:<11} {x['family']:<10} {x['timeframe']:<4} stop {x['stop_pct']:.1%}  trades {x['trades']:>3}  net {x['net_inr']:>9,.2f}  {x['params']}")
+        print(r["caution"])
+        print(f"full report: {out / 'day_backtest.json'}")
+        return 0
     elif a.cmd == "loss-study":
         from datetime import datetime as _dt
 
@@ -251,6 +276,11 @@ def main(argv: list[str] | None = None) -> int:
             for b in f["buckets"]:
                 print(f"   {b['bucket']:<34} trades {b['trades']:>4}  win {b['win_rate']:>4.0%}  net {b['net_inr']:>8,.0f}  "
                       f"mean {b['mean_inr']:>7.2f}  95% [{b['ci95'][0]:.2f}, {b['ci95'][1]:.2f}]{'  <- finding' if b['finding'] else ''}")
+        for tf in rep.get("two_factor", []):
+            print(f"TWO FACTORS: {tf['label_a']} x {tf['label_b']}:")
+            for c in tf["cells"]:
+                print(f"   {c['a']:<28} | {c['b']:<26} trades {c['trades']:>4}  win {c['win_rate']:>4.0%}  mean {c['mean_inr']:>7.2f}  "
+                      f"[{c['ci95'][0]:.2f}, {c['ci95'][1]:.2f}]{'  <- finding' if c['finding'] else ''}")
         print(rep["caution"])
         print(f"full report: {out / 'loss_study.json'}")
         return 0

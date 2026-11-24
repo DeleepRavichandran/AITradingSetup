@@ -44,3 +44,19 @@ def test_replay_reproduces_the_live_day_and_reports_factors(tmp_path):
     assert (tmp_path / "study" / "loss_study.json").exists() and "hypotheses" in rep["caution"]
     with pytest.raises(FileExistsError):
         L.run(acct, DAY, tmp_path / "study")
+
+
+def test_two_factor_view_separates_overlapping_causes():
+    """Losses come only from uptrend buys in the first 30 minutes; the one-factor view blames both factors, the
+    two-factor view isolates the one cell."""
+    rng = np.random.default_rng(3)
+    rows = []
+    for k in range(240):
+        early, up = k % 2 == 0, (k // 2) % 2 == 0
+        rows.append({"net_inr": rng.normal(-30 if early and up else 2, 4), "trend": 0.01 if up else -0.01, "session_part": 10 if early else 100,
+                     "regime": "normal", "breadth": 0.5})
+    t = pd.DataFrame(rows)
+    tf = {(x["a"], x["b"]): x for x in L.two_factor(t)}[("session_part", "trend")]
+    flagged = [(c["a"], c["b"]) for c in tf["cells"] if c["finding"]]
+    assert flagged == [("first 30 min (09:16-09:45)", "above average (uptrend)")] and len(tf["findings"]) == 1
+    assert sum(c["trades"] for c in tf["cells"]) == 240
