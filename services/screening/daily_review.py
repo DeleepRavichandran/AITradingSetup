@@ -7,6 +7,8 @@ account's own stored records, and saves them per day:
 2. day backtest   every registered strategy on its own with its own Rs 1,00,000, plus the challenger (day_backtest.py)
 3. Monte Carlo    the day's closed trades reshuffled 1,000 times (seeded): how bad the drawdown could have been
                   with the same trades in another order (robustness.monte_carlo)
+4. Fundamental agent  company results, news tone, events, crowd emotion and behavioural patterns as of the close,
+                  saved as a daily snapshot (agents/fundamental.py; observation only, see its placebo test)
 
 The per-trade root cause (rca.py) is already written by the scheduler at 15:30; the review only summarises it.
 
@@ -25,7 +27,9 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
-STEPS = ("loss_study", "day_backtest", "monte_carlo")
+import pandas as pd
+
+STEPS = ("loss_study", "day_backtest", "monte_carlo", "fundamental_agent")
 VERSION = "1.0"
 
 
@@ -97,6 +101,18 @@ def _monte_carlo(account: Path, day: str) -> dict:
     return rep
 
 
+def _fundamental(account: Path, day: str, exp_dir: Path) -> dict:
+    """The Fundamental Analysis Agent's dossier as of this session's close, saved as a snapshot (evidence for its placebo
+    test). Observation only."""
+    from nseql.agents import fundamental as FA
+    from nseql.config import get_settings
+    syms = json.loads((Path(account) / "live.json").read_text()).get("symbols") or []
+    d = FA.analyse(syms, pd.Timestamp(f"{day}T15:35"), FA.default_sources(exp_dir, get_settings().data_dir, account))
+    (Path(exp_dir) / "fundamental").mkdir(parents=True, exist_ok=True)
+    FA.save(d, Path(exp_dir) / "fundamental" / "snapshots.sqlite")
+    return d
+
+
 def _write(f: Path, obj) -> None:
     tmp = f.with_suffix(".tmp")
     tmp.write_text(json.dumps(obj, indent=2, default=str))
@@ -130,6 +146,9 @@ def run(account: Path, day: str, exp_dir: Path, steps: tuple[str, ...] = STEPS, 
             elif s == "monte_carlo":
                 results[s] = _monte_carlo(account, day)
                 _write(out / "monte_carlo.json", results[s])
+            elif s == "fundamental_agent":
+                results[s] = _fundamental(account, day, exp_dir)
+                _write(out / "fundamental_agent.json", results[s])
             st["steps"][s] = {"state": "done", "seconds": round(time.time() - t0, 1)}
         except Exception as e:      # noqa: BLE001 - one failing analysis never stops the others
             st["steps"][s] = {"state": "failed", "seconds": round(time.time() - t0, 1), "error": f"{type(e).__name__}: {e}",
@@ -191,6 +210,14 @@ def build(account: str, day: str, r: dict, st: dict) -> dict:
             head.append(f"The challenger on the same day: {ch['trades']} trades, net {_inr(ch['net_inr'])}.")
     if mc and mc.get("plain"):
         head.append("Trade-order luck: " + mc["plain"] + ".")
+    fa = r.get("fundamental_agent")
+    if fa:
+        head.append("Fundamental agent (observation only): " + fa["market"]["emotion"].get("plain", ""))
+        lean = {k: [s for s, x in fa["stocks"].items() if x["stance"].startswith(k)] for k in ("supportive", "cautious")}
+        due = [s for s, x in fa["stocks"].items() if "results due" in x["stance"]]
+        bits = [f"{k}: {', '.join(v[:6])}{' ...' if len(v) > 6 else ''}" for k, v in lean.items() if v] + ([f"results due: {', '.join(due)}"] if due else [])
+        if bits:
+            head.append("Stocks: " + "; ".join(bits) + ".")
     failed = [k for k, v in st["steps"].items() if v["state"] == "failed"]
     if failed:
         head.append("Not available: " + ", ".join(failed).replace("_", " ") + " (the error is shown below).")
@@ -204,6 +231,7 @@ def build(account: str, day: str, r: dict, st: dict) -> dict:
                                              "luck_baseline", "by_family", "by_timeframe", "by_stop", "best_10", "worst_10", "challenger", "execution")}
     return {"account": account, "day": day, "version": VERSION, "generated_at": datetime.now().isoformat(timespec="seconds"),
             "headline": head, "steps": st["steps"], "loss_study": compact_ls, "day_backtest": compact_bt, "monte_carlo": mc,
+            "fundamental_agent": r.get("fundamental_agent"),
             "caution": "One day is one sample. These findings are ideas to test on later days, not proof; no rule is changed by this review."}
 
 

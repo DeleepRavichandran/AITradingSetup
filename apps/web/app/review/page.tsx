@@ -10,7 +10,8 @@ const STATE: Record<string, [string, string]> = {
   done: ["Ready", "var(--good)"], partial: ["Ready, with a step missing", "var(--warn)"], running: ["Running now", "var(--info, var(--accent))"],
   queued: ["Waiting for the close", "var(--muted)"], interrupted: ["Interrupted (run again)", "var(--crit)"], none: ["Not run yet", "var(--muted)"],
 };
-const STEP: Record<string, string> = { loss_study: "Why trades lost (loss study)", day_backtest: "Every strategy on its own (day backtest)", monte_carlo: "Trade-order luck (Monte Carlo)" };
+const STEP: Record<string, string> = { loss_study: "Why trades lost (loss study)", day_backtest: "Every strategy on its own (day backtest)", monte_carlo: "Trade-order luck (Monte Carlo)",
+  fundamental_agent: "Fundamental agent snapshot" };
 const signed = (x: number | null | undefined, d = 2) => (x == null ? "—" : `${x >= 0 ? "+" : "−"}${num(Math.abs(x), d)}`);
 
 export default function Review() {

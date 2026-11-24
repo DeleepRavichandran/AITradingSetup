@@ -15,6 +15,7 @@ import re
 import os
 import shutil
 import threading
+import sqlite3
 import time
 import uuid
 from datetime import date, datetime
@@ -1813,6 +1814,44 @@ def create_app() -> FastAPI:
                               "deferred": session["deferred"], "rejected": session["rejected"]},
         })
         return clean(out)
+
+    _fa_cache: dict = {}
+
+    @api.get("/fundamental")
+    def fundamental(symbol: str = ""):
+        """Fundamental Analysis Agent: results, news tone, events, crowd emotion and behaviour for the live watchlist, as of now.
+        Observation only. Cached for 5 minutes (daily inputs change slowly)."""
+        from nseql.agents import fundamental as FA
+        meta = screening.get("meta") or {}
+        root = Path(meta["root"]) if meta.get("root") else None
+        syms = [symbol.upper()] if symbol else list(meta.get("symbols") or [])
+        if not syms:
+            raise HTTPException(404, "no live watchlist yet: start live screening, or pass ?symbol=")
+        key = (tuple(syms), str(root))
+        hit = _fa_cache.get(key)
+        if hit and time.time() - hit[0] < 300:
+            return hit[1]
+        now = datetime.now(views.IST).replace(tzinfo=None)
+        d = FA.analyse(syms, pd.Timestamp(now), FA.default_sources(st.exp_dir, st.data_dir, root))
+        snaps = st.exp_dir / "fundamental" / "snapshots.sqlite"
+        if snaps.exists():
+            with sqlite3.connect(f"file:{snaps}?mode=ro", uri=True) as db:
+                d["snapshots"] = {"days": db.execute("SELECT COUNT(DISTINCT as_of) FROM snapshots").fetchone()[0],
+                                  "first": db.execute("SELECT MIN(as_of) FROM snapshots").fetchone()[0]}
+        out = clean(d)
+        _fa_cache[key] = (time.time(), out)
+        return out
+
+    @api.get("/fundamental/test")
+    def fundamental_test():
+        """The agent's placebo test on the live account's round trips (see agents/fundamental.evaluate)."""
+        from nseql.agents import fundamental as FA
+        meta = screening.get("meta") or {}
+        snaps = st.exp_dir / "fundamental" / "snapshots.sqlite"
+        if not meta.get("root") or not snaps.exists():
+            return {"verdict": "not enough evidence", "reason": "no agent snapshots yet: one is taken by the daily review after each close",
+                    "min_trades": FA.MIN_TRADES, "min_days": FA.MIN_DAYS, "lenses": {}}
+        return clean(FA.evaluate(Path(meta["root"]), snaps))
 
     @api.get("/review")
     def review_list():

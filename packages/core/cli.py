@@ -93,6 +93,13 @@ def main(argv: list[str] | None = None) -> int:
     ls.add_argument("--account", required=True); ls.add_argument("--day", required=True, help="YYYY-MM-DD"); ls.add_argument("--out", default=None)
     db_ = sub.add_parser("day-backtest", help="every registered strategy on its own (own Rs 1,00,000) over one stored session, plus the challenger")
     db_.add_argument("--account", required=True); db_.add_argument("--day", required=True, help="YYYY-MM-DD"); db_.add_argument("--out", default=None)
+    fi = sub.add_parser("financials-import", help="import quarterly results (CSV with filing times) for the Fundamental Analysis Agent")
+    fi.add_argument("csv"); fi.add_argument("--source", required=True, help='e.g. "Screener.in export" or "NSE financial results"')
+    fa = sub.add_parser("fundamental-agent", help="the Fundamental Analysis Agent's dossier for the live watchlist (observation only)")
+    fa.add_argument("--account", default=None, help="paper account folder (default: the current live account)"); fa.add_argument("--symbol", default=None)
+    fa.add_argument("--as-of", default=None, help="YYYY-MM-DD HH:MM (default: now)")
+    ft = sub.add_parser("fundamental-test", help="placebo test: do the agent's daily snapshots separate winning from losing paper trades?")
+    ft.add_argument("--account", default=None)
     xp = sub.add_parser("experiment", help="chronological challenger + learning experiment (dev / walk-forward validation / holdout), SYNTHETIC")
     xp.add_argument("--out", default=None); xp.add_argument("--workers", type=int, default=3)
     xp.add_argument("--dataset", default=None, help="a stored dataset with 1-minute bars (e.g. licensed history); default: SYNTHETIC data")
@@ -241,6 +248,44 @@ def main(argv: list[str] | None = None) -> int:
         from nseql.screening.ledger_audit import audit
         rep = audit(s.experiments_dir / "screening" / a.account)
         print(json.dumps(rep, indent=2))
+        return 0
+    elif a.cmd in ("financials-import", "fundamental-agent", "fundamental-test"):
+        import pandas as pd
+
+        from nseql.agents import fundamental as FA
+        if a.cmd == "financials-import":
+            from nseql.data.financials import Financials, FinancialsError
+            try:
+                n = Financials(s.experiments_dir / "fundamental" / "financials.sqlite").import_csv(Path(a.csv), a.source)
+            except FinancialsError as e:
+                print(f"refused: {e}"); return 2
+            print(f"imported {a.csv}: {n['added']} new quarters, {n['updated']} corrected ({n['rows']} rows)"); return 0
+        acc = a.account
+        if acc is None and (s.experiments_dir / "screening" / "current.json").exists():
+            acc = json.loads((s.experiments_dir / "screening" / "current.json").read_text()).get("account")
+        root = s.experiments_dir / "screening" / acc if acc else None
+        if a.cmd == "fundamental-test":
+            snaps = s.experiments_dir / "fundamental" / "snapshots.sqlite"
+            if root is None or not snaps.exists():
+                print("no paper account or no agent snapshots yet (snapshots are taken by the daily review after each close)"); return 2
+            print(json.dumps(FA.evaluate(root, snaps), indent=2)); return 0
+        syms = json.loads((root / "live.json").read_text())["symbols"] if root is not None and (root / "live.json").exists() else []
+        if a.symbol:
+            syms = [a.symbol.upper()]
+        if not syms:
+            print("no watchlist: pass --symbol or --account"); return 2
+        d = FA.analyse(syms, pd.Timestamp(a.as_of) if a.as_of else pd.Timestamp.now(), FA.default_sources(s.experiments_dir, s.data_dir, root))
+        print(f"Fundamental Analysis Agent {d['agent']}, as of {d['as_of']} ({d['use']})")
+        print("MARKET:", d["market"]["emotion"].get("plain", ""), d["market"]["events"].get("plain", ""))
+        for sym, x in d["stocks"].items():
+            print(f"{sym:<12} {x['stance']}")
+            for k, L in x["lenses"].items():
+                if L.get("plain"):
+                    print(f"   {k:<9} {L['plain']}")
+                elif L.get("reason"):
+                    print(f"   {k:<9} unavailable: {L['reason']}")
+        for n in d["notes"]:
+            print("note:", n)
         return 0
     elif a.cmd == "experiment":
         from datetime import datetime as _dt

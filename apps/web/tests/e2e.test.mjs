@@ -404,6 +404,19 @@ describe("Accessibility and layout", () => {
     await ctx.close();
   });
 
+  test("Fundamental agent: market mood, proof status, stock evidence, missing inputs shown", async () => {
+    const { page, ctx, errors } = await open("/fundamental");
+    await page.getByTestId("fa-mood").getByText("fear", { exact: true }).waitFor();
+    await page.getByTestId("fa-proof").getByText("news: not enough evidence").waitFor();
+    await page.getByTestId("fa-detail").getByText("revenue +20% YoY", { exact: false }).waitFor();
+    await page.getByTestId("fa-detail").getByText("AAA wins big order", { exact: false }).waitFor();
+    await page.getByRole("cell", { name: "BBB" }).click();
+    await page.getByTestId("fa-detail").getByText("no result for BBB published before", { exact: false }).waitFor();
+    await page.getByTestId("fa-notes").getByText("India VIX not available", { exact: false }).waitFor();
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  });
+
   test("Daily review: plain findings first, failed step shown, other sessions selectable", async () => {
     const { page, ctx, errors } = await open("/review");
     await page.getByTestId("review-headline").getByText("The bot closed 363 round trips", { exact: false }).waitFor();

@@ -15,7 +15,7 @@ import pandas as pd
 HOLD_BUCKETS = [(0, 2, "under 2 min"), (2, 5, "2-5 min"), (5, 15, "5-15 min"), (15, 60, "15-60 min"), (60, 10**6, "over 1 hour")]
 
 
-def round_trips(db_path, day: str) -> pd.DataFrame:
+def round_trips(db_path, day: str, *, all_days: bool = False) -> pd.DataFrame:
     """db_path: the account's screening.sqlite path, or an open sqlite3 connection (left open)."""
     own = not isinstance(db_path, sqlite3.Connection)
     db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) if own else db_path
@@ -47,7 +47,7 @@ def round_trips(db_path, day: str) -> pd.DataFrame:
     # pair across dates FIRST, then keep the round trips that EXITED on `day` (review 2026-11-24, finding 6: an overnight
     # swing exit used to lose its entry time and buy-side charges because orders were filtered by day before pairing)
     rt = pd.DataFrame(rows)
-    if not rt.empty:
+    if not rt.empty and not all_days:
         rt = rt[rt.exit_ts.dt.strftime("%Y-%m-%d") == day].reset_index(drop=True)
     rt.attrs["open_buys"] = len(last_buy)
     return rt
