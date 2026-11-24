@@ -89,6 +89,8 @@ def main(argv: list[str] | None = None) -> int:
     rb.add_argument("--symbols", type=int, default=8); rb.add_argument("--days", type=int, default=20); rb.add_argument("--window", type=int, default=5)
     rb.add_argument("--capital", type=float, default=100_000); rb.add_argument("--seed", type=int, default=7)
     rb.add_argument("--workers", type=int, default=4); rb.add_argument("--no-incumbent", action="store_true"); rb.add_argument("--out", default=None)
+    ls = sub.add_parser("loss-study", help="why a day's paper trades lost: entry context of every round trip, losers vs winners by factor")
+    ls.add_argument("--account", required=True); ls.add_argument("--day", required=True, help="YYYY-MM-DD"); ls.add_argument("--out", default=None)
     sub.add_parser("brain-verify", help="verify the episodic memory hash chain and the correctness probes")
     v = sub.add_parser("serve", help="start the API server"); v.add_argument("--host", default="127.0.0.1"); v.add_argument("--port", type=int, default=8000)
     a = ap.parse_args(argv)
@@ -230,6 +232,27 @@ def main(argv: list[str] | None = None) -> int:
         from nseql.screening.ledger_audit import audit
         rep = audit(s.experiments_dir / "screening" / a.account)
         print(json.dumps(rep, indent=2))
+        return 0
+    elif a.cmd == "loss-study":
+        from datetime import datetime as _dt
+
+        from nseql.screening.loss_study import run as _ls
+        out = Path(a.out) if a.out else s.experiments_dir / "loss_study" / f"{a.account}_{a.day}_{_dt.now():%H%M%S}"
+        print("replaying the stored day with the trade journal on (a few minutes)...")
+        rep = _ls(s.experiments_dir / "screening" / a.account, a.day, out)
+        print(f"{rep['day']}: {rep['trades']} round trips, net {rep['net_inr']:,.0f} INR, win rate {rep['win_rate']:.0%}, "
+              f"mean {rep['mean_inr']:.2f} INR per trade; replay matches the live ledger: {rep['replay_matches_live']} "
+              f"(replay {rep['replay_net_inr']:,.2f}, live {rep['live_net_inr']:,.2f})")
+        print("FINDINGS (lose more than the day's average, beyond chance on this day):")
+        for f in rep["findings"] or [{"plain": "none: no factor separates losers from winners clearly on this day"}]:
+            print("  -", f["plain"])
+        for f in rep["factors"]:
+            print(f"BY {f['label']}:")
+            for b in f["buckets"]:
+                print(f"   {b['bucket']:<34} trades {b['trades']:>4}  win {b['win_rate']:>4.0%}  net {b['net_inr']:>8,.0f}  "
+                      f"mean {b['mean_inr']:>7.2f}  95% [{b['ci95'][0]:.2f}, {b['ci95'][1]:.2f}]{'  <- finding' if b['finding'] else ''}")
+        print(rep["caution"])
+        print(f"full report: {out / 'loss_study.json'}")
         return 0
     elif a.cmd == "trade-rca":
         import sqlite3 as _sq
