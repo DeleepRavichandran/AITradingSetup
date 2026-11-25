@@ -1847,6 +1847,55 @@ def create_app() -> FastAPI:
         })
         return clean(out)
 
+    @api.get("/assistant/status")
+    def assistant_status():
+        """Everything the assistant needs to answer "how is it going?" in one read-only call: market, bot, account, positions,
+        latest price of every watchlist stock, today's trades, feed freshness, the challenger and the latest evening review.
+        Read-only; works with the viewer key."""
+        from nseql.screening.metrics import _next_day
+        now = datetime.now(views.IST).replace(tzinfo=None)
+        day = now.strftime("%Y-%m-%d")
+        t = today_view()
+        out = {"asked_at": now.isoformat(timespec="seconds"), "market": t.get("market"), "bot": t.get("bot"), "kill_switch": t.get("kill_switch"),
+               "live_trading": False, "account": t.get("account"), "positions": t.get("holdings"), "today_trades": t.get("recent_trades"),
+               "signals_today": t.get("signals_today"), "data_source": t.get("data_source")}
+        sch = screening.get("sch")
+        if sch is not None:
+            db = sch.store.reader()
+            prices = []
+            for sym in sch.reg.symbols:
+                last = db.execute("SELECT ts, close FROM events WHERE symbol=? AND late=0 ORDER BY ts DESC LIMIT 1", (sym,)).fetchone()
+                first = db.execute("SELECT open FROM events WHERE symbol=? AND ts >= ? AND ts < ? AND late=0 ORDER BY ts LIMIT 1",
+                                   (sym, day, _next_day(day))).fetchone()
+                prev = db.execute("SELECT close FROM events WHERE symbol=? AND ts < ? AND late=0 ORDER BY ts DESC LIMIT 1", (sym, day)).fetchone()
+                if last:
+                    prices.append({"symbol": sym, "price": last[1], "as_of": str(last[0]).replace("T", " ")[:16],
+                                   "change_today": None if not prev or not prev[0] else round(last[1] / prev[0] - 1, 4),
+                                   "from_open": None if not first or not first[0] else round(last[1] / first[0] - 1, 4)})
+            out["prices"] = sorted(prices, key=lambda x: -(x["change_today"] or 0))
+            modes = dict(db.execute("SELECT mode, COUNT(*) FROM cycles WHERE minute >= ? AND minute < ? AND status='processed' GROUP BY mode",
+                                    (day, _next_day(day))).fetchall())
+            recent = [{"minute": str(r[0])[11:16], "mode": r[1], "lag_s": None if r[2] is None else round(r[2]), "symbols": r[3]} for r in
+                      db.execute("SELECT minute, mode, lag_s, symbols_with_data FROM cycles WHERE status='processed' ORDER BY minute DESC LIMIT 10")]
+            out["feed"] = {"minutes_today_by_mode": modes, "recent": recent, "health": sch.feed_health(), "held": sch.held}
+        ch = screening.get("challenger")
+        if ch:
+            c, cm = ch
+            snap = c.engine.x.snapshot()
+            out["challenger"] = {"account": c.root.name, "equity": snap["equity_inr"], "start_cash": cm.get("start_cash"),
+                                 "contest_from": cm.get("contest_from"), "open_positions": snap["open_positions"]}
+        from nseql.screening.daily_review import live_accounts, review_dir, status as _rstatus
+        latest = None
+        for acc in live_accounts(st.exp_dir):
+            for d in sorted((st.exp_dir / "daily_review" / acc.name).glob("*/review.json"), reverse=True)[:1]:
+                if latest is None or d.parent.name > latest[1]:
+                    latest = (acc.name, d.parent.name)
+        if latest:
+            rv = json.loads((review_dir(st.exp_dir, *latest) / "review.json").read_text())
+            out["latest_review"] = {"account": latest[0], "day": latest[1], "state": (_rstatus(st.exp_dir, *latest) or {}).get("state"),
+                                    "headline": rv.get("headline"), "trade_report": rv.get("trade_report")}
+        return clean(out)
+
     _fa_cache: dict = {}
 
     @api.get("/fundamental")

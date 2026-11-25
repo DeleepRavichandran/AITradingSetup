@@ -54,7 +54,9 @@ def test_review_runs_every_step_and_writes_plain_findings(lab):
     assert rev["loss_study"]["reconciliation"]["reconciled"] and rev["day_backtest"]["strategies"] > 0
     assert rev["monte_carlo"]["trades"] == rev["loss_study"]["trades"]
     assert rev["monte_carlo"]["net_pnl_inr"] == pytest.approx(rev["loss_study"]["net_inr"], abs=0.05)
-    assert rev["headline"][0].startswith(f"The bot closed {rev['loss_study']['trades']} round trips")
+    assert rev["headline"][0].startswith(f"Today: {rev['trade_report']['round_trips']} trades")          # the trade list first
+    assert any(h.startswith(f"The bot closed {rev['loss_study']['trades']} round trips") for h in rev["headline"])
+    assert rev["trade_report"]["round_trips"] == rev["loss_study"]["trades"]
     assert any("by luck alone" in h for h in rev["headline"]) and "not proof" in rev["caution"]
     assert not [p for p in out.rglob("*") if p.is_dir() and p.parent != out]       # scratch replay ledgers removed
     assert not list(out.rglob("*.sqlite"))
@@ -70,7 +72,7 @@ def test_a_failing_step_is_recorded_and_the_others_still_run(lab, monkeypatch):
     st = R.status(exp, "live_test", DAY)
     assert st["state"] == "partial" and st["steps"]["loss_study"]["state"] == "failed" and "boom" in st["steps"]["loss_study"]["error"]
     assert st["steps"]["monte_carlo"]["state"] == "done" and rev["monte_carlo"]["trades"] > 0
-    assert rev["headline"][0].startswith("The bot closed") and any("Not available: loss study" in h for h in rev["headline"])
+    assert any(h.startswith("The bot closed") for h in rev["headline"]) and any("Not available: loss study" in h for h in rev["headline"])
 
 
 def test_queue_waits_for_the_close_runs_one_at_a_time_and_never_twice(tmp_path, lab):

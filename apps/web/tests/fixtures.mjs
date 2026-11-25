@@ -152,7 +152,11 @@ export function fixtures(state) {
           factors: [{ factor: "session_part", label: "time of day", buckets: [{ bucket: "first 30 min (09:16-09:45)", trades: 120, win_rate: 0.25, net_inr: -1072.8, mean_inr: -8.94, ci95: [-11.2, -6.6], finding: true }] }] },
         day_backtest: { strategies: 6120, traded: 4000, share_positive: 0.41, challenger: { trades: 2, net_inr: -120 },
           by_family: [{ group: "vwap", strategies: 600, traded: 500, trades: 1500, net_inr: -9000, net_per_trade: -6, share_positive: 0.3, charges_inr: 3000 }] },
-        monte_carlo: null } }),
+        monte_carlo: null,
+        trade_report: { round_trips: 2, won: 1, lost: 1, net_inr: -12.5, charges_inr: 9.4, plain: "2 trades: 1 won, 1 lost; net -13 INR after 9 INR charges (-3 before charges).",
+          trades: [{ symbol: "INFY", strategy: "rsi 1m, stop 0.5%", bought: "09:17", buy_price: 1500.1, sold: "09:21", sell_price: 1497.2, net_inr: -20.1, charges_inr: 5.1, outcome: "lost", why: "stop did its job: price kept falling after the 0.5% stop", also: [] },
+            { symbol: "TCS", strategy: "sma 5m, stop 1.0%", bought: "10:05", buy_price: 3400, sold: "11:40", sell_price: 3410, net_inr: 7.6, charges_inr: 4.3, outcome: "won", why: "the strategy's sell signal came after a gain", also: [] }],
+          next_time: [{ pattern: "opening", trades: 1, lost_inr: 20.1, meaning: "Bought in the first 30 minutes, when prices are noisiest.", next_time: "No new entries before 09:46.", decided_by: "experiment H2" }] } } }),
     "/review/live_x/2026-11-20": () => ({ account: "live_x", day: "2026-11-20", state: "none", status: null, review: null }),
     "/news": () => ({ items: [{ title: "Test headline", source: "Fixture Wire", link: "https://example.invalid/a", published: "2026-11-20T09:00:00Z" }], errors: {} }),
   };

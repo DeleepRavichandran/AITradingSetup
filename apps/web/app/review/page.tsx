@@ -11,7 +11,7 @@ const STATE: Record<string, [string, string]> = {
   queued: ["Waiting for the close", "var(--muted)"], interrupted: ["Interrupted (run again)", "var(--crit)"], none: ["Not run yet", "var(--muted)"],
 };
 const STEP: Record<string, string> = { loss_study: "Why trades lost (loss study)", day_backtest: "Every strategy on its own (day backtest)", monte_carlo: "Trade-order luck (Monte Carlo)",
-  fundamental_agent: "Fundamental agent snapshot" };
+  fundamental_agent: "Fundamental agent snapshot", trade_report: "Every trade, why, and next time" };
 const signed = (x: number | null | undefined, d = 2) => (x == null ? "—" : `${x >= 0 ? "+" : "−"}${num(Math.abs(x), d)}`);
 
 export default function Review() {
@@ -82,6 +82,7 @@ export default function Review() {
               </div>)}
           </div>
         </section>)}
+      {rev?.trade_report && <Trades tr={rev.trade_report} />}
       {rev?.loss_study && <Loss ls={rev.loss_study} />}
       {rev?.day_backtest && <Backtest bt={rev.day_backtest} />}
       {rev?.monte_carlo && <MonteCarlo mc={rev.monte_carlo} />}
@@ -148,5 +149,32 @@ function MonteCarlo({ mc }: { mc: any }) {
           {mc.sequence_risk && <p className="down" style={{ marginBottom: 0 }}>The 1-in-20 dip is at least double what happened: expect a dip like that live eventually.</p>}
         </>)}
     </Panel>
+  );
+}
+
+function Trades({ tr }: { tr: any }) {
+  return (
+    <>
+      {tr.next_time?.length > 0 && (
+        <Panel id="rv-next" title="Next time" hint="each change goes live only after it beats the current rules on other days">
+          <ol data-testid="review-next" style={{ margin: 0, paddingLeft: 20, lineHeight: 1.55 }}>
+            {tr.next_time.map((x: any) => (
+              <li key={x.pattern} style={{ marginBottom: 8 }}>
+                <b>{x.next_time}</b>
+                <div className="ink2" style={{ fontSize: 13.5 }}>{x.meaning} {x.trades} trade(s), {inr(x.lost_inr)} lost. Decided by: {x.decided_by}.</div>
+              </li>))}
+          </ol>
+        </Panel>)}
+      <Panel id="rv-trades" title="Every trade today" hint={tr.plain}>
+        <DataTable rows={tr.trades} maxHeight={420} wrap empty="No completed trades." cols={[
+          { key: "symbol", label: "Stock" },
+          { key: "bought", label: "Bought", f: (t: any) => `${t.bought ?? "—"} @ ${num(t.buy_price, 2)}` },
+          { key: "sold", label: "Sold", f: (t: any) => `${t.sold} @ ${num(t.sell_price, 2)}` },
+          { key: "net_inr", label: "Result ₹", r: true, f: (t: any) => <span className={t.net_inr < 0 ? "down" : "up"}>{inr(t.net_inr, 2)}</span> },
+          { key: "why", label: "Why", f: (t: any) => <span title={(t.also || []).join("; ")}>{t.why}</span> },
+          { key: "strategy", label: "Strategy" },
+        ]} />
+      </Panel>
+    </>
   );
 }

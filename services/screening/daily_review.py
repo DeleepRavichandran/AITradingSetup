@@ -29,7 +29,7 @@ from pathlib import Path
 
 import pandas as pd
 
-STEPS = ("loss_study", "day_backtest", "monte_carlo", "fundamental_agent")
+STEPS = ("trade_report", "loss_study", "day_backtest", "monte_carlo", "fundamental_agent")
 VERSION = "1.0"
 
 
@@ -137,7 +137,11 @@ def run(account: Path, day: str, exp_dir: Path, steps: tuple[str, ...] = STEPS, 
         _write(out / "status.json", st)
         t0 = time.time()
         try:
-            if s == "loss_study":
+            if s == "trade_report":
+                from nseql.screening.daily_report import run as _tr
+                results[s] = _tr(account, day)
+                _write(out / "trade_report.json", results[s])
+            elif s == "loss_study":
                 shutil.rmtree(out / "loss_study", ignore_errors=True)
                 results[s] = loss_study.run(account, day, out / "loss_study")
             elif s == "day_backtest":
@@ -176,6 +180,11 @@ def build(account: str, day: str, r: dict, st: dict) -> dict:
     """The review document: plain sentences first, each derived from a saved number, then the compact results."""
     ls, bt, mc = r.get("loss_study"), r.get("day_backtest"), r.get("monte_carlo")
     head: list[str] = []
+    tr = r.get("trade_report")
+    if tr:
+        head.append("Today: " + tr["plain"])
+        for x in tr["next_time"][:3]:
+            head.append(f"Next time ({x['trades']} trades, {x['lost_inr']:,.0f} INR lost): {x['next_time']}")
     rec = (ls or {}).get("reconciliation") or {}
     if ls and not rec.get("reconciled"):
         head.append(f"Not published: the study did not reconcile with the paper ledger ({rec.get('analysed_round_trips')} analysed vs "
@@ -231,7 +240,7 @@ def build(account: str, day: str, r: dict, st: dict) -> dict:
                                              "luck_baseline", "by_family", "by_timeframe", "by_stop", "best_10", "worst_10", "challenger", "execution")}
     return {"account": account, "day": day, "version": VERSION, "generated_at": datetime.now().isoformat(timespec="seconds"),
             "headline": head, "steps": st["steps"], "loss_study": compact_ls, "day_backtest": compact_bt, "monte_carlo": mc,
-            "fundamental_agent": r.get("fundamental_agent"),
+            "fundamental_agent": r.get("fundamental_agent"), "trade_report": tr,
             "caution": "One day is one sample. These findings are ideas to test on later days, not proof; no rule is changed by this review."}
 
 
