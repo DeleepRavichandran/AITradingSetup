@@ -141,6 +141,7 @@ export function fixtures(state) {
       snapshots: { days: 3, first: "2026-11-20T15:35" } }),
     "/fundamental/test": () => ({ verdict: "see lenses", trades: 40, snapshot_days: 3, min_trades: 100, min_days: 20,
       lenses: { view: { verdict: "not enough evidence" }, news: { verdict: "not enough evidence" } } }),
+    "/risk/extra-trades": () => ({ day: "2026-11-26", approvals: [], entries_today: 10, entries_allowed_today: 10 }),
     "/review": () => ({ sessions: [{ account: "live_x_v12", day: "2026-11-23", state: "done" }, { account: "live_x", day: "2026-11-20", state: "none" }],
       running: null, queued: [], schedule: "after the 15:30 candle" }),
     "/review/live_x_v12/2026-11-23": () => ({ account: "live_x_v12", day: "2026-11-23", state: "done",

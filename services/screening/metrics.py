@@ -33,6 +33,7 @@ CATEGORIES = (  # (category, reason prefix) in priority order; recorded reasons 
     ("warm-up history", "warm-up history"),
     ("kill switch", "kill switch"),
     ("daily loss limit", "daily loss limit"),
+    ("daily trade limit (needs approval)", ("daily trade limit",)),
     ("cash / position / exposure limits", ("not enough free cash", "max ", "symbol exposure", "gross exposure")),
     ("churn limits", ("cool-down", "daily cap", "one at a time")),
     ("losing-strategy gates", ("expected net return", "strategy type losing")),

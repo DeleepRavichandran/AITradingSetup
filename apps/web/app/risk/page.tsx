@@ -4,6 +4,35 @@ import { Badge, Banner, Card, DataTable, Err, KV, Loading, Page } from "@/compon
 import { AccountKinds } from "@/components/kinds";
 import { inr, post, useApi } from "@/lib/api";
 
+function TradeLimit() {
+  const a = useApi<any>("/risk/extra-trades", 15000);
+  const [n, setN] = useState("2");
+  const [why, setWhy] = useState("");
+  const [msg, setMsg] = useState<string | null>(null);
+  const d = a.data;
+  const approve = async () => {
+    setMsg(null);
+    try { const r = await post("/risk/extra-trades", { extra: Number(n), reason: why }); setMsg(`Approved: ${r.approved_today} extra trade(s) allowed today.`); setWhy(""); a.reload(); }
+    catch (e: any) { setMsg(`Not approved: ${e.message}`); }
+  };
+  return (
+    <Card title="Daily trade limit">
+      <p data-testid="trade-limit" style={{ marginTop: 0 }}>
+        New trades today: <b>{d?.entries_today ?? "—"}</b> of <b>{d?.entries_allowed_today ?? 10}</b> allowed.
+        The bot may open at most 10 new trades a day. More only with your approval and a written reason; exits are never blocked.</p>
+      <div className="row">
+        <label>Extra trades<input id="extra-trades" type="number" min={1} max={20} value={n} onChange={(e) => setN(e.target.value)} style={{ width: 80 }} /></label>
+        <label style={{ flex: 1 }}>Strong reason (at least 20 characters)<input id="extra-reason" value={why} onChange={(e) => setWhy(e.target.value)} style={{ width: "100%" }} /></label>
+      </div>
+      <div className="row" style={{ marginTop: 10 }}>
+        <button disabled={why.trim().length < 20 || !(Number(n) >= 1 && Number(n) <= 20)} onClick={approve}>Allow {n} more today</button>
+      </div>
+      {msg && <p role="status" className="ink2">{msg}</p>}
+      {d?.approvals?.length > 0 && <DataTable wrap maxHeight={160} rows={d.approvals} cols={[{ key: "at", f: (x: any) => String(x.at).slice(11, 16) }, { key: "extra", r: true }, { key: "reason" }]} />}
+    </Card>
+  );
+}
+
 export default function Risk() {
   const r = useApi<any>("/risk", 4000);
   const [f, setF] = useState({ operator: "", reason: "" });
@@ -39,6 +68,7 @@ export default function Risk() {
               ["overnight equity shorts", d.limits.allow_equity_short_overnight ? "allowed" : "blocked (intraday only)"]]} />
           </Card>
         </div>
+        <div style={{ marginTop: 14 }}><TradeLimit /></div>
         <div style={{ marginTop: 14 }}><Card title="Paper sessions">
           <DataTable cols={[{ key: "session_id", label: "session" }, { key: "halted", label: "state", f: (x) => <Badge s={x.halted ? "halted" : "running"} tone={x.halted ? "crit" : "good"} /> }, { key: "why", f: (x) => x.halted || "—" },
             { key: "equity", r: true, f: (x) => inr(x.equity) }, { key: "capital", r: true, f: (x) => inr(x.capital) }, { key: "positions", r: true }, { key: "open_orders", label: "working orders", r: true }]} rows={d.sessions} empty="No paper sessions running." />

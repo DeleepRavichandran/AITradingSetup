@@ -44,6 +44,18 @@ from nseql.screening.store import ScreeningStore, _iso
 MAX_DECISION_LAG_S = 55.0     # under one bar: the fill bar (next minute) must not have closed when the decision is made
 
 
+def approved_extra(experiments_dir, day: str, account: str) -> int:
+    """Extra buys the operator approved for `account` on `day` (experiments/approvals/<day>.json, written only by the
+    operator endpoint POST /api/risk/extra-trades)."""
+    if experiments_dir is None:
+        return 0
+    f = Path(experiments_dir) / "approvals" / f"{day}.json"
+    try:
+        return int(sum(int(a.get("extra", 0)) for a in json.loads(f.read_text()) if a.get("account") == account)) if f.exists() else 0
+    except (ValueError, OSError):
+        return 0
+
+
 def _accepts_need(feed) -> bool:
     import inspect
     try:
@@ -270,6 +282,8 @@ class MinuteScheduler:
         sy = [x["symbol"] for x in known]
         cols = [np.array([x[k] for x in known], dtype=float) for k in ("open", "high", "low", "close", "volume")]
         warm = self.live_from is not None and minute < self.live_from
+        if self.engine.x.rules is not None and self.engine.x.rules.max_entries_day:
+            self.engine.x.extra_entries = approved_extra(self.experiments_dir, minute[:10], self.root.name)
         # forward-data integrity: a live decision must be made before its fill bar (the next minute) has closed. A minute
         # processed later than that (outage, restart, a whole session delivered late) is CATCH-UP: indicators are rebuilt,
         # but its decisions are retrospective and never become orders. A restart reuses the recorded decision time.
@@ -319,6 +333,18 @@ class MinuteScheduler:
                "stale_skips": res.stale_skips, "counts": json.dumps(res.counts), "fills": len(fills),
                "equity_inr": x.equity() / 100 if x.rules else None, "cash_inr": x.cash / 100 if x.rules else None, "halted": int(x.halted_day)}
         jr = jn.rows(fills, ctx, self.engine.fe.index, self.news_count) if fills else []
+        if jr:                                          # price action before each buy, from completed bars only (price_action.py)
+            from nseql.screening.price_action import at_entry
+            out = []
+            for j in jr:
+                pa = None
+                if j[4] == "BUY":
+                    try:
+                        pa = json.dumps(at_entry(self.store.db, j[3], j[1]))
+                    except Exception:   # noqa: BLE001 - the journal must never stop trading
+                        pa = None
+                out.append((*j, pa))
+            jr = out
         try:
             self.store.record(cyc, signals, orders, fills, done, events, [(minute, k, v) for k, v in refused.items()], jr)
         except Exception:

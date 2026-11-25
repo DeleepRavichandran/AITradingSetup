@@ -9,6 +9,7 @@ only after it has been tested on days it was not designed on (services/screening
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -41,6 +42,22 @@ ACTIONS = [
      "Bought while most of the market was falling.",
      "Skip new buys when fewer than 40% of watchlist stocks are up on the day.",
      "experiment: breadth filter vs no filter"),
+    ("bearish_candle", lambda t: t.get("pa_pattern") in ("bearish engulfing", "shooting star", "red marubozu") and t["outcome"] == "lost",
+     "Bought right after a bearish candle (sellers were in control on the chart).",
+     "Do not buy right after a bearish engulfing, shooting star or strong red 5-minute candle.",
+     "experiment: price-action entry filter vs no filter"),
+    ("chasing", lambda t: str(t.get("pa_location", "")).startswith("near the day's high") and t["outcome"] == "lost",
+     "Bought at the top of the day's range (chasing the move).",
+     "Avoid buys in the top quarter of the day's range unless volume confirms a breakout.",
+     "experiment: location filter vs no filter"),
+    ("below_vwap", lambda t: t.get("pa_vwap") == "below VWAP" and t["outcome"] == "lost",
+     "Bought while the price was below VWAP (the day's average buyer was losing).",
+     "Prefer buys above VWAP.",
+     "experiment: VWAP filter vs no filter"),
+    ("down_structure", lambda t: str(t.get("pa_structure", "")).startswith("lower highs") and t["outcome"] == "lost",
+     "Bought into lower highs and lower lows on the 5-minute chart.",
+     "Wait for the structure to turn (a higher low) before buying.",
+     "experiment: structure filter vs no filter"),
     ("time_out", lambda t: t["primary_cause"].startswith("intraday time ran out"),
      "Ran out of time and was sold at 15:15 at a loss.",
      "No new intraday entries after 14:30.",
@@ -50,22 +67,30 @@ ACTIONS = [
 
 def report(db: sqlite3.Connection, day: str) -> dict:
     rc = analyse(db, day, write=False)
-    j = {}
+    from nseql.screening.price_action import labels as pa_labels
+    j, pa = {}, {}
     try:
-        for cid, ts, mos in db.execute("SELECT config_id, ts, minute_of_session FROM journal WHERE side='BUY'"):
+        cols = {r[1] for r in db.execute("PRAGMA table_info(journal)")}
+        q = "SELECT config_id, ts, minute_of_session" + (", price_action" if "price_action" in cols else ", NULL") + " FROM journal WHERE side='BUY'"
+        for cid, ts, mos, p in db.execute(q):
             j[(cid, ts)] = mos
+            pa[(cid, ts)] = json.loads(p) if p else {}
     except sqlite3.Error:
         pass
     trades = []
     for t in sorted(rc, key=lambda t: str(t["exit_ts"])):
         ent = str(t["entry_ts"])[:19].replace(" ", "T") if t.get("entry_ts") is not None else None
         t["entry_minute"] = j.get((t["config_id"], ent))
+        raw = pa.get((t["config_id"], ent), {})
+        t.update(pa_labels(raw))
         trades.append({"symbol": t["symbol"], "strategy": f"{t['family']} {t['timeframe']}, stop {t['stop_pct']:.1%}",
                        "bought": str(t["entry_ts"])[11:16] if t.get("entry_ts") is not None else None, "buy_price": t.get("entry_px"),
                        "sold": str(t["exit_ts"])[11:16], "sell_price": t.get("exit_px"), "qty": t.get("qty"),
                        "held_min": None if t.get("hold_min") is None else round(t["hold_min"]),
                        "net_inr": round(t["net_inr"], 2), "charges_inr": round(t["charges_inr"], 2), "outcome": t["outcome"],
-                       "why": t["primary_cause"], "also": t["causes"], "exit": t["exit_reason"]})
+                       "why": t["primary_cause"], "also": t["causes"], "exit": t["exit_reason"],
+                       "chart_at_buy": {"pattern": t["pa_pattern"], "structure": t["pa_structure"], "location": t["pa_location"],
+                                        "vwap": t["pa_vwap"], "volume": t["pa_volume"]}})
     won = [t for t in rc if t["outcome"] == "won"]
     lost = [t for t in rc if t["outcome"] == "lost"]
     nxt = []

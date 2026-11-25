@@ -81,6 +81,8 @@ class PortfolioRules:
     fund_qualified_only: bool = False   # H1: hold cash unless the configuration's forward evidence is qualified (>= min_trades
                                         # round trips with a shrunk mean net return above zero)
     no_entry_first_minutes: int = 0     # H2: no new entries in the first N minutes of the session (opening-range noise)
+    max_entries_day: int = 0            # operator limit: new buys per day for the whole account (0 = off); more only with the
+                                        # operator's recorded approval (Executor.extra_entries, set from approvals/<day>.json)
     explore_fraction: float = 0.0       # H1b: configurations without qualified evidence trade at this fraction of the normal
                                         # size (exploration continues, so evidence can accrue); 0 = off (full size)
 
@@ -95,14 +97,16 @@ class PortfolioRules:
         12% per stock (one 10% buy plus the cost buffer). 1.3 (2026-11-25): no new entries before 09:46."""
         return cls(capital=capital, per_trade_pct=0.10, max_positions=8, max_symbol_pct=0.12,
                    cooldown_minutes=15, max_entries_per_symbol_day=4, max_entries_per_config_day=1,
-                   max_open_per_symbol=1, group_gate_trades=30, no_entry_first_minutes=30)
+                   max_open_per_symbol=1, group_gate_trades=30, no_entry_first_minutes=30, max_entries_day=10)
 
 
 # 1.3 (2026-11-25): no new entries before 09:46. Evidence: entries in the first 30 minutes lost on both real days
 # (23 Nov: -8.94 INR per trade over 120 trades; 25 Nov: -50.91 INR per trade over 15 trades, 95% range below zero) and
 # the opening blackout (H2) was accepted on the synthetic walk-forward validation (docs/REVIEW_1376b45.md). Exits are not
 # affected. Risk limits are unchanged.
-LIVE_RULES_VERSION = "1.3"
+# 1.4 (2026-11-25, operator's decision): at most 10 new trades (buys) per day for the whole account; more only with the
+# operator's approval and a written reason (POST /api/risk/extra-trades, operator key only; audited). Exits are never blocked.
+LIVE_RULES_VERSION = "1.4"
 
 # Execution assumptions (review of 1376b45, 2026-11-25). A ledger produced under an earlier version keeps its rows; the
 # ledger audit flags it for recomputation (results are not comparable across versions).
@@ -146,6 +150,8 @@ class Executor:
         self.day = -1
         self.day_start = self.cash
         self.halted_day = False
+        self.day_entries = 0                            # new buys accepted today (account-wide)
+        self.extra_entries = 0                          # extra buys the operator approved for today
         self.events: list[dict] = []
         self.qty_cap: dict[int, int] | None = None     # optional per-order share cap set by a strategy (risk-based sizing)
 
@@ -166,6 +172,7 @@ class Executor:
         d = ts.toordinal()
         if d != self.day:
             self.day, self.day_start, self.halted_day = d, self.equity(), False
+            self.day_entries = 0
             self.sym_day_n[:] = 0
             self.cfg_day_n[:] = 0
 
@@ -266,6 +273,9 @@ class Executor:
                 why = "price above trade size"
             elif self.halted_day:
                 why = "daily loss limit reached"
+            elif rules.max_entries_day and self.day_entries >= rules.max_entries_day + self.extra_entries:
+                why = (f"daily trade limit: {self.day_entries} buys today (limit {rules.max_entries_day}"
+                       + (f" + {self.extra_entries} approved" if self.extra_entries else "") + "); more need the operator's approval")
             elif rules.no_entry_first_minutes and minute_of_session(pd.Timestamp(int(minute_em) * 60_000_000_000)) <= rules.no_entry_first_minutes:
                 why = f"no entries in the first {rules.no_entry_first_minutes} minutes of the session"
             elif rules.fund_qualified_only and not bool(est["qualified"][i]):
@@ -315,6 +325,7 @@ class Executor:
             open_sym[s] += 1
             self.sym_day_n[s] += 1
             self.cfg_day_n[i] += 1
+            self.day_entries += 1
             self.alloc.record_entry(i, float(est["p_win"][i]))
             out.append(self._buy_rec(i, minute_em, "pending", q, "", "accepted", expl, d.get("score")))
         return out
@@ -575,6 +586,8 @@ class Executor:
         top = np.argsort(-by_sym)[:10]
         return {"mode": self.mode, "shared_capital": bool(self.rules), "cash_inr": self.cash / 100, "reserved_inr": self.reserved / 100,
                 "equity_inr": eq / 100, "day_start_equity_inr": self.day_start / 100, "halted_today": self.halted_day,
+                "entries_today": self.day_entries, "entries_allowed_today": (self.rules.max_entries_day + self.extra_entries)
+                if self.rules and self.rules.max_entries_day else None,
                 "open_positions": int(held.sum()), "working_orders": int((e.pend != 0).sum()),
                 "gross_exposure_inr": float(by_sym.sum()), "top_symbols": [{"symbol": r.symbols[s], "value_inr": round(float(by_sym[s]), 2),
                                                                              "pct_equity": round(float(by_sym[s]) / max(eq / 100, 1), 4)}
@@ -587,7 +600,7 @@ class Executor:
 
     def state(self) -> dict:
         st = {f"x_{k}": getattr(self, k) for k in (*self.STATE, *self.SYM_STATE)}
-        st["x_scalars"] = np.array([self.cash, self.reserved, self.day, self.day_start, int(self.halted_day)], dtype=np.int64)
+        st["x_scalars"] = np.array([self.cash, self.reserved, self.day, self.day_start, int(self.halted_day), self.day_entries], dtype=np.int64)
         st["x_mode"] = np.array([int(self.cfg is not None), int(self.rules is not None)])
         st.update(self.alloc.state())
         return st
@@ -603,5 +616,7 @@ class Executor:
             if v is not None:
                 setattr(self, k, np.array(v, dtype=np.int64))
         self.alloc.load(st)
-        self.cash, self.reserved, self.day, self.day_start, h = (int(x) for x in np.asarray(st["x_scalars"]))
+        sc = [int(x) for x in np.asarray(st["x_scalars"])]
+        self.cash, self.reserved, self.day, self.day_start, h = sc[:5]
+        self.day_entries = sc[5] if len(sc) > 5 else 0                 # checkpoints before 1.4 had no counter
         self.halted_day = bool(h)

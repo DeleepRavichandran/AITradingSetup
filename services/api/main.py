@@ -1847,6 +1847,49 @@ def create_app() -> FastAPI:
         })
         return clean(out)
 
+    class ApproveTrades(BaseModel):
+        extra: int = Field(ge=1, le=20)
+        reason: str = Field(min_length=20, max_length=1000)
+
+    @api.post("/risk/extra-trades")
+    def approve_trades(body: ApproveTrades, request: Request):
+        """The operator allows `extra` more new trades today, beyond the daily limit, with a written reason. Operator key only
+        (the read-only key is refused by auth); every approval is recorded and audited."""
+        meta = screening.get("meta") or {}
+        if not meta.get("account"):
+            raise HTTPException(409, "no live paper account is running")
+        day = datetime.now(views.IST).strftime("%Y-%m-%d")
+        d = st.exp_dir / "approvals"
+        d.mkdir(parents=True, exist_ok=True)
+        f = d / f"{day}.json"
+        items = json.loads(f.read_text()) if f.exists() else []
+        items.append({"account": meta["account"], "extra": body.extra, "reason": body.reason.strip(), "by": request.state.role,
+                      "at": datetime.now(views.IST).replace(tzinfo=None).isoformat(timespec="seconds")})
+        f.write_text(json.dumps(items, indent=2))
+        st.registry.audit(request.state.role, "EXTRA_TRADES_APPROVED", account=meta["account"], day=day, extra=body.extra, reason=body.reason.strip())
+        total = sum(a["extra"] for a in items if a["account"] == meta["account"])
+        return {"day": day, "account": meta["account"], "approved_today": total, "approvals": [a for a in items if a["account"] == meta["account"]]}
+
+    @api.get("/risk/extra-trades")
+    def approvals(day: str = ""):
+        d = day or datetime.now(views.IST).strftime("%Y-%m-%d")
+        f = st.exp_dir / "approvals" / f"{d}.json"
+        sch = screening.get("sch")
+        snap = sch.engine.x.snapshot() if sch is not None else {}
+        return {"day": d, "approvals": json.loads(f.read_text()) if f.exists() else [], "entries_today": snap.get("entries_today"),
+                "entries_allowed_today": snap.get("entries_allowed_today")}
+
+    @api.get("/screening/bars")
+    def screening_bars(symbol: str, day: str = "", tf: int = 1):
+        """A day's candles for one stock from the live account's stored bars: 1-minute, or completed 5/15-minute candles with
+        the candle pattern as of each candle. Read-only."""
+        from nseql.screening.price_action import bars as _bars
+        if tf not in (1, 5, 15):
+            raise HTTPException(400, "tf must be 1, 5 or 15")
+        sch = _need_screening()
+        d = day or datetime.now(views.IST).strftime("%Y-%m-%d")
+        return clean({"symbol": symbol.upper(), "day": d, "tf": tf, "candles": _bars(sch.store.reader(), symbol.upper(), d, tf)})
+
     @api.get("/assistant/status")
     def assistant_status():
         """Everything the assistant needs to answer "how is it going?" in one read-only call: market, bot, account, positions,

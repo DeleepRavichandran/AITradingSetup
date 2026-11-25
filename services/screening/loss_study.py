@@ -44,6 +44,11 @@ BUCKETS = {
     "family": ("strategy type", lambda v: v),
     "timeframe": ("chart speed", lambda v: v),
     "stop": ("stop-loss size", lambda v: f"{v:.1%}"),
+    "pa_pattern": ("candle pattern before the buy (5-minute)", lambda v: v if isinstance(v, str) else "unknown"),
+    "pa_structure": ("price structure (last three 5-minute candles)", lambda v: v if isinstance(v, str) else "unknown"),
+    "pa_location": ("where the price was in the day's range", lambda v: v if isinstance(v, str) else "unknown"),
+    "pa_vwap": ("price vs VWAP", lambda v: v if isinstance(v, str) else "unknown"),
+    "pa_volume": ("volume of the last 5-minute candle", lambda v: v if isinstance(v, str) else "unknown"),
 }
 
 
@@ -158,8 +163,15 @@ def run(account: Path, day: str, out: Path) -> dict:
     try:
         rc = pd.DataFrame(analyse(db, day, write=False))
         has_j = db.execute("SELECT 1 FROM sqlite_master WHERE name='journal'").fetchone() is not None
-        j = (pd.read_sql_query("SELECT config_id, ts AS entry_key, minute_of_session, stock_move, vol_session, market_move FROM journal WHERE side='BUY'", db)
-             if has_j else pd.DataFrame(columns=["config_id", "entry_key", "minute_of_session", "stock_move", "vol_session", "market_move"]))
+        cols = {r[1] for r in db.execute("PRAGMA table_info(journal)")} if has_j else set()
+        pa_col = ", price_action" if "price_action" in cols else ", NULL AS price_action"
+        j = (pd.read_sql_query("SELECT config_id, ts AS entry_key, minute_of_session, stock_move, vol_session, market_move" + pa_col +
+                               " FROM journal WHERE side='BUY'", db)
+             if has_j else pd.DataFrame(columns=["config_id", "entry_key", "minute_of_session", "stock_move", "vol_session", "market_move", "price_action"]))
+        from nseql.screening.price_action import labels as _pa_labels
+        pa = j.price_action.map(lambda x: _pa_labels(json.loads(x)) if isinstance(x, str) and x else _pa_labels({}))
+        j = pd.concat([j.drop(columns=["price_action"]), pd.DataFrame(list(pa), index=j.index)], axis=1) if len(j) else \
+            j.drop(columns=["price_action"]).assign(pa_pattern=None, pa_structure=None, pa_location=None, pa_vwap=None, pa_volume=None)
         rec = reconcile(db, day, rc)
     finally:
         db.close()

@@ -26,7 +26,9 @@ answers in chat with real numbers. They do not want to run commands, restart thi
   - the latest evening review: headline plus the trade report
 - **"How was today?"** (after about 15:45): `latest_review.trade_report` in the status. It lists every trade, why it
   won or lost, and the "next time" changes. More detail is under `/api/review` and
-  `/api/review/{account}/{day}`. Also useful: `/api/today`, `/api/contest`, `/api/fundamental`, `/api/screening/status`.
+  `/api/review/{account}/{day}`. Candles for price action: `/api/screening/bars?symbol=INFY&tf=5` (1, 5 or 15 minutes,
+  with the candle pattern as of each candle). Every buy's chart picture at entry is in the trade report (`chart_at_buy`).
+  Also useful: `/api/today`, `/api/contest`, `/api/fundamental`, `/api/screening/status`.
 - Answer in plain words, with real numbers only. If the link or the lab is down, say so; never guess. The operator
   writes in English and Tamil ("machi").
 
@@ -34,6 +36,10 @@ answers in chat with real numbers. They do not want to run commands, restart thi
 - Paper trading only: `LIVE_TRADING_ENABLED=false`. No agent may change it or authorise itself.
 - Never change broker credentials, execution permissions, risk limits (daily loss cap, position sizes) or the kill switch
   automatically.
+- **Daily trade limit (operator's rule, rules 1.4): at most 10 new trades (buys) a day.** More only with the operator's
+  approval and a strong written reason: they enter it on Risk Control ("Allow N more today"), which posts to
+  `/api/risk/extra-trades` with the operator key. The assistant's read-only key cannot approve. When the limit is hit
+  and more trades look justified, explain the evidence in chat and let the operator decide. Exits are never blocked.
 - Never fabricate market data, fills, results or API success. Never claim tests ran if they did not.
 - No look-ahead: rank and decide only on information available at decision time.
 - Do not merge to main automatically. Never log or commit MPINs, TOTP seeds or tokens.
@@ -44,7 +50,8 @@ answers in chat with real numbers. They do not want to run commands, restart thi
   not to offer options.
 
 ## Where things stand (2026-11-25)
-- **Account:** `live_angelone_100000_r2_v12` (rules 1.2), continued from ₹1,00,000. 23 Nov: −₹2,248 (363 round
+- **Account:** from 27 Nov `live_angelone_100000_r2_v14` (rules 1.4: no buys before 09:46, at most 10 buys a day),
+  continuing `..._v12` (rules 1.2), continued from ₹1,00,000. 23 Nov: −₹2,248 (363 round
   trips). 25 Nov: −₹342 (28 round trips) in a rising market. Since the start: −₹2,590.
 - **Challenger:** `..._challenger_orb30-breadth-1_0_x20`, contest from 26 Nov. It needs 60 sessions and 100 trades;
   promotion is the operator's decision.

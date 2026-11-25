@@ -78,7 +78,8 @@ class ScreeningStore:
         for table, col, typ in (("paper_orders", "requested_qty", "INTEGER"), ("paper_orders", "reason", "TEXT"),
                                 ("signals", "alloc_status", "TEXT"), ("signals", "alloc_reason", "TEXT"), ("signals", "alloc_score", "REAL"),
                                 ("cycles", "equity_inr", "REAL"), ("cycles", "cash_inr", "REAL"), ("cycles", "halted", "INTEGER"),
-                                ("cycles", "decided_at", "TEXT"), ("cycles", "arrived_at", "REAL"), ("cycles", "earliest_fill", "TEXT")):
+                                ("cycles", "decided_at", "TEXT"), ("cycles", "arrived_at", "REAL"), ("cycles", "earliest_fill", "TEXT"),
+                                ("journal", "price_action", "TEXT")):
             cols = {r[1] for r in self.db.execute(f"PRAGMA table_info({table})")}
             if col not in cols:                                  # runs created before these columns existed
                 self.db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
@@ -169,7 +170,9 @@ class ScreeningStore:
                             "reason=? WHERE order_key=? AND status='pending'", done)
             cur.executemany("INSERT OR IGNORE INTO portfolio_events VALUES (?,?,?)", events)
             cur.executemany("INSERT OR IGNORE INTO refusals VALUES (?,?,?)", refusals)
-            cur.executemany("INSERT OR IGNORE INTO journal VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", journal)
+            cur.executemany("INSERT OR IGNORE INTO journal (fill_key, ts, config_id, symbol, side, minute_of_session, stock_move, trend, vol_session, "
+                            "market_move, breadth, regime, news_60m, price_action) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                            [tuple(j) + ((None,) if len(j) == 13 else ()) for j in journal])
             cur.execute("COMMIT")
         except Exception:
             cur.execute("ROLLBACK")

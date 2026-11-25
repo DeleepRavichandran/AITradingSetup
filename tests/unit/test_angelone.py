@@ -216,15 +216,15 @@ def test_unattended_api_start_with_angel_one(data_dir, tmp_path, monkeypatch):
     assert st["started"] and st["mode"] == "live" and st["symbols"] == 5 and st["live"]["not_found"] == ["NOTREAL"]   # index: context, not traded
     assert st["feed"].startswith("Angel One") and st["running"] is True and st["live_trading"] is False
     assert st["live"]["history"].startswith("dataset angel_daily")
-    assert st["portfolio"]["equity_inr"] == 1_000_000 and st["live"]["account"] == "live_angelone_r2_v13"
+    assert st["portfolio"]["equity_inr"] == 1_000_000 and st["live"]["account"] == "live_angelone_r2_v14"
     assert st["portfolio"]["rules"]["cooldown_minutes"] == 15 and st["portfolio"]["rules"]["max_open_per_symbol"] == 1
     # Regression (review 2026-11-24, finding 3): finishing a replay must not replace the running live account on the
     # dashboard. Each run has an explicit identity.
-    assert st["run_id"] == "live:live_angelone_r2_v13"
+    assert st["run_id"] == "live:live_angelone_r2_v14"
     # the challenger runs beside the live bot in its own account, fed the same bars (forward contest)
     fw = c.get("/api/contest").json()["forward"]
     assert fw["kind"] == "forward" and fw["challenger"]["version"] == "orb30-breadth-1.0" and fw["verdict"]["status"] == "inconclusive"
-    cf = tmp_path / "exp" / "screening" / "live_angelone_r2_v13_challenger_orb30-breadth-1_0_x20" / "live.json"
+    cf = tmp_path / "exp" / "screening" / "live_angelone_r2_v14_challenger_orb30-breadth-1_0_x20" / "live.json"
     assert cf.exists()
     import json as _json
     cm = _json.loads(cf.read_text())                     # forward manifest frozen when the challenger account is created
@@ -242,7 +242,7 @@ def test_unattended_api_start_with_angel_one(data_dir, tmp_path, monkeypatch):
         time.sleep(0.2)
     assert j["status"] == "done", j
     after = c.get("/api/screening/status").json()
-    assert after["run_id"] == "live:live_angelone_r2_v13" and after["mode"] == "live" and after["running"] is True
+    assert after["run_id"] == "live:live_angelone_r2_v14" and after["mode"] == "live" and after["running"] is True
     runs = c.get("/api/screening/runs").json()["runs"]
     assert {r["run_id"].split(":")[0] for r in runs} == {"live", "replay"} and sum(r["active"] for r in runs) == 1
     replay_id = next(r["run_id"] for r in runs if r["run_id"].startswith("replay:"))
@@ -276,12 +276,12 @@ def test_unattended_api_start_with_angel_one(data_dir, tmp_path, monkeypatch):
             break
         time.sleep(0.2)
     assert st2["live"]["state"] == "running", st2["live"].get("error")
-    assert st2["live"]["account"] == "live_angelone_100000_r2_v13" and st2["portfolio"]["rules"]["capital"] == pytest.approx(carried["cash_inr"])
+    assert st2["live"]["account"] == "live_angelone_100000_r2_v14" and st2["portfolio"]["rules"]["capital"] == pytest.approx(carried["cash_inr"])
     assert st2["feed"].startswith("Angel One") and st2["running"] is True                    # the live bot, not a read-only copy
     assert st2["portfolio"]["cash_inr"] == pytest.approx(carried["cash_inr"]) and st2["paper_orders"] == 0   # same money, no inherited orders
     td = c2.get("/api/today").json()
     assert td["account"]["starting_capital"] == 100_000                                       # "since the start" counts from the original money
-    assert (tmp_path / "exp" / "screening" / "live_angelone_r2_v13").exists()                    # the old account is kept, untouched
+    assert (tmp_path / "exp" / "screening" / "live_angelone_r2_v14").exists()                    # the old account is kept, untouched
     monkeypatch.setenv("NSEQL_PAPER_CAPITAL", "5000")
     config.get_settings.cache_clear()
     c3 = TestClient(create_app(), headers={"Authorization": "Bearer angel-live-test-operator-token-1"})
