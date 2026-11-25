@@ -84,6 +84,19 @@ class ScreeningStore:
                 self.db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
         # Strategy Universe reads per-configuration signal counts; this index answers them without a table scan
         self.db.execute("CREATE INDEX IF NOT EXISTS ix_signals_cfg ON signals(decision, config_id, alloc_status)")
+        # dashboard reads by fill time (today's trades, charts); without it every page refresh scanned all orders
+        self.db.execute("CREATE INDEX IF NOT EXISTS ix_orders_fill ON paper_orders(fill_ts)")
+        self._readers = threading.local()
+
+    def reader(self) -> sqlite3.Connection:
+        """A read-only connection for this thread (WAL: readers never wait for the minute loop's writes, and never make it
+        wait). Dashboard queries use this instead of the writer connection and its lock."""
+        c = getattr(self._readers, "c", None)
+        if c is None:
+            c = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True, check_same_thread=False)
+            c.row_factory = sqlite3.Row
+            self._readers.c = c
+        return c
 
     # ------------------------------------------------------------------ events
     @_locked

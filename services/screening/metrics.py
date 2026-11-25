@@ -63,11 +63,10 @@ def account_figures(sch, meta: dict | None, day: str) -> dict:
     meta = meta or {}
     x = sch.engine.x
     snap = x.snapshot()
-    db = sch.store.db
-    with sch.store._lock:
-        before = db.execute("SELECT equity_inr FROM cycles WHERE substr(minute,1,10) < ? AND equity_inr IS NOT NULL ORDER BY minute DESC LIMIT 1",
-                            (day,)).fetchone()
-        first = db.execute("SELECT MIN(minute) FROM cycles WHERE equity_inr IS NOT NULL").fetchone()[0]
+    db = sch.store.reader() if hasattr(sch.store, "reader") else sch.store.db       # read-only, no lock (WAL)
+    before = db.execute("SELECT equity_inr FROM cycles WHERE minute < ? AND equity_inr IS NOT NULL ORDER BY minute DESC LIMIT 1",
+                        (day,)).fetchone()
+    first = db.execute("SELECT MIN(minute) FROM cycles WHERE equity_inr IS NOT NULL").fetchone()[0]
     eq = float(snap["equity_inr"])
     rules_cap = float(x.rules.capital) if x.rules else None
     start_cash = float(meta.get("start_cash") or rules_cap or eq)

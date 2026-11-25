@@ -163,6 +163,16 @@ def create_app() -> FastAPI:
     if token and viewer_token and hmac.compare_digest(token, viewer_token):
         raise RuntimeError("NSEQL_VIEWER_TOKEN must differ from NSEQL_API_TOKEN")
     app = FastAPI(title="NSE AI Quant Lab", version=__version__, docs_url=None, redoc_url=None, openapi_url=None)
+
+    @app.middleware("http")
+    async def _slow_requests(request: Request, call_next):
+        """Any request over 2 s is written to the log with its duration, so a slow page names its cause."""
+        t0 = time.perf_counter()
+        resp = await call_next(request)
+        dt = time.perf_counter() - t0
+        if dt > 2.0:
+            print(f"[slow] {datetime.now():%H:%M:%S} {request.method} {request.url.path} {dt:.1f} s", flush=True)
+        return resp
     app.state.st = st
     origins = [o for o in os.environ.get("NSEQL_CORS_ORIGINS", "http://localhost:3000").split(",") if o]
     app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["*"], allow_headers=["*"])
@@ -1395,7 +1405,7 @@ def create_app() -> FastAPI:
     def screening_overview():
         """Everything the Strategy Monitor and the Deck show about the loop, from stored results only."""
         sch = _need_screening()
-        db, e, x = sch.store.db, sch.engine, sch.engine.x
+        db, e, x = sch.store.reader(), sch.engine, sch.engine.x       # read-only: never blocks the minute loop
         q1 = lambda sql, *a: db.execute(sql, a).fetchone()[0]
         last = e.last_minute
         cyc = db.execute("SELECT status, COUNT(*) FROM cycles GROUP BY status").fetchall()
@@ -1407,10 +1417,10 @@ def create_app() -> FastAPI:
         from nseql.screening.metrics import account_figures, reason_category, session_decisions
         meta_ = screening.get("meta") or {}
         today_ = datetime.now(views.IST).strftime("%Y-%m-%d")
-        last_day = db.execute("SELECT MAX(substr(minute,1,10)) FROM cycles WHERE status='processed'").fetchone()[0] or today_
+        last_day = db.execute("SELECT substr(MAX(minute),1,10) FROM cycles WHERE status='processed'").fetchone()[0] or today_
         fig = account_figures(sch, meta_, today_)
         start_cap = fig["starting_capital"]
-        session = session_decisions(db, last_day, meta_.get("live_from"))
+        session = _session_cached(sch, db, last_day, meta_.get("live_from"), today_)
         by_cat: dict[str, int] = {}
         for why, n in db.execute("SELECT reason, SUM(n) FROM refusals GROUP BY reason").fetchall():
             c = reason_category(why)
@@ -1698,8 +1708,33 @@ def create_app() -> FastAPI:
                       "as_of": sch.watermark, "data_source": sch.provenance(),
                       "note": "simulated positions; unrealised P&L at the last 1-minute close, after entry charges, before exit charges"})
 
+    _today_cache: dict = {}
+    _session_cache: dict = {}
+
+    def _session_cached(sch, db, d: str, live_from, today: str) -> dict:
+        """Session decision counts: a past session never changes (cached for good); today's are refreshed every 60 s."""
+        from nseql.screening.metrics import session_decisions
+        key = (str(sch.root), d, live_from)
+        hit = _session_cache.get(key)
+        if hit and (d < today or time.time() - hit[0] < 60):
+            return hit[1]
+        v = session_decisions(db, d, live_from)
+        _session_cache[key] = (time.time(), v)
+        return v
+
     @api.get("/today")
     def today_view():
+        """Cached for 10 s: Mission Control, My Trading and a phone may all poll it; the ledger changes once a minute."""
+        sch = screening.get("sch")
+        state = (id(sch), sch.watermark if sch is not None else None, st.kill.engaged, json.dumps(screening.get("live") or {}, default=str, sort_keys=True))
+        hit = _today_cache.get("v")
+        if hit and hit[1] == state and time.time() - hit[0] < 10:       # same minute, same kill switch and bot state
+            return hit[2]
+        v = _today_view()
+        _today_cache["v"] = (time.time(), state, v)
+        return v
+
+    def _today_view():
         """Plain-language summary for the simple 'My trading' page: money, today's result, what is held, recent trades,
         whether the bot is working. Simulated (paper) trading only."""
         sch = _screening_open()
@@ -1710,29 +1745,28 @@ def create_app() -> FastAPI:
             live = screening.get("live") or {}
             out["bot"] = {"state": "error" if live.get("state") == "error" else "off", "message": live.get("error") or "The bot is not running yet."}
             return clean(out)
-        x, db = sch.engine.x, sch.store.db
+        from nseql.screening.metrics import _next_day
+        x, db = sch.engine.x, sch.store.reader()          # read-only connection: never waits for, or blocks, the minute loop
         snap = x.snapshot()
         day = datetime.now(views.IST).strftime("%Y-%m-%d")
-        with sch.store._lock:
-            day_start = db.execute("SELECT equity_inr FROM cycles WHERE substr(minute,1,10) < ? AND equity_inr IS NOT NULL ORDER BY minute DESC LIMIT 1", (day,)).fetchone()
-            first_today = db.execute("SELECT equity_inr FROM cycles WHERE substr(minute,1,10) = ? AND equity_inr IS NOT NULL ORDER BY minute LIMIT 1", (day,)).fetchone()
-            fills = [dict(r) for r in db.execute("SELECT o.symbol, o.side, o.qty, o.price, o.fill_ts, o.charges_paise, o.realized_paise, o.config_id, o.horizon "
-                                                 "FROM paper_orders o WHERE o.status IN ('filled','partial') ORDER BY o.fill_ts DESC LIMIT 25")]
-            today_n = db.execute("SELECT COUNT(*), COALESCE(SUM(CASE WHEN side='SELL' THEN realized_paise END),0), COALESCE(SUM(charges_paise),0) "
-                                 "FROM paper_orders WHERE status IN ('filled','partial') AND substr(fill_ts,1,10)=?", (day,)).fetchone()
-            sig = dict(db.execute("SELECT COALESCE(alloc_status,'-'), COUNT(*) FROM signals WHERE decision='BUY' AND substr(bar_ts,1,10)=? GROUP BY 1", (day,)).fetchall())
-            last = db.execute("SELECT minute, evaluated, latency_ms FROM cycles WHERE status='processed' ORDER BY minute DESC LIMIT 1").fetchone()
-            curve_day = db.execute("SELECT MAX(substr(minute,1,10)) FROM cycles WHERE equity_inr IS NOT NULL").fetchone()[0]
-            curve = db.execute("SELECT substr(minute,12,5), equity_inr FROM cycles WHERE substr(minute,1,10)=? AND equity_inr IS NOT NULL ORDER BY minute",
-                               (curve_day,)).fetchall() if curve_day else []
-            sells = db.execute("SELECT config_id, realized_paise, substr(fill_ts,12,2) FROM paper_orders WHERE side='SELL' AND status IN ('filled','partial') "
-                               "AND substr(fill_ts,1,10)=?", (curve_day or day,)).fetchall()
-            hours = db.execute("SELECT substr(fill_ts,12,2), side, COUNT(*) FROM paper_orders WHERE status IN ('filled','partial') AND substr(fill_ts,1,10)=? "
-                               "GROUP BY 1, 2", (curve_day or day,)).fetchall()
-            busy = db.execute("SELECT config_id, symbol, COUNT(*), COALESCE(SUM(CASE WHEN side='SELL' THEN realized_paise END),0) FROM paper_orders "
-                              "WHERE status IN ('filled','partial') AND substr(fill_ts,1,10)=? GROUP BY 1, 2 ORDER BY 3 DESC, 4 LIMIT 5",
-                              (curve_day or day,)).fetchall()
-            refused = db.execute("SELECT reason, SUM(n) FROM refusals WHERE substr(minute,1,10)=? GROUP BY 1", (curve_day or day,)).fetchall()
+        day_start = db.execute("SELECT equity_inr FROM cycles WHERE minute < ? AND equity_inr IS NOT NULL ORDER BY minute DESC LIMIT 1", (day,)).fetchone()
+        first_today = db.execute("SELECT equity_inr FROM cycles WHERE minute >= ? AND minute < ? AND equity_inr IS NOT NULL ORDER BY minute LIMIT 1", (day, _next_day(day))).fetchone()
+        fills = [dict(r) for r in db.execute("SELECT o.symbol, o.side, o.qty, o.price, o.fill_ts, o.charges_paise, o.realized_paise, o.config_id, o.horizon "
+                                             "FROM paper_orders o WHERE o.status IN ('filled','partial') ORDER BY o.fill_ts DESC LIMIT 25")]
+        today_n = db.execute("SELECT COUNT(*), COALESCE(SUM(CASE WHEN side='SELL' THEN realized_paise END),0), COALESCE(SUM(charges_paise),0) "
+                             "FROM paper_orders WHERE status IN ('filled','partial') AND fill_ts >= ? AND fill_ts < ?", (day, _next_day(day))).fetchone()
+        last = db.execute("SELECT minute, evaluated, latency_ms FROM cycles WHERE status='processed' ORDER BY minute DESC LIMIT 1").fetchone()
+        curve_day = db.execute("SELECT substr(MAX(minute),1,10) FROM cycles WHERE equity_inr IS NOT NULL").fetchone()[0]
+        curve = db.execute("SELECT substr(minute,12,5), equity_inr FROM cycles WHERE minute >= ? AND minute < ? AND equity_inr IS NOT NULL ORDER BY minute",
+                           (curve_day, _next_day(curve_day))).fetchall() if curve_day else []
+        sells = db.execute("SELECT config_id, realized_paise, substr(fill_ts,12,2) FROM paper_orders WHERE side='SELL' AND status IN ('filled','partial') "
+                           "AND fill_ts >= ? AND fill_ts < ?", (curve_day or day, _next_day(curve_day or day))).fetchall()
+        hours = db.execute("SELECT substr(fill_ts,12,2), side, COUNT(*) FROM paper_orders WHERE status IN ('filled','partial') AND fill_ts >= ? AND fill_ts < ? "
+                           "GROUP BY 1, 2", (curve_day or day, _next_day(curve_day or day))).fetchall()
+        busy = db.execute("SELECT config_id, symbol, COUNT(*), COALESCE(SUM(CASE WHEN side='SELL' THEN realized_paise END),0) FROM paper_orders "
+                          "WHERE status IN ('filled','partial') AND fill_ts >= ? AND fill_ts < ? GROUP BY 1, 2 ORDER BY 3 DESC, 4 LIMIT 5",
+                          (curve_day or day, _next_day(curve_day or day))).fetchall()
+        refused = db.execute("SELECT reason, SUM(n) FROM refusals WHERE minute >= ? AND minute < ? GROUP BY 1", (curve_day or day, _next_day(curve_day or day))).fetchall()
         from nseql.screening.registry import FAMILIES
         from nseql.screening.universe import _rule_name
         idx = {str(i): k for k, i in enumerate(sch.reg.ids)}
@@ -1769,8 +1803,7 @@ def create_app() -> FastAPI:
         charts["rules_version"] = (screening.get("meta") or {}).get("rules_version") or "1.0"
         from nseql.screening import rca as _rca
         try:
-            with sch.store._lock:
-                rc = _rca.analyse(sch.store.db, curve_day or day, write=False) if curve_day or day else []
+            rc = _rca.analyse(db, curve_day or day, write=False) if curve_day or day else []
             sm = _rca.summary(rc)
             charts["rca"] = {**sm, "latest": [{"time": str(t["exit_ts"])[11:16], "symbol": t["symbol"], "outcome": t["outcome"],
                                                "summary": t["summary"], "causes": t["causes"], "net_inr": round(t["net_inr"], 2)}
@@ -1780,8 +1813,7 @@ def create_app() -> FastAPI:
         from nseql.screening.metrics import account_figures, session_decisions
         meta_ = screening.get("meta") or {}
         fig = account_figures(sch, meta_, day)
-        with sch.store._lock:
-            session = session_decisions(db, curve_day or day, meta_.get("live_from"))
+        session = _session_cached(sch, db, curve_day or day, meta_.get("live_from"), day)
         age = None
         if last:
             age = (datetime.now(views.IST).replace(tzinfo=None) - pd.Timestamp(last[0]).to_pydatetime()).total_seconds()

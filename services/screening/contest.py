@@ -62,7 +62,23 @@ def incumbent_label() -> str:
     return f"screening rules {LIVE_RULES_VERSION} (registry v{REGISTRY_VERSION})"
 
 
+_CODE_VERSION: dict = {}
+
+
 def code_version(repo: Path | None = None) -> dict:
+    """Commit of the running code. Cached per process for 60 s: the dashboard's status bar asks on every page, and two
+    git calls per request were slow on Windows (2026-11-25: pages took over 30 s)."""
+    import time as _t
+    key = str(repo)
+    hit = _CODE_VERSION.get(key)
+    if hit and _t.time() - hit[0] < 60:
+        return hit[1]
+    v = _code_version(repo)
+    _CODE_VERSION[key] = (_t.time(), v)
+    return v
+
+
+def _code_version(repo: Path | None = None) -> dict:
     repo = repo or Path(__file__).resolve().parents[2]
     try:
         commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, timeout=10).stdout.strip()
