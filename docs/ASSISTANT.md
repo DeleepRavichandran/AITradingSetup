@@ -39,7 +39,7 @@ strategy count is not a success measure. Work follows the roadmap in docs/VISION
   RSI/MACD/Bollinger, patterns, plain read, the bot's trades): `/api/screening/chart?symbol=INFY` (add `&at=10:30` to see the
   chart as it stood then). Candles for price action: `/api/screening/bars?symbol=INFY&tf=5` (1, 5 or 15 minutes,
   with the candle pattern as of each candle). Every buy's chart picture at entry is in the trade report (`chart_at_buy`).
-  Also useful: `/api/today`, `/api/contest`, `/api/fundamental`, `/api/screening/status`.
+  Also useful: `/api/today`, `/api/contest`, `/api/fundamental`, `/api/screening/status`, `/api/radar` (every stock's decision today), `/api/radar/{symbol}` (decision dossier), `/api/decisions` (decision stream), `/api/benchmarks`, and `/api/integrity` (the adversarial evidence report: verdict, failed hypotheses, biases, suspension rules; docs/INTEGRITY.md).
 - Answer in plain words, with real numbers only. If the link or the lab is down, say so; never guess. The operator
   writes in English and Tamil ("machi").
 

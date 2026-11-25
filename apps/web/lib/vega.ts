@@ -29,7 +29,8 @@ export const PAGES: [RegExp, string, string][] = [
   [/^(the )?backtest(ing)?( studio)?$/, "/backtest", "Backtesting Studio"],
   [/^(the )?risk( control)?( center| centre| page)?$/, "/risk", "Risk Control Center"],
   [/^(the )?paper( trading)?( terminal)?$/, "/paper", "Paper Trading Terminal"],
-  [/^(the )?command center$|^home$/, "/", "Command Center"],
+  [/^(the )?command center$/, "/command", "Command Center"],
+  [/^(the )?mission control$|^home$|^overview$/, "/", "Mission Control"],
 ];
 
 export function normalize(raw: string): string {

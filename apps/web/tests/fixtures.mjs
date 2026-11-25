@@ -1,4 +1,7 @@
-/* Mocked API responses shared by the e2e and visual tests. Shapes mirror the real endpoints. */
+/* Mocked API responses shared by the e2e and visual tests. Shapes mirror the real endpoints.
+   vega-fixture.json was produced by the real radar.py and integrity.py on a synthetic replay (made-up prices). */
+import { readFileSync } from "node:fs";
+const VEGA = JSON.parse(readFileSync(new URL("./vega-fixture.json", import.meta.url), "utf8"));
 export const SOURCE = { kind: "synthetic_replay", label: "Synthetic replay (made-up prices)", live: false, verified: false, synthetic: true,
   delay_seconds: null, freshness_seconds: null, stale: false, market_open: false, detail: "replayed from stored synthetic 1-minute bars" };
 export function fixtures(state) {
@@ -176,6 +179,15 @@ export function fixtures(state) {
             { symbol: "TCS", strategy: "sma 5m, stop 1.0%", bought: "10:05", buy_price: 3400, sold: "11:40", sell_price: 3410, net_inr: 7.6, charges_inr: 4.3, outcome: "won", why: "the strategy's sell signal came after a gain", also: [] }],
           next_time: [{ pattern: "opening", trades: 1, lost_inr: 20.1, meaning: "Bought in the first 30 minutes, when prices are noisiest.", next_time: "No new entries before 09:46.", decided_by: "experiment H2" }] } } }),
     "/review/live_x/2026-11-20": () => ({ account: "live_x", day: "2026-11-20", state: "none", status: null, review: null }),
+    "/radar": () => VEGA.radar,
+    [`/radar/${VEGA.dossier_symbol}`]: () => VEGA.dossier,
+    "/decisions": () => VEGA.decisions,
+    "/integrity": () => VEGA.integrity,
+    "/benchmarks": () => ({ account: "live_x_v14", sessions: ["2026-11-23", "2026-11-24", "2026-11-25"], start_value: 100000, notes: ["3 session(s): risk-adjusted figures (Sharpe, Sortino) are not meaningful before 20"],
+      plain: "Over 3 session(s) the account returned -2.59% after costs; behind cash, buy and hold watchlist.",
+      series: { "account (after costs)": { return: -0.0259, max_drawdown: -0.0259, sharpe: null, worst_day: -0.0214, daily: [-0.0214, -0.0011, -0.0035] },
+        cash: { return: 0, max_drawdown: 0, sharpe: null, worst_day: 0, daily: [0, 0, 0] },
+        "buy and hold watchlist": { return: 0.0042, max_drawdown: -0.003, sharpe: null, worst_day: -0.003, daily: [0.004, -0.003, 0.0032] } } }),
     "/news": () => ({ items: [{ title: "Test headline", source: "Fixture Wire", link: "https://example.invalid/a", published: "2026-11-20T09:00:00Z" }], errors: {} }),
   };
 }

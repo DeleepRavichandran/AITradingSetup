@@ -1157,7 +1157,7 @@ def create_app() -> FastAPI:
         return _calendar().is_session(now.date()) and 9 * 60 <= now.hour * 60 + now.minute < 15 * 60 + 35
 
     from nseql.screening.daily_review import ReviewQueue
-    reviews = ReviewQueue(st.exp_dir, busy=_review_busy,
+    reviews = ReviewQueue(st.exp_dir, busy=_review_busy, after=lambda: _integrity_enforce() if screening.get("sch") is not None else None,
                           log=lambda m: print(f"[review] {datetime.now():%Y-%m-%d %H:%M:%S} {m}", flush=True))
     app.state.reviews = reviews
 
@@ -1259,6 +1259,7 @@ def create_app() -> FastAPI:
             screening["live"].update(state="running", symbols=len(syms), live_from=live_from, not_found=missing, capital=capital, account=name)
             log(f"running: {len(syms)} symbols, {len(sch.reg):,} configurations, paper account {name} (capital {capital:,.0f}, rules {LIVE_RULES_VERSION}), "
                 f"paper orders from {live_from}" + (f"; not found: {', '.join(missing)}" if missing else ""))
+            _integrity_watch()
             reg.audit("system", "LIVE_SCREENING_STARTED", broker="angelone", symbols=len(syms), live_from=live_from, account=name,
                       rules_version=LIVE_RULES_VERSION, rules=PortfolioRules.live(capital).to_dict())
         except Exception as e:                      # reported, never crashes the API
@@ -1847,6 +1848,45 @@ def create_app() -> FastAPI:
         })
         return clean(out)
 
+    def _radar_args():
+        sch = _need_screening()
+        now = datetime.now(views.IST).replace(tzinfo=None)
+        return sch, screening.get("meta") or {}, screening_positions()["rows"], now, st.kill.engaged, bool(views.market_session(_calendar())["open"])
+
+    _radar_cache: dict = {}
+
+    @api.get("/radar")
+    def radar_view():
+        """Opportunity radar: every watchlist stock's decision state today, ranked by state then recorded expected edge
+        (never by signal count), with portfolio gates, risk usage and feed coverage. Cached per processed minute."""
+        from nseql.screening import radar as R
+        a = _radar_args()
+        key = (id(a[0]), a[0].watermark, a[4], a[5])
+        hit = _radar_cache.get("v")
+        if hit and hit[0] == key and time.time() - hit[1] < 30:
+            return hit[2]
+        v = clean({**R.radar(*a), "data_source": a[0].provenance()})
+        _radar_cache["v"] = (key, time.time(), v)
+        return v
+
+    @api.get("/radar/{symbol}")
+    def radar_dossier(symbol: str):
+        """Decision dossier for one stock: gates, chart read at the last candle, today's signals with recorded reasons and
+        expected edge, orders, and this account's past round trips in the stock."""
+        from nseql.screening import radar as R
+        sch, meta, pos, now, kill, mo = _radar_args()
+        try:
+            return clean(R.dossier(sch, meta, symbol.upper(), pos, now, kill, mo))
+        except KeyError:
+            raise HTTPException(404, f"{symbol} is not on the live watchlist") from None
+
+    @api.get("/decisions")
+    def decisions(limit: int = 40):
+        """Decision stream: fills, refused buys with their recorded reasons, and portfolio events, newest first."""
+        from nseql.screening import radar as R
+        sch = _need_screening()
+        return clean(R.stream(sch, screening.get("meta") or {}, min(max(limit, 1), 200)))
+
     class ApproveTrades(BaseModel):
         extra: int = Field(ge=1, le=20)
         reason: str = Field(min_length=20, max_length=1000)
@@ -1980,6 +2020,70 @@ def create_app() -> FastAPI:
             out["latest_review"] = {"account": latest[0], "day": latest[1], "state": (_rstatus(st.exp_dir, *latest) or {}).get("state"),
                                     "headline": rv.get("headline"), "trade_report": rv.get("trade_report")}
         return clean(out)
+
+    # ------------------------------------------------------------------ evidence integrity (adversarial layer; integrity.py)
+    _ig: dict = {}
+
+    def _integrity_report(max_age: float = 600) -> dict:
+        from nseql.screening import integrity as I
+        from nseql.screening.daily_review import _research_counts
+        hit = _ig.get("rep")
+        if hit and time.time() - hit[0] < max_age:
+            return hit[1]
+        rep = clean(I.report(st.exp_dir, st.data_dir, research=_research_counts(st.exp_dir)))
+        _ig["rep"] = (time.time(), rep)
+        return rep
+
+    def _integrity_enforce() -> list[str]:
+        """Predeclared suspension rules (integrity.SUSPEND): engage the kill switch (reduce-only) for an unacknowledged
+        trigger. Only tightens; only the operator can reset."""
+        from nseql.screening import integrity as I
+        rep = _integrity_report(max_age=0)
+        fired = I.enforce(rep, st.kill, I.Ledger(st.exp_dir))
+        if fired:
+            for s_ in st.sessions.values():
+                s_.halt(st.kill.reason)
+            reg.audit("system", "INTEGRITY_SUSPENSION", triggers=fired)
+            st.notify("risk", f"Integrity suspension: {st.kill.reason}")
+        return fired
+
+    def _integrity_watch() -> None:
+        """While live screening runs: re-check the suspension rules every 15 minutes (and right after each daily review)."""
+        import threading
+
+        def loop():
+            while True:
+                time.sleep(900)
+                try:
+                    _integrity_enforce()
+                except Exception as e:      # noqa: BLE001 - reported, never stops the lab
+                    print(f"[integrity] check failed: {type(e).__name__}: {e}", flush=True)
+        if not _ig.get("watch"):
+            _ig["watch"] = threading.Thread(target=loop, name="integrity", daemon=True)
+            _ig["watch"].start()
+
+    @api.get("/integrity")
+    def integrity_view(refresh: bool = False):
+        """Evidence Integrity: biases detected, contradicting evidence, failed hypotheses, validation, weaknesses,
+        promotion eligibility and suspension rules. Read-only (viewer key works). Cached 10 minutes."""
+        from nseql.screening import integrity as I
+        rep = _integrity_report(max_age=0 if refresh else 600)
+        return {**rep, "ledger_entries": [{k: e[k] for k in ("seq", "at", "kind", "subject", "body")} for e in I.Ledger(st.exp_dir).entries()][-60:]}
+
+    class IntegrityDecision(BaseModel):
+        subject: str = Field(min_length=2, max_length=80)
+        decision: str = Field(pattern="^(approve|reject)$")
+        reason: str = Field(min_length=20, max_length=2000)
+
+    @api.post("/integrity/decision")
+    def integrity_decision(body: IntegrityDecision, request: Request):
+        """The operator's recorded decision on a promotion or a rules change (operator key only: the viewer key cannot write).
+        Recording an approval changes no rule by itself: a rule change still ships as reviewed code."""
+        from nseql.screening import integrity as I
+        d = I.Ledger(st.exp_dir).append("decision", body.subject, {"decision": body.decision, "reason": body.reason.strip(), "by": request.state.role})
+        reg.audit(request.state.role, "INTEGRITY_DECISION", subject=body.subject, decision=body.decision, reason=body.reason, digest=d)
+        _ig.pop("rep", None)
+        return {"recorded": True, "digest": d}
 
     _fa_cache: dict = {}
 
@@ -2209,6 +2313,13 @@ def create_app() -> FastAPI:
             reg.audit(body.operator, "KILL_SWITCH_RESET_DENIED", reason=str(e))
             raise HTTPException(403, str(e)) from None
         reg.audit(body.operator, "KILL_SWITCH_RESET", reason=body.reason)
+        try:                                           # current integrity triggers are acknowledged; a new one engages again
+            from nseql.screening import integrity as I
+            ack = I.acknowledge(I.Ledger(st.exp_dir), _integrity_report(max_age=0), body.operator, body.reason)
+            if ack:
+                reg.audit(body.operator, "INTEGRITY_ACKNOWLEDGED", triggers=ack)
+        except Exception as e:      # noqa: BLE001 - the reset itself has happened
+            print(f"[integrity] acknowledge failed: {type(e).__name__}: {e}", flush=True)
         return {"engaged": False, "note": "halted paper sessions stay halted; start a new session"}
 
     @api.get("/notifications")

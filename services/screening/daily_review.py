@@ -29,7 +29,7 @@ from pathlib import Path
 
 import pandas as pd
 
-STEPS = ("trade_report", "benchmarks", "opportunities", "loss_study", "day_backtest", "monte_carlo", "fundamental_agent")
+STEPS = ("trade_report", "benchmarks", "opportunities", "loss_study", "day_backtest", "monte_carlo", "fundamental_agent", "integrity")
 VERSION = "1.0"
 
 
@@ -113,6 +113,39 @@ def _fundamental(account: Path, day: str, exp_dir: Path) -> dict:
     return d
 
 
+def _integrity(exp_dir: Path, day: str) -> dict:
+    """Evidence integrity (integrity.py): try to disprove the hypotheses; results go to the immutable ledger. Suspension
+    triggers are written in the report; the API process engages the kill switch for them (this step runs in a subprocess)."""
+    from nseql.config import get_settings
+    from nseql.screening import integrity as I
+    rep = I.report(exp_dir, get_settings().data_dir, research=_research_counts(exp_dir))
+    rep["recorded"] = I.record(I.Ledger(exp_dir), rep, day)
+    return rep
+
+
+def _research_counts(exp_dir: Path) -> dict:
+    out: dict = {"refused_rows": None, "trials": None}
+    f = Path(exp_dir) / "research" / "opportunities.sqlite"
+    if f.exists():
+        con = sqlite3.connect(f"file:{f}?mode=ro", uri=True)
+        try:
+            out["refused_rows"] = con.execute("SELECT (SELECT COUNT(*) FROM signal_outcomes WHERE status != 'accepted') + (SELECT COUNT(*) FROM missed)").fetchone()[0]
+        except sqlite3.Error:
+            pass
+        finally:
+            con.close()
+    reg = Path(exp_dir) / "registry.sqlite"
+    if reg.exists():
+        con = sqlite3.connect(f"file:{reg}?mode=ro", uri=True)
+        try:
+            out["trials"] = con.execute("SELECT COUNT(*) FROM runs WHERE partition != 'sealed'").fetchone()[0]
+        except sqlite3.Error:
+            pass
+        finally:
+            con.close()
+    return out
+
+
 def _write(f: Path, obj) -> None:
     tmp = f.with_suffix(".tmp")
     tmp.write_text(json.dumps(obj, indent=2, default=str))
@@ -162,6 +195,9 @@ def run(account: Path, day: str, exp_dir: Path, steps: tuple[str, ...] = STEPS, 
             elif s == "fundamental_agent":
                 results[s] = _fundamental(account, day, exp_dir)
                 _write(out / "fundamental_agent.json", results[s])
+            elif s == "integrity":
+                results[s] = _integrity(exp_dir, day)
+                _write(out / "integrity.json", results[s])
             st["steps"][s] = {"state": "done", "seconds": round(time.time() - t0, 1)}
         except Exception as e:      # noqa: BLE001 - one failing analysis never stops the others
             st["steps"][s] = {"state": "failed", "seconds": round(time.time() - t0, 1), "error": f"{type(e).__name__}: {e}",
@@ -242,6 +278,11 @@ def build(account: str, day: str, r: dict, st: dict) -> dict:
         bits = [f"{k}: {', '.join(v[:6])}{' ...' if len(v) > 6 else ''}" for k, v in lean.items() if v] + ([f"results due: {', '.join(due)}"] if due else [])
         if bits:
             head.append("Stocks: " + "; ".join(bits) + ".")
+    ig = r.get("integrity")
+    if ig:
+        head.append("Evidence integrity: " + ig["verdict_plain"])
+        if ig["suspension"]["active"]:
+            head.append("Suspension rule fired: " + "; ".join(f"{t['rule']} {t['detail']}" for t in ig["suspension"]["active"]) + ".")
     failed = [k for k, v in st["steps"].items() if v["state"] == "failed"]
     if failed:
         head.append("Not available: " + ", ".join(failed).replace("_", " ") + " (the error is shown below).")
@@ -256,6 +297,7 @@ def build(account: str, day: str, r: dict, st: dict) -> dict:
     return {"account": account, "day": day, "version": VERSION, "generated_at": datetime.now().isoformat(timespec="seconds"),
             "headline": head, "steps": st["steps"], "loss_study": compact_ls, "day_backtest": compact_bt, "monte_carlo": mc,
             "fundamental_agent": r.get("fundamental_agent"), "trade_report": tr, "benchmarks": bm, "opportunities": op,
+            "integrity": ({k: r["integrity"][k] for k in ("verdict", "verdict_plain", "weaknesses", "suspension", "recorded")} if r.get("integrity") else None),
             "caution": "One day is one sample. These findings are ideas to test on later days, not proof; no rule is changed by this review."}
 
 
@@ -266,10 +308,11 @@ class ReviewQueue:
     runner starts `python -m nseql.cli daily-review` so a crash or a memory spike in an analysis cannot touch the lab.
     """
 
-    def __init__(self, exp_dir: Path, busy=lambda: False, runner=None, log=print, poll_s: float = 60.0):
+    def __init__(self, exp_dir: Path, busy=lambda: False, runner=None, log=print, poll_s: float = 60.0, after=None):
         import threading
         self.exp_dir, self.busy, self.log, self.poll_s = Path(exp_dir), busy, log, poll_s
         self.runner = runner or self._subprocess
+        self.after = after                       # called after each review (e.g. the integrity suspension check)
         self.pending: list[tuple[str, str]] = []
         self.current: tuple[str, str] | None = None
         self._cv = threading.Condition()
@@ -345,6 +388,11 @@ class ReviewQueue:
             finally:
                 with self._cv:
                     self.current = None
+            if self.after is not None:
+                try:
+                    self.after()
+                except Exception as e:      # noqa: BLE001
+                    self.log(f"after-review check failed: {type(e).__name__}: {e}")
 
     def _subprocess(self, account: str, day: str) -> bool:
         import os

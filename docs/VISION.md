@@ -43,6 +43,8 @@ UNIVERSE (what is tradable, liquid, allowed) ──► SETUPS per horizon (few, 
 - `services/screening/benchmarks.py`: the account against cash, NIFTY 50, buy-and-hold and the trend rule (`GET /api/benchmarks`).
 - `services/screening/opportunities.py`: the gate review per refusal reason, plus missed moves (`GET /api/research/opportunities`).
 - Both are steps of the daily review and appear on the Daily Review page.
+- `services/screening/integrity.py`: the adversarial evidence-integrity layer (docs/INTEGRITY.md). It covers pre-registered hypotheses, a hash-chained ledger, bias audit, placebo, stress, drift, promotion gates and predeclared suspension. It appears on the dashboard as Research → Evidence Integrity.
+- `services/screening/radar.py`: the opportunity radar, decision dossier and decision stream for the VEGA dashboard (`/api/radar`, `/api/radar/{symbol}`, `/api/decisions`). They show recorded decisions only.
 
 ## Rules of the cycle
 1. **Every decision is recorded**, including rejected signals, each with its reason. Their later outcomes are

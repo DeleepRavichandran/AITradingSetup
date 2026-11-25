@@ -2,7 +2,21 @@
 import { useState } from "react";
 import { Badge, Banner, Card, DataTable, Err, KV, Loading, Page } from "@/components/ui";
 import { AccountKinds } from "@/components/kinds";
+import { Usage } from "@/components/vega";
 import { inr, post, useApi } from "@/lib/api";
+
+function LiveUsage() {
+  const rd = useApi<any>("/radar", 30000);
+  const l = rd.data?.limits;
+  return (
+    <Card title="Live paper account: limits in use">
+      {rd.error ? <p className="dim" style={{ margin: 0 }}>No live paper account is running ({rd.error}).</p> : <>
+        <Usage usage={l?.usage} />
+        <p className="ink2" style={{ margin: "10px 0 0", fontSize: 13 }}>{l?.blocked?.length ? `New buys blocked: ${l.blocked.join("; ")}.` : "No portfolio-wide block on new buys."} These limits
+          are the operator's; no AI agent can change them, and the integrity layer can only tighten (suspend), never loosen.</p></>}
+    </Card>
+  );
+}
 
 function TradeLimit() {
   const a = useApi<any>("/risk/extra-trades", 15000);
@@ -43,6 +57,7 @@ export default function Risk() {
     <Page title="Risk Control" sub="The kill switch stops every paper session and blocks every new order, paper or live. Engaging it is immediate; clearing it needs a named human and a reason, and is written to the audit log.">
       <AccountKinds here="screening" />
       <Err e={r.error || err} /><Loading on={r.loading} />
+      <div style={{ marginBottom: 14 }}><LiveUsage /></div>
       {d && <>
         <Banner tone={d.kill_switch.engaged ? "crit" : "good"}>{d.kill_switch.engaged ? <><b>Kill switch ENGAGED.</b> {d.kill_switch.reason}</> : "Kill switch clear."}</Banner>
         <div className="grid g2">

@@ -1,190 +1,141 @@
 "use client";
-/* Command Center: the state of the lab, from /api/command-center. Every panel ends in an evidence footer
-   (source, period, update time, data quality). Nothing here is estimated in the browser. */
+/* Mission Control (VEGA overview). One bot, selective decisions, evidence before execution.
+   Every figure is from the API: /platform/status, /today, /radar, /decisions, /benchmarks, /integrity, /market/pulse.
+   Paper (simulated) trading only; real-money orders are disabled and cannot be enabled from here. */
 import Link from "next/link";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { LineChart } from "@/components/charts";
-import { MetricTiles, runCols } from "@/components/common";
-import { Badge, Banner, DataTable, Err, Funnel, Metric, Panel, Prov, Skeleton, Spark, StatusGrid, Unavailable } from "@/components/ui";
-import { inr, num, post, useApi, useJob } from "@/lib/api";
+import { sessionState } from "@/components/session";
+import { Dossier, Filter, RadarTable, Stream, Tag, Usage, signedInr, signedPct } from "@/components/vega";
+import { inr, pct, useApi } from "@/lib/api";
 
+function Curve({ today, bench }: { today: any; bench: any }) {
+  const [period, setPeriod] = useState<"session" | "all">("session");
+  const curve = today?.charts?.equity_curve || [];
+  const b = bench?.series;
+  const all = useMemo(() => {
+    if (!b || !bench?.sessions?.length) return null;
+    const keys = ["account (after costs)", "cash", "NIFTY 50", "buy and hold watchlist"].filter((k) => b[k]);
+    const cum = (d: number[]) => { let v = 1; return d.map((r) => (v *= 1 + r) - 1); };
+    return { x: bench.sessions, series: keys.map((k) => ({ name: k === "account (after costs)" ? "bot (after costs)" : k, values: cum(b[k].daily) })) };
+  }, [b, bench]);
+  const first = curve[0]?.v, last = curve[curve.length - 1]?.v;
+  const base = today?.charts?.day_open_value || first;
+  return (
+    <section className="vp" aria-labelledby="perf-h" data-testid="perf">
+      <div className="h"><div><h2 id="perf-h">Account performance</h2><div className="sub2">Net of simulated costs · next to cash and the market</div></div>
+        <div className="vseg" role="group" aria-label="Period">
+          <button aria-pressed={period === "session"} onClick={() => setPeriod("session")}>Session</button>
+          <button aria-pressed={period === "all"} onClick={() => setPeriod("all")}>Since start</button>
+        </div></div>
+      <div className="b">
+        {period === "session" ? (curve.length > 1 ? <>
+          <div style={{ display: "flex", gap: 12, alignItems: "baseline", marginBottom: 4 }}>
+            <span style={{ fontSize: 20, fontWeight: 650, letterSpacing: "-.02em" }}>{inr(last)}</span>
+            <span className={last >= base ? "up" : "down"} style={{ fontSize: 12.5 }}>{signedPct(base ? last / base - 1 : null)} on the session</span></div>
+          <LineChart x={curve.map((c: any) => c.t)} series={[{ name: "bot ₹", values: curve.map((c: any) => c.v) }, { name: "cash (session open)", values: curve.map(() => base) }]}
+            height={210} fmt={(v) => inr(v)} />
+        </> : <p className="empty">The session line appears after the first minutes of trading.</p>)
+          : all ? <LineChart x={all.x} series={all.series} height={210} fmt={(v) => signedPct(v, 1)} zero />
+          : <p className="empty">No benchmark series yet: it needs at least one closed session.</p>}
+      </div>
+      <div className="ft"><span>Source: paper ledger{period === "all" && bench?.notes?.length ? ` · ${bench.notes[0]}` : ""}</span>
+        <span>{period === "session" ? (today?.charts?.session || "") : bench?.plain || ""}</span></div>
+    </section>
+  );
+}
 
-export default function CommandCenter() {
-  const cc = useApi<any>("/command-center", 15000);
-  const sys = useApi<any>("/system", 30000);
-  const runs = useApi<any[]>("/runs?limit=8", 30000);
-  const jobs = useApi<any[]>("/jobs", 5000);
-  const news = useApi<any>("/news/recent?limit=12", 60000);
-  const pulse = useApi<any>("/market/pulse?limit=1", 60000);
-  const [jobId, setJobId] = useState<string | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const { job, running } = useJob(jobId);
-  const active = jobs.data?.find((j) => j.kind === "research" && j.status === "running");
-  const start = async () => {
-    setErr(null);
-    try { setJobId((await post("/research/run", { max_iterations: 3, max_sealed_evaluations: 1 })).id); } catch (e: any) { setErr(e.message); }
-  };
-  const d = cc.data, p = d?.platform, s = d?.strategies?.screening, r = d?.strategies?.research, ai = d?.ai, pf = d?.portfolio;
-  const ds = p?.data_source;
-  const ready = p?.readiness?.filter((m: any) => m.status === "ready").length;
-  const last = runs.data?.[0];
+export default function MissionControl() {
+  const ps = useApi<any>("/platform/status", 15000);
+  const t = useApi<any>("/today", 15000);
+  const rd = useApi<any>("/radar", 20000);
+  const dc = useApi<any>("/decisions?limit=30", 20000);
+  const bm = useApi<any>("/benchmarks", 300000);
+  const ig = useApi<any>("/integrity", 300000);
+  const pu = useApi<any>("/market/pulse?limit=1", 60000);
+  const [filter, setFilter] = useState("all");
+  const [open, setOpen] = useState<string | null>(null);
+  const d = t.data, a = d?.account, s = ps.data, r = rd.data;
+  const st = sessionState(d, t.error);
+  const pulse = pu.data?.pulses?.[0];
+  const cov = r?.coverage;
+  const lim = r?.limits;
+  const unreal = (d?.holdings || []).reduce((x: number, h: any) => x + (h.unrealised_inr || 0), 0);
+  const loss = lim?.usage?.find((u: any) => u.name === "Daily loss");
+  const trades = lim?.usage?.find((u: any) => u.name === "New trades today");
+  const rows = (r?.rows || []).filter((x: any) => filter === "all" || x.state === filter);
+  const blocked: string[] = lim?.blocked || [];
+  const weakest = ig.data?.weaknesses?.[0];
+
   return (
     <>
-      <div className="top"><h1>Command Center</h1><span className="sp" />
-        {d && !d.platform.research_service.available
-          ? <button disabled title={d.platform.research_service.detail}>Research needs Docker (Linux sandbox)</button>
-          : <button className="primary" onClick={start} disabled={!!active || running}>{active || running ? "Research running…" : "Run research (3 hypotheses)"}</button>}</div>
-      <p className="sub">What the lab is doing now, how far each number can be trusted, and what needs attention. Simulated orders only.</p>
-      <Err e={cc.error || err} />
-      {!d && !cc.error && <Skeleton lines={4} />}
-      {sys.data && !sys.data.auth_required && <Banner>Insecure local mode: the API answers this machine only, without a token.</Banner>}
-      {p?.risk.kill_switch.engaged && <Banner tone="crit"><b>Kill switch engaged:</b> {p.risk.kill_switch.reason}. <Link href="/risk">Risk Control</Link></Banner>}
-      {d && <>
-        <div className="hero">
-          <Panel title="Lab state" id="state" prov={<Prov source="runtime state" updated={d.generated_at} data={ds} />}>
-            <p className="lede" data-testid="lede">
-              {s ? <>Screening <em>{s.registered.toLocaleString("en-IN")} configurations</em> of {s.rules} rules on <em>{ds?.label?.toLowerCase()}</em>. </>
-                : <>No screening run yet. </>}
-              {pf ? <>Paper portfolio {inr(pf.equity_inr)}, {pf.return_pct >= 0 ? "+" : ""}{num(pf.return_pct, 2)}% since start. </> : null}
-              {ready != null && <>{ready} of {p.readiness.length} modules ready.</>}
-            </p>
-            <div className="metrics" style={{ marginTop: 16 }}>
-              <Metric k="Market" v={p.market.open ? "Open" : "Closed"} h={`${p.market.state} · IST ${p.market.ist_time.slice(11)}`} sm />
-              <Metric k="Evaluated last cycle" v={s ? s.evaluated_last_cycle.toLocaleString("en-IN") : "—"} h={s ? `of ${s.registered.toLocaleString("en-IN")} registered` : "no run"} sm />
-              <Metric k="Cycle latency p99" v={s?.latency_ms ? `${num(s.latency_ms.p99, 1)} ms` : "—"} h={s?.throughput_configs_per_s ? `${num(s.throughput_configs_per_s, 0)} evaluations/s` : ""} sm />
-              <Metric k="Paper result after costs" v={pf ? inr(pf.equity_inr - pf.starting_capital_inr) : "—"} tone={pf ? (pf.equity_inr >= pf.starting_capital_inr ? "up" : "down") : undefined}
-                h={pf?.drawdown ? `max drawdown ${num(pf.drawdown.max_pct, 2)}%` : ""} sm />
-            </div>
-            {pf && pf.equity_curve.values.length > 1 && <div style={{ marginTop: 14 }}>
-              <div className="dim" style={{ fontSize: 13 }}>Paper equity, {pf.equity_curve.values.length} samples across the run</div>
-              <Spark values={pf.equity_curve.values} label="paper equity across the run" />
-            </div>}
-          </Panel>
-          <Panel title="Platform status" id="platform" prov={<Prov source="API runtime, trading calendar, sandbox probe" updated={d.generated_at} />}>
-            <StatusGrid items={[
-              { name: "Market data", status: ds?.stale ? "degraded" : ds?.verified ? "ready" : ds?.live ? "unverified" : ds?.kind === "none" ? "idle" : "ready", detail: ds?.label },
-              { name: "Market session", status: p.market.open ? "open" : p.market.state, detail: `holiday calendar ${p.market.holiday_calendar}` },
-              { name: "Broker (Angel One)", status: p.broker.angel_one?.status || "not configured", detail: p.broker.angel_one?.detail },
-              { name: "Screening worker", status: p.workers.screening_loop.startsWith("running") ? "running" : "idle", detail: p.workers.screening_loop },
-              { name: "Research sandbox", status: p.research_service.available ? "ready" : "blocked", detail: p.research_service.detail },
-              { name: "Paper trading", status: p.paper_trading.screening_paper_orders === "on" ? "ready" : "disabled", detail: `${p.paper_trading.sessions} paper session(s); screening orders ${p.paper_trading.screening_paper_orders}` },
-              { name: "Risk", status: p.risk.kill_switch.engaged ? "engaged" : p.risk.daily_loss_halt ? "degraded" : "ready", detail: p.risk.daily_loss_halt ? "daily loss limit hit: entries halted" : "kill switch clear; limits active" },
-              { name: "Live orders", status: "disabled", detail: p.broker.live_orders },
-            ]} />
-            {p.workers.jobs_failed_recently.length > 0 && <p className="down" style={{ fontSize: 13, marginTop: 10 }}>Failed jobs: {p.workers.jobs_failed_recently.map((j: any) => `${j.kind} (${j.error})`).join("; ")}</p>}
-          </Panel>
+      <div className="vhead">
+        <div><h1>Mission Control</h1><p>One bot. Selective decisions. Evidence before execution.</p></div>
+        <div className="row" style={{ alignItems: "center" }}>
+          <Tag tone={st.tone === "good" ? "ok" : st.tone === "crit" ? "no" : st.tone === "warn" ? "wait" : "info"} testid="mc-state">{st.label}</Tag>
         </div>
+      </div>
 
-        {(active || jobId) && <div style={{ marginBottom: 14 }}><Panel title="Research run in progress">
-          <p><Badge s={job?.status || "running"} /> {job?.error && <span className="down">{job.error}</span>}</p>
-          <DataTable maxHeight={180} cols={[{ key: "sender" }, { key: "recipient" }, { key: "task" }, { key: "hypothesis_id", label: "hypothesis" }]} rows={[...((job || active)?.progress || [])].reverse()} empty="Waiting for the first agent message…" />
-          {job?.status === "done" && <p style={{ marginTop: 8 }}>Finished: {job.result.results.length} hypotheses, {job.result.candidates.length} candidate(s). <Link href="/factory">Open the Strategy Factory</Link></p>}
-        </Panel></div>}
+      <div className="mstrip" data-testid="market-strip">
+        <div><div className="l">Session</div><strong className={s?.market?.open ? "up" : ""}>{s ? `Market ${s.market.state}` : "—"}</strong>
+          <span className="s">{s?.market?.ist_time ? String(s.market.ist_time).slice(11, 16) + " IST" : ""}</span></div>
+        <div><div className="l">Bot</div><strong>{d?.bot?.state === "ok" ? "Working" : d?.bot?.state || "—"}</strong><span className="s">{hhmmOf(s?.last_candle)}</span></div>
+        <div><div className="l">Watchlist breadth</div>{pulse ? <strong><span className="up">{pulse.breadth.up} up</span><span className="down">{pulse.breadth.down} down</span></strong> : <strong className="dim">no pulse yet</strong>}
+          <span className="s">{pulse ? `of ${pulse.breadth.symbols}` : ""}</span></div>
+        <div><div className="l">Leaders</div><strong>{pulse?.top_gainers?.[0] ? `${pulse.top_gainers[0][0]} ${pulse.top_gainers[0][1] >= 0 ? "+" : ""}${pulse.top_gainers[0][1].toFixed(2)}%` : "—"}</strong>
+          <span className="s">{pulse?.top_losers?.[0] ? `${pulse.top_losers[0][0]} ${pulse.top_losers[0][1].toFixed(2)}%` : ""}</span></div>
+        <div><div className="l">Data coverage</div><strong className={cov?.symbols_with_data != null && cov.symbols_with_data < cov.symbols_expected ? "" : "up"} data-testid="coverage">
+          {cov?.symbols_with_data != null ? `${cov.symbols_with_data}/${cov.symbols_expected} with data` : "—"}</strong>
+          <span className="s">{cov?.minutes ? `${cov.minutes} min · ${cov.catch_up_minutes} catch-up` : ""}</span></div>
+      </div>
 
-        <div className="grid g2" style={{ marginBottom: 14 }}>
-          <Panel title="Strategy intelligence" id="strategy" right={<Link href="/universe">Strategy Universe</Link>}
-            prov={s ? <Prov source="screening registry and cycle log" period={s.provenance.period} data={s.provenance.data} /> : <Prov source="research registry" />}>
-            {s ? <>
-              <div className="metrics">
-                <Metric k="Registered" v={s.registered.toLocaleString("en-IN")} h={`${s.rules} rules · ${s.families} families`} sm />
-                <Metric k="Qualified" v={s.by_stage.qualified} h={`${s.by_stage.gated} proven negative`} sm />
-                <Metric k="By horizon" v={`${s.by_horizon.intraday ?? 0} / ${s.by_horizon.swing ?? 0}`} h="intraday / swing" sm />
-                <Metric k="Asset class" v="Cash equity" h="the minute loop trades NSE equities only" sm />
-              </div>
-              <p className="dim" style={{ fontSize: 13, margin: "10px 0" }}>{s.note}</p>
-              <h3>From registered to qualified</h3>
-              <Funnel steps={s.funnel} />
-              <h3>Cycle latency, last {s.latency_ms?.series.length ?? 0} minutes</h3>
-              {s.latency_ms ? <Spark values={s.latency_ms.series} label={`cycle latency, p50 ${num(s.latency_ms.p50, 1)} ms, p99 ${num(s.latency_ms.p99, 1)} ms`} /> : <span className="dim">no cycles</span>}
-            </> : <Unavailable title="No screening run yet">Start a replay on the <Link href="/screening">Intraday &amp; Swing Lab</Link>, or set up Angel One for live 1-minute data.</Unavailable>}
-            {r && <><h3>Research pipeline</h3>
-              <p style={{ fontSize: 14, margin: 0 }}>{r.backtests} backtests recorded · hypotheses {Object.entries(r.hypotheses_by_status).map(([k, v]) => `${String(k).replaceAll("_", " ")} ${v}`).join(" · ") || "none yet"}</p></>}
-          </Panel>
+      {blocked.length > 0 && <div className="banner" role="status" data-testid="blocked">New paper buys are blocked: <b>{blocked.join("; ")}</b>. Protective exits remain available.</div>}
 
-          <Panel title="AI intelligence" id="ai" right={<Link href="/learning">AI Research Brain</Link>} prov={<Prov source="research registry and Learning Brain memory" data={undefined} note="research runs use the datasets recorded with each run" />}>
-            <div className="metrics">
-              <Metric k="Learning verdict" v={ai.learning_verdict === "out-of-sample improvement shown" ? "Improving" : "Not shown"} h={ai.learning_verdict} sm />
-              <Metric k="Active experiments" v={ai.active_experiments.length} sm />
-              <Metric k="Memory episodes" v={ai.memory.episodes ?? "—"} sm />
-              <Metric k="Policy champion" v={ai.champion || "—"} h={`${ai.policy_versions.length} version(s) recorded`} sm />
-            </div>
-            <h3>Discoveries (passed audit and sealed check)</h3>
-            {ai.discoveries.length ? <ul className="list">{ai.discoveries.map((h: any) => <li key={h.id}><Link href={`/factory?h=${h.id}`} className="mono">{h.id}</Link> <span className="ink2">{h.family}</span> <Badge s={h.status} /></li>)}</ul>
-              : <p className="dim" style={{ margin: 0 }}>None yet.</p>}
-            <h3>Failed hypotheses</h3>
-            {ai.failed_hypotheses.length ? <ul className="list">{ai.failed_hypotheses.map((h: any) => <li key={h.id}><span className="mono">{h.id}</span> <Badge s={h.status} /><div className="d">{h.reason}</div></li>)}</ul>
-              : <p className="dim" style={{ margin: 0 }}>None recorded.</p>}
-            <h3>Latest lessons</h3>
-            {ai.lessons.length ? <ul className="list">{ai.lessons.slice(0, 4).map((l: any, i: number) => <li key={i}><Badge s={l.outcome} /> <span className="t">[{l.family}] {l.text}</span>{l.next_step && <div className="d">Next: {l.next_step}</div>}</li>)}</ul>
-              : <p className="dim" style={{ margin: 0 }}>No lessons yet: run research.</p>}
-          </Panel>
+      <div className="vmetrics">
+        <div className="vm"><div className="l">Paper account value <span className="dim">INR</span></div><div className="n" data-testid="mc-value">{a ? inr(a.value_now) : "—"}</div>
+          <div className="f"><span className={a && a.today >= 0 ? "up" : "down"}>{a ? `${signedInr(a.today)} today` : ""}</span>{a?.return_since_start != null && <span>{signedPct(a.return_since_start)} since inception</span>}</div></div>
+        <div className="vm"><div className="l">Session P&amp;L</div><div className={`n ${a && a.today >= 0 ? "up" : "down"}`}>{a?.day_open_equity ? signedPct(a.today / a.day_open_equity) : "—"}</div>
+          <div className="f">{a ? `${signedInr(a.today_realised)} realised · ${signedInr(unreal)} open · ${inr(a.today_charges)} charges` : ""}</div></div>
+        <div className="vm"><div className="l">Capital deployed</div><div className="n">{a?.exposure != null ? <>{(a.exposure * 100).toFixed(1)}<small>%</small></> : "—"}</div>
+          <div className="f">{a ? `${inr(a.cash_free)} free cash` : ""}</div></div>
+        <div className="vm"><div className="l">Daily loss budget</div><div className="n">{loss ? <>{pct(loss.used, 1)}<small> / {pct(loss.limit, 0)}</small></> : "—"}</div>
+          <div className="f">{trades ? `${trades.used} of ${trades.limit} new trades used` : a?.halted_today ? "limit reached: no new buys today" : "within limit"}</div></div>
+      </div>
+
+      <div className="vwork">
+        <div className="vcol">
+          <Curve today={d} bench={bm.data} />
+          <section className="vp" aria-labelledby="radar-h">
+            <div className="h"><div><h2 id="radar-h">Opportunity radar</h2><div className="sub2">Ranked by decision, then expected edge after costs recorded at the time; not by signal count</div></div>
+              <Filter value={filter} onChange={setFilter} counts={r?.counts} /></div>
+            {rd.error ? <p className="empty">Radar unavailable: {rd.error}</p> : !r ? <p className="empty">Loading…</p> : <RadarTable rows={rows} onOpen={setOpen} limit={8} />}
+            <div className="ft"><span>Select a row for its decision dossier.</span><Link href="/radar">Full radar</Link></div>
+          </section>
         </div>
-
-        <div className="grid g21" style={{ marginBottom: 14 }}>
-          <Panel title="Portfolio intelligence" id="portfolio" right={<Link href="/screening">Paper ledger</Link>}
-            prov={pf ? <Prov source={pf.provenance.source} period={pf.provenance.period} data={pf.provenance.data} /> : undefined}>
-            {pf ? <>
-              <div className="metrics">
-                <Metric k="Equity" v={inr(pf.equity_inr)} h={`from ${inr(pf.starting_capital_inr)}`} />
-                <Metric k="Available" v={inr(pf.available_inr)} h={`${inr(pf.reserved_inr)} reserved`} sm />
-                <Metric k="Deployed" v={inr(pf.deployed_inr)} h={`${num(pf.utilisation_pct, 1)}% of equity`} sm />
-                <Metric k="Open positions" v={pf.open_positions} h={pf.rules ? `limit ${pf.rules.max_positions}` : ""} sm />
-                <Metric k="Drawdown" v={pf.drawdown ? `${num(pf.drawdown.current_pct, 2)}%` : "—"} h={pf.drawdown ? `max ${num(pf.drawdown.max_pct, 2)}%` : ""} sm />
-              </div>
-              <h3>Equity, last {pf.equity_curve.values.length} samples</h3>
-              <LineChart x={pf.equity_curve.values.map((_: any, i: number) => String(i))} series={[{ name: "equity ₹", values: pf.equity_curve.values }]} height={170} />
-              <p className="dim" style={{ fontSize: 13, margin: "6px 0 0" }}>Open positions by rule family: {Object.entries(pf.open_by_family).map(([k, v]) => `${k} ${v}`).join(" · ") || "none"} ·
-                largest holdings: {pf.top_symbols.map((x: any) => `${x.symbol} ${num(x.pct_equity * 100, 1)}%`).join(", ") || "none"}{pf.halted_today ? " · daily loss limit reached" : ""}</p>
-            </> : <Unavailable title="No paper portfolio yet">The shared paper portfolio starts with the first screening run.</Unavailable>}
-          </Panel>
-          <Panel title="Module readiness" id="ready" prov={<Prov source="/api/readiness logic, evaluated now" updated={d.generated_at} />}>
-            <StatusGrid items={p.readiness.map((m: any) => ({ name: m.module, status: m.status, detail: m.detail }))} />
-          </Panel>
+        <div className="vcol">
+          <section className="vp" aria-labelledby="stream-h">
+            <div className="h"><div><h2 id="stream-h">Decision stream</h2><div className="sub2">What the bot did and why, as recorded</div></div></div>
+            <div className={`statusline ${blocked.length ? "warn" : ""}`}><i /><b>{blocked.length ? `New buys blocked · ${blocked[0]}` : d?.bot?.message || "Waiting for the lab…"}</b></div>
+            <Stream events={dc.data?.events || []} />
+            <div className="ft"><span>{dc.data?.day || ""}</span><Link href="/screening">Every decision in the ledger</Link></div>
+          </section>
+          <section className="vp" aria-labelledby="risk-h">
+            <div className="h"><div><h2 id="risk-h">Risk &amp; execution</h2><div className="sub2">The account's approved limits; agents cannot change them</div></div>
+              <Tag tone={blocked.length ? "wait" : "ok"}>{blocked.length ? "Buys blocked" : "Clear"}</Tag></div>
+            <div className="b"><Usage usage={lim?.usage} /></div>
+            <div className="ft"><span>Real-money order routing <b className={s?.live_trading_enabled ? "down" : ""}>{s?.live_trading_enabled ? "FLAG ON" : "disabled"}</b></span><Link href="/risk">Risk detail</Link></div>
+          </section>
+          <div className="insight" data-testid="research-brief"><span className="g" aria-hidden="true">✳</span><div>
+            <div className="l">Evidence integrity</div>
+            <p><b>{ig.data ? ig.data.verdict_plain : ig.error ? "Integrity report unavailable." : "Checking the evidence…"}</b>{weakest ? ` Weakest point: ${weakest}.` : ""}</p>
+            <Link href="/integrity">Open the evidence lab</Link></div></div>
         </div>
-
-        <div className="grid g21" style={{ marginBottom: 14 }} id="news">
-          <Panel title="News watch" hint="headlines tagged to your stocks and themes; not used for trading"
-            prov={news.data && <Prov source="public RSS feeds, polled every 5 minutes" updated={news.data.status?.last_news_poll?.at}
-              note={`${news.data.status?.headlines_stored ?? 0} stored since ${String(news.data.status?.since || "—").slice(0, 16).replace("T", " ")}${Object.keys(news.data.status?.errors || {}).length ? ` · unavailable: ${Object.keys(news.data.status.errors).join(", ")}` : ""}`} />}>
-            {!news.data?.status?.running && <Unavailable title="News watcher off">It starts with live screening (or set NSEQL_NEWS_WATCH=true).</Unavailable>}
-            {news.data?.items?.length ? <ul className="list">{news.data.items.map((h: any) => <li key={h.id}>
-              <a href={h.link} target="_blank" rel="noreferrer" className="t" style={{ color: "var(--ink)" }}>{h.title}</a>
-              <div className="d">{String(h.first_seen).slice(11, 16)} · {h.source}{h.symbols.length ? <> · <span className="data">{h.symbols.join(", ")}</span></> : null}{h.themes.length ? ` · ${h.themes.join(", ")}` : ""}</div></li>)}</ul>
-              : news.data?.status?.running ? <p className="dim" style={{ margin: 0 }}>No headlines stored yet; the first poll runs within a minute of start.</p> : null}
-          </Panel>
-          <Panel title="Market pulse" hint="every 15 minutes while the market is open" prov={pulse.data?.pulses?.[0] && <Prov source="screening loop's own bars and paper ledger" updated={pulse.data.pulses[0].at} note={pulse.data.pulses[0].data} />}>
-            {pulse.data?.pulses?.[0] ? (() => { const x = pulse.data.pulses[0]; return <div className="stack">
-              <div className="metrics">
-                <Metric sm k="Breadth" v={`${x.breadth.up} ↑ / ${x.breadth.down} ↓`} h={`${x.breadth.symbols} symbols since the open`} />
-                <Metric sm k="Paper equity" v={inr(x.paper_equity_inr)} h={`${x.open_positions} open · realised ${inr(x.realised_today_inr)}`} />
-              </div>
-              <p className="ink2" style={{ fontSize: 14, margin: 0 }}>Gainers: {x.top_gainers.map((m: any) => `${m[0]} ${m[1] > 0 ? "+" : ""}${num(m[1], 2)}%`).join(", ") || "—"}<br />
-                Losers: {x.top_losers.map((m: any) => `${m[0]} ${num(m[1], 2)}%`).join(", ") || "—"}<br />
-                BUY signals by family: {Object.entries(x.buy_signals_by_family).map(([k, v]) => `${k} ${v}`).join(" · ") || "none"}<br />
-                News since the open: {x.news_since_open.headlines} headlines{Object.keys(x.news_since_open.by_symbol).length ? ` · ${Object.entries(x.news_since_open.by_symbol).slice(0, 4).map(([k, v]) => `${k} ${v}`).join(", ")}` : ""}</p>
-            </div>; })() : <p className="dim" style={{ margin: 0 }}>No pulse yet: the first one is taken during market hours once live screening runs.</p>}
-          </Panel>
-        </div>
-
-        <div className="grid g21" style={{ marginBottom: 14 }}>
-          <Panel title="Latest backtests" right={<Link href="/compare">compare</Link>} prov={<Prov source="research registry" note="data per run: see the data column" />}>
-            <DataTable cols={runCols().filter((c) => !["kind", "created_at"].includes(c.key))} rows={runs.data} maxHeight={300} empty="No backtests yet. Run one in the Backtesting Studio." />
-          </Panel>
-          <Panel title="Policy versions" hint="champion vs challengers" prov={<Prov source="Learning Brain version log" />}>
-            {ai.policy_versions.length ? <ul className="list">{ai.policy_versions.map((v: any) => <li key={v.id}><span className="mono">{v.id}</span> <Badge s={v.status} tone={v.status === "champion" ? "good" : v.status === "rejected" || v.status === "rolled_back" ? "crit" : "info"} />
-              <div className="d">{v.origin}{v.forward_epochs ? ` · ${v.forward_epochs} forward epoch(s)` : ""}{v.reason ? ` · ${v.reason}` : ""}</div></li>)}</ul>
-              : <p className="dim" style={{ margin: 0 }}>No research-policy versions yet.</p>}
-          </Panel>
-        </div>
-
-        {last && <div style={{ marginBottom: 14 }}><Panel title={<>Most recent backtest · <Link href={`/backtest?run=${last.run_id}`} className="mono">{last.run_id}</Link> · {last.strategy}</>}
-          prov={<Prov source="backtest run record" period={[last.period_start, last.period_end]} data={last.synthetic ? { synthetic: true } : { kind: "replay" }} />}>
-          <MetricTiles m={last.metrics} /></Panel></div>}
-
-        {sys.data && <Panel title="Capability status" hint="reported by the backend" prov={<Prov source="backend capability list" note="see docs/AUDIT_V6.md for the full matrix" />}>
-          <DataTable maxHeight={420} wrap cols={[{ key: "feature" }, { key: "status", f: (x) => <Badge s={x.status} /> }, { key: "note" }]} rows={sys.data.features} />
-        </Panel>}
-      </>}
+      </div>
+      <div className="foot2"><span>Source: this lab's paper ledger and research records. {d?.data_source?.label ? `Prices: ${d.data_source.label}.` : ""}</span>
+        <span>Simulated orders only · no real broker orders · not investment advice</span></div>
+      <Dossier symbol={open} onClose={() => setOpen(null)} />
     </>
   );
 }
+
+const hhmmOf = (ts?: string | null) => (ts ? `last candle ${String(ts).slice(11, 16)}` : "");

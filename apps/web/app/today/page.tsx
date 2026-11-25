@@ -95,7 +95,7 @@ export default function Today() {
             <SessionPanel s={d.session} /></details>
         </section>}
 
-        <p className="dim" style={{ fontSize: 13 }}>Want the details? <Link href="/screening">every decision and fill</Link> · <Link href="/universe">which strategies work</Link> · <Link href="/">Command Center</Link> · ask Vega with Ctrl K.
+        <p className="dim" style={{ fontSize: 13 }}>Want the details? <Link href="/screening">every decision and fill</Link> · <Link href="/universe">which strategies work</Link> · <Link href="/command">Command Center</Link> · ask Vega with Ctrl K.
           Real-money orders are switched off.</p>
       </>}
     </div>

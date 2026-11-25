@@ -7,6 +7,7 @@
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { chromium } from "playwright";
 import { fixtures, resolve, SOURCE } from "./fixtures.mjs";
@@ -197,7 +198,7 @@ describe("Command Deck safety", () => {
     await page.getByTestId("talk").click();                       // mic level meter opens a stream
     await page.waitForFunction(() => window.__tracks.length >= 2);
     await page.getByRole("link", { name: "Command Center" }).click();  // client-side navigation unmounts the Vega page
-    await page.waitForURL(BASE + "/");
+    await page.waitForURL(BASE + "/command");
     await page.waitForFunction(() => window.__tracks.every((t) => t.readyState === "ended"));
     assert.ok(await page.evaluate(() => window.__rec.aborted) >= 1, "speech recognition aborted");
     await ctx.close();
@@ -205,7 +206,7 @@ describe("Command Deck safety", () => {
 });
 
 describe("Accessibility and layout", () => {
-  for (const path of ["/", "/today", "/hud", "/contest", "/deck", "/screening", "/universe", "/planner", "/funds"]) for (const colorScheme of ["light", "dark"]) {
+  for (const path of ["/", "/radar", "/book", "/integrity", "/today", "/hud", "/contest", "/deck", "/screening", "/universe", "/planner", "/funds"]) for (const colorScheme of ["light", "dark"]) {
     test(`${path} (${colorScheme}): no serious or critical axe violations`, async () => {
       const { page, ctx } = await open(path, { colorScheme });
       await page.waitForLoadState("networkidle");
@@ -216,7 +217,7 @@ describe("Accessibility and layout", () => {
       await ctx.close();
     });
   }
-  for (const path of ["/", "/today", "/deck", "/screening", "/universe", "/planner", "/funds"]) {
+  for (const path of ["/", "/radar", "/integrity", "/book", "/today", "/deck", "/screening", "/universe", "/planner", "/funds"]) {
     for (const width of [360, 768, 1280]) {
       test(`${path} at ${width}px: no horizontal scroll, key controls visible`, async () => {
         const { page, ctx, errors } = await open(path, { viewport: { width, height: 800 } });
@@ -461,7 +462,7 @@ describe("Accessibility and layout", () => {
   });
 
   test("Command Center shows API figures with provenance, never invented ones", async () => {
-    const { page, ctx, errors } = await open("/");
+    const { page, ctx, errors } = await open("/command");
     await page.getByTestId("lede").filter({ hasText: "342 configurations" }).waitFor();
     await page.getByTestId("lede").filter({ hasText: "synthetic replay (made-up prices)" }).waitFor();
     await page.getByText("−₹20,890").first().waitFor();                                 // 979,110 - 1,000,000, sign before the rupee
@@ -533,5 +534,72 @@ describe("Accessibility and layout", () => {
     await f.page.getByText("No NAV data imported yet").waitFor();
     assert.equal(await f.page.getByTestId("scheme").count(), 0);
     await f.ctx.close();
+  });
+});
+
+describe("VEGA: Mission Control, radar, dossier, portfolio and evidence integrity", () => {
+  const V = JSON.parse(readFileSync(new URL("./vega-fixture.json", import.meta.url), "utf8"));
+
+  test("Mission Control: money, radar, decision stream, limits and the integrity verdict all come from the API", async () => {
+    const { page, ctx, errors } = await open("/");
+    await page.getByRole("heading", { level: 1, name: "Mission Control" }).waitFor();
+    await page.getByTestId("radar-table").locator("tbody tr").first().waitFor();
+    assert.equal(await page.getByTestId("radar-table").locator("tbody tr").count(), Math.min(8, V.radar.rows.length));
+    await page.getByTestId("decision-stream").locator("li").first().waitFor();
+    await page.getByTestId("blocked").getByText(V.radar.limits.blocked[0]).waitFor();
+    await page.getByTestId("risk-usage").getByText("New trades today").waitFor();
+    await page.getByTestId("research-brief").getByText(V.integrity.verdict_plain).waitFor();
+    await page.getByTestId("coverage").getByText(`${V.radar.coverage.symbols_with_data}/${V.radar.coverage.symbols_expected} with data`).waitFor();
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  });
+
+  test("Radar: a row opens the decision dossier by keyboard, with gates and recorded reasons; Escape closes it", async () => {
+    const { page, ctx, errors } = await open("/radar");
+    const row = page.getByTestId("radar-full").locator("tbody tr", { hasText: V.dossier_symbol });
+    await row.focus();
+    await page.keyboard.press("Enter");
+    const d = page.getByTestId("dossier");
+    await d.getByRole("heading", { name: new RegExp(V.dossier_symbol) }).waitFor();
+    await d.getByText("Portfolio accepts new buys").waitFor();
+    await d.getByText("Positive expected edge after costs (allocator)").waitFor();
+    await d.getByText(/no later outcome is used/).waitFor();
+    await page.keyboard.press("Escape");
+    await d.waitFor({ state: "hidden" });
+    const before = await page.getByTestId("radar-full").locator("tbody tr").count();
+    await page.getByRole("button", { name: /^Watching/ }).click();
+    const n = V.radar.counts.WATCH;
+    if (n === 0) await page.getByText("No stock matches this filter.").waitFor();
+    else assert.equal(await page.getByTestId("radar-full").locator("tbody tr").count(), n);
+    assert.equal(before, V.radar.rows.length);
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  });
+
+  test("Evidence Integrity: verdict, every hypothesis with its falsification rule, bias audit, gates, and an operator decision", async () => {
+    const { page, ctx, errors, state } = await open("/integrity");
+    await page.getByTestId("ei-verdict").getByText(V.integrity.verdict).waitFor();
+    assert.equal(await page.getByTestId("ei-hypotheses").locator("tbody tr").count(), V.integrity.hypotheses.length);
+    await page.getByTestId("ei-hypotheses").getByText("H-EDGE").waitFor();
+    await page.getByTestId("ei-biases").getByText("Survivorship").waitFor();
+    await page.getByTestId("ei-gates").getByText("operator approval recorded in the evidence ledger").waitFor();
+    await page.getByTestId("ei-suspend").getByText("S1").waitFor();
+    const f = page.getByTestId("decision-form");
+    assert.ok(await f.getByRole("button", { name: "Record decision" }).isDisabled());
+    await f.getByLabel(/Reason/).fill("Not enough confirmatory sessions yet; keep collecting evidence");
+    await f.getByRole("button", { name: "Record decision" }).click();
+    await f.getByText(/Recorded in the ledger/).waitFor();
+    const p = state.posts.find((x) => x.path === "/integrity/decision");
+    assert.equal(p.body.decision, "reject");
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  });
+
+  test("Paper Portfolio: reconciliation and benchmarks from the API", async () => {
+    const { page, ctx, errors } = await open("/book");
+    await page.getByTestId("reconciliation").getByText("Marked equity now").waitFor();
+    await page.getByTestId("benchmarks").getByText("buy and hold watchlist").waitFor();
+    assert.deepEqual(errors, []);
+    await ctx.close();
   });
 });

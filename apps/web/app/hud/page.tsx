@@ -50,7 +50,7 @@ export default function MissionControl() {
   return (
     <div className={s.deck}>
       <div className={s.top}>
-        <h1 className={s.title}>Mission <span>Control</span></h1>
+        <h1 className={s.title}>Account <span>Core</span></h1>
         <div className={s.meta}>
           <span className={s.chip}><b>{clock || "—"}</b></span>
           <span className={s.dim} style={{ fontSize: 12.5 }} data-testid="hud-source">mode, session, last candle and feed: see the status bar</span>
