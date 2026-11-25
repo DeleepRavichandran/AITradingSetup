@@ -46,7 +46,8 @@ class BrokerMinutePoller:
     def capacity(self) -> int:
         return max(1, int(self.budget_s / max(self.min_interval_s, 1e-6) + 1e-9))
 
-    def fetch(self, now) -> list[dict]:
+    def fetch(self, now, need=None) -> list[dict]:
+        """need: a retry within the minute asks again only for symbols that do not have the bar for `need` yet."""
         now = pd.Timestamp(now)
         try:
             api = self.api_factory()
@@ -56,8 +57,12 @@ class BrokerMinutePoller:
         out = []
         day_open = now.normalize() + pd.Timedelta(hours=9, minutes=15)
         n, cap = len(self.tokens), self.capacity
-        batch = self.tokens if n <= cap else [self.tokens[(self.cursor + k) % n] for k in range(cap)]
-        self.cursor = (self.cursor + len(batch)) % max(n, 1)
+        if need is not None:
+            need = pd.Timestamp(need)
+            batch = [t for t in self.tokens if self.last.get(t["symbol"], pd.Timestamp.min) < need][:cap]
+        else:
+            batch = self.tokens if n <= cap else [self.tokens[(self.cursor + k) % n] for k in range(cap)]
+            self.cursor = (self.cursor + len(batch)) % max(n, 1)
         t0, reqs = self._clock(), 0
         for t in batch:
             s = t["symbol"]
@@ -77,7 +82,7 @@ class BrokerMinutePoller:
                             "close": float(r.close), "volume": float(r.volume)})
             if len(df):
                 self.last[s] = df["ts"].iloc[-1]
-        self.last_cycle = {"requests": reqs, "seconds": round(self._clock() - t0, 3), "polled": len(batch)}
+        self.last_cycle = {"requests": reqs, "seconds": round(self._clock() - t0, 3), "polled": len(batch), "retry": need is not None}
         self.status = f"ok: {len(out)} new bars, {len(self.errors)} symbol error(s)" if not self.errors or out else \
             f"errors on {len(self.errors)} symbol(s): {next(iter(self.errors.values()))}"
         return out

@@ -44,6 +44,14 @@ from nseql.screening.store import ScreeningStore, _iso
 MAX_DECISION_LAG_S = 55.0     # under one bar: the fill bar (next minute) must not have closed when the decision is made
 
 
+def _accepts_need(feed) -> bool:
+    import inspect
+    try:
+        return "need" in inspect.signature(feed.fetch).parameters
+    except (TypeError, ValueError):
+        return False
+
+
 def _in_session(ts) -> bool:
     m = minute_of_session(pd.Timestamp(ts))
     return 1 <= m <= SESSION_MINUTES
@@ -107,6 +115,8 @@ class MinuteScheduler:
         self.live_from = _iso(live_from) if live_from is not None else None   # minutes before this: no paper orders (warm-up)
         self.checkpoint_every, self.grace = checkpoint_every, grace_seconds
         self.max_decision_lag_s = float(os.environ.get("NSEQL_MAX_DECISION_LAG_S", MAX_DECISION_LAG_S))
+        self.min_coverage, self.hold_newest_s, self.held = 0.9, 45.0, None     # live: wait for 90% of candles, at most 45 s
+        self.retry_every_s, self.retry_until_s = 10.0, 48.0                     # live loop: ask again for missing candles
         self.clock = clock or (lambda: datetime.now(IST).replace(tzinfo=None))
         self.ckpt = self.root / "checkpoint.npz"
         self._since_ckpt = 0
@@ -174,14 +184,33 @@ class MinuteScheduler:
         return out
 
     # ------------------------------------------------------------------ one cycle
-    def run_cycle(self, now=None) -> dict:
+    def run_cycle(self, now=None, retry: bool = False, hold: bool = False) -> dict:
+        """retry=True: a second look within the same minute (live loop), polling only symbols still missing the newest bar.
+        hold=True (live loop, when another attempt will follow): leave the newest minute unprocessed while under 90% of the
+        watchlist has its candle and it is under 45 s old."""
         now = pd.Timestamp(now if now is not None else self.clock())
         with self.lock:
-            fetched = self.feed.fetch(now) if self.feed is not None else []
+            need = now.floor("min") if retry else None
+            if self.feed is None:
+                fetched = []
+            elif retry and _accepts_need(self.feed):
+                fetched = self.feed.fetch(now, need=need)
+            else:
+                fetched = self.feed.fetch(now)
             got = self.ingest(fetched, getattr(self.feed, "label", "feed")) if self.feed is not None else {}
             upto = _iso(now - pd.Timedelta(seconds=self.grace))
             before = self.watermark
             minutes = [m for m in self.store.pending_minutes(before, upto) if _in_session(m)]   # older stores may hold pre-open bars
+            # live: hold the newest minute briefly until most of the watchlist has its candle (they arrive a few seconds
+            # apart); processing it early would turn every slower symbol's candle into a "late" bar that is never used
+            self.held = None
+            if hold and self.mode == "live" and minutes:
+                newest = minutes[-1]
+                waited = (now - pd.Timestamp(newest)).total_seconds()
+                have_n = self.store.db.execute("SELECT COUNT(*) FROM events WHERE ts = ? AND late = 0", (newest,)).fetchone()[0]
+                if waited < self.hold_newest_s and have_n < self.min_coverage * len(self.reg.symbols):
+                    minutes = minutes[:-1]
+                    self.held = {"minute": newest, "have": int(have_n), "of": len(self.reg.symbols), "waited_s": round(waited, 1)}
             have = set(minutes)                  # minutes WITH bars are never gaps (review 2026-11-24, finding 4)
             gaps = [g for g in self._gaps(before, minutes[-1] if minutes else None) if g not in have]
             for g in gaps:
@@ -211,7 +240,7 @@ class MinuteScheduler:
             for f in self.followers:                    # same events to every follower, even if it declines to trade
                 try:
                     f.ingest(fetched, getattr(self.feed, "label", "feed"))
-                    f.run_cycle(now)
+                    f.run_cycle(now, retry=retry, hold=hold)
                 except Exception as e:      # noqa: BLE001 - a follower must never stop the incumbent
                     print(f"[screening] follower {f.root.name} cycle error: {type(e).__name__}: {e}", flush=True)
             self.last_cycle = {"at": str(now), "ingested": got, "processed": len(done), "gaps": len(gaps),
@@ -317,11 +346,24 @@ class MinuteScheduler:
                     self.overruns += 1
                 m = now.hour * 60 + now.minute - SESSION_OPEN_MIN
                 if self.calendar.is_session(now.date()) and 1 <= m <= SESSION_MINUTES + 1:
-                    try:
-                        self.run_cycle(now)
-                    except Exception as e:          # keep the clock alive; the error is visible in status()
-                        self.last_cycle = {"at": str(now), "error": f"{type(e).__name__}: {e}"}
-                        print(f"[screening] {now:%Y-%m-%d %H:%M:%S} cycle error: {type(e).__name__}: {e}", flush=True)   # visible in api.log
+                    retry = False
+                    while True:
+                        more = (now + timedelta(seconds=self.retry_every_s) - nxt).total_seconds() + self.grace <= self.retry_until_s
+                        try:
+                            self.run_cycle(now, retry=retry, hold=more)
+                        except Exception as e:          # keep the clock alive; the error is visible in status()
+                            self.last_cycle = {"at": str(now), "error": f"{type(e).__name__}: {e}"}
+                            print(f"[screening] {now:%Y-%m-%d %H:%M:%S} cycle error: {type(e).__name__}: {e}", flush=True)   # visible in api.log
+                        # the newest closed minute still missing or held: ask again within the minute (before the 55 s limit)
+                        expected = _iso(pd.Timestamp(now).floor("min"))
+                        if not (self.held or (self.watermark or "") < expected) or not _in_session(expected):
+                            break
+                        nxt_try = now + timedelta(seconds=self.retry_every_s)
+                        if not more:
+                            break
+                        if self._stop.wait(max(0.0, (nxt_try - self.clock()).total_seconds())):
+                            return
+                        now, retry = self.clock(), True
         self._thread = threading.Thread(target=loop, name="screening-minute", daemon=True)
         self._thread.start()
 
