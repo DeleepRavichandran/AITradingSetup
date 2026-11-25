@@ -3,6 +3,15 @@
 Read this first in every new session. The operator wants ONE assistant that runs, watches and improves the lab, and
 answers in chat with real numbers. They do not want to run commands, restart things or send screenshots.
 
+## The objective (read docs/VISION.md first)
+One evidence-driven trading platform for sustainable risk-adjusted returns after costs, across intraday, swing,
+positional and long-term horizons, equities, ETFs, mutual funds and SIP (and later F&O). It is **not** a strategy factory:
+strategy count is not a success measure. Work follows the roadmap in docs/VISION.md:
+- every decision recorded, including rejected and missed ones (hindsight only in research)
+- benchmarks always shown: cash, NIFTY, buy-and-hold, a simple trend rule, the incumbent
+- no rule change after a single losing day
+- validated evidence plus operator approval before any promotion
+
 ## The setup (done on 2026-11-25)
 - The lab runs on the operator's Windows laptop (`C:\Users\delee\AITradingSetup`, branch `feature/core-correctness`).
   It is always on (sleep disabled).
