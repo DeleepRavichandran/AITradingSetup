@@ -26,7 +26,9 @@ answers in chat with real numbers. They do not want to run commands, restart thi
   - the latest evening review: headline plus the trade report
 - **"How was today?"** (after about 15:45): `latest_review.trade_report` in the status. It lists every trade, why it
   won or lost, and the "next time" changes. More detail is under `/api/review` and
-  `/api/review/{account}/{day}`. Candles for price action: `/api/screening/bars?symbol=INFY&tf=5` (1, 5 or 15 minutes,
+  `/api/review/{account}/{day}`. Chart read for a stock (trend 5m/15m/daily, support/resistance,
+  RSI/MACD/Bollinger, patterns, plain read, the bot's trades): `/api/screening/chart?symbol=INFY` (add `&at=10:30` to see the
+  chart as it stood then). Candles for price action: `/api/screening/bars?symbol=INFY&tf=5` (1, 5 or 15 minutes,
   with the candle pattern as of each candle). Every buy's chart picture at entry is in the trade report (`chart_at_buy`).
   Also useful: `/api/today`, `/api/contest`, `/api/fundamental`, `/api/screening/status`.
 - Answer in plain words, with real numbers only. If the link or the lab is down, say so; never guess. The operator

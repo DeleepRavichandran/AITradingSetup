@@ -78,15 +78,17 @@ export function LineChart({ x, series, height = 240, fmt = compact, area = false
 export type Marker = { ts: string; price: number; side: number; label: string };
 
 /** OHLC candles with fill markers. Up/down is encoded by fill (hollow vs solid) AND colour. */
-export function Candles({ ts, open, high, low, close, markers = [], height = 300, lines = [] }: {
+export function Candles({ ts, open, high, low, close, markers = [], height = 300, lines = [], overlays = [] }: {
   ts: string[]; open: number[]; high: number[]; low: number[]; close: number[]; markers?: Marker[]; height?: number; lines?: { price: number; label: string }[];
+  overlays?: { label: string; values: (number | null)[]; color: string }[];
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [hi, setHi] = useState<number | null>(null);
   const m = { l: 56, r: 12, t: 10, b: 22 };
   const n = ts.length;
   if (!n) return <div className="empty">No bars.</div>;
-  const lo0 = Math.min(...low, ...markers.map((k) => k.price)), up0 = Math.max(...high, ...markers.map((k) => k.price));
+  const ov = overlays.flatMap((o) => o.values.filter((v): v is number => v != null));
+  const lo0 = Math.min(...low, ...markers.map((k) => k.price), ...ov), up0 = Math.max(...high, ...markers.map((k) => k.price), ...ov);
   const pad = (up0 - lo0) * 0.06 || 1, lo = lo0 - pad, up = up0 + pad;
   const bw = (W - m.l - m.r) / n;
   const X = (i: number) => m.l + (i + 0.5) * bw;
@@ -99,7 +101,8 @@ export function Candles({ ts, open, high, low, close, markers = [], height = 300
   return (
     <div className="chart" ref={ref} onMouseMove={move} onMouseLeave={() => setHi(null)}>
       <div className="legend"><span><i style={{ background: "var(--up)" }} />close ≥ open (hollow)</span><span><i style={{ background: "var(--down)" }} />close &lt; open (solid)</span>
-        {markers.length > 0 && <><span>▲ buy fill</span><span>▼ sell fill</span></>}</div>
+        {markers.length > 0 && <><span>▲ buy fill</span><span>▼ sell fill</span></>}
+        {overlays.map((o) => <span key={o.label}><i style={{ background: o.color }} />{o.label}</span>)}</div>
       <svg viewBox={`0 0 ${W} ${height}`} role="img" aria-label="Candlestick chart with trade fills">
         {ticks(lo, up).map((t) => <g key={t}><line x1={m.l} x2={W - m.r} y1={Y(t)} y2={Y(t)} stroke="var(--grid)" /><text className="axis" x={m.l - 6} y={Y(t) + 4} textAnchor="end">{compact(t)}</text></g>)}
         {[0, Math.floor(n / 2), n - 1].map((i, k) => <text key={k} className="axis" x={X(i)} y={height - 5} textAnchor={k === 0 ? "start" : k === 2 ? "end" : "middle"}>{ts[i].slice(0, 16)}</text>)}
@@ -108,6 +111,11 @@ export function Candles({ ts, open, high, low, close, markers = [], height = 300
           const y1 = Y(Math.max(open[i], close[i])), y2 = Y(Math.min(open[i], close[i]));
           return <g key={i}><line x1={X(i)} x2={X(i)} y1={Y(high[i])} y2={Y(low[i])} stroke={c} strokeWidth={1} />
             <rect x={X(i) - Math.max(bw * 0.3, 1)} width={Math.max(bw * 0.6, 2)} y={y1} height={Math.max(y2 - y1, 1)} fill={upc ? "var(--surface)" : c} stroke={c} strokeWidth={1} /></g>;
+        })}
+        {overlays.map((o) => {
+          let d = "", pen = false;
+          o.values.forEach((v, i) => { if (v == null) { pen = false; return; } d += `${pen ? "L" : "M"}${X(i).toFixed(1)},${Y(v).toFixed(1)}`; pen = true; });
+          return <path key={o.label} d={d} fill="none" stroke={o.color} strokeWidth={1.6} />;
         })}
         {lines.map((l) => <g key={l.label}><line x1={m.l} x2={W - m.r} y1={Y(l.price)} y2={Y(l.price)} stroke="var(--axis)" strokeDasharray="4 4" /><text className="axis" x={W - m.r} y={Y(l.price) - 4} textAnchor="end">{l.label}</text></g>)}
         {markers.map((k, j) => {

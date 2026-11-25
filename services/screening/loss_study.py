@@ -49,6 +49,10 @@ BUCKETS = {
     "pa_location": ("where the price was in the day's range", lambda v: v if isinstance(v, str) else "unknown"),
     "pa_vwap": ("price vs VWAP", lambda v: v if isinstance(v, str) else "unknown"),
     "pa_volume": ("volume of the last 5-minute candle", lambda v: v if isinstance(v, str) else "unknown"),
+    "ch_trend": ("chart trend at the buy (5m and 15m)", lambda v: v if isinstance(v, str) else "unknown"),
+    "ch_room": ("room to the next resistance", lambda v: v if isinstance(v, str) else "unknown"),
+    "ch_rsi": ("RSI zone at the buy", lambda v: v if isinstance(v, str) else "unknown"),
+    "ch_pattern": ("chart pattern at the buy", lambda v: v if isinstance(v, str) else "unknown"),
 }
 
 
@@ -171,7 +175,8 @@ def run(account: Path, day: str, out: Path) -> dict:
         from nseql.screening.price_action import labels as _pa_labels
         pa = j.price_action.map(lambda x: _pa_labels(json.loads(x)) if isinstance(x, str) and x else _pa_labels({}))
         j = pd.concat([j.drop(columns=["price_action"]), pd.DataFrame(list(pa), index=j.index)], axis=1) if len(j) else \
-            j.drop(columns=["price_action"]).assign(pa_pattern=None, pa_structure=None, pa_location=None, pa_vwap=None, pa_volume=None)
+            j.drop(columns=["price_action"]).assign(pa_pattern=None, pa_structure=None, pa_location=None, pa_vwap=None, pa_volume=None,
+                                                     ch_trend=None, ch_room=None, ch_rsi=None, ch_pattern=None)
         rec = reconcile(db, day, rc)
     finally:
         db.close()

@@ -1890,6 +1890,27 @@ def create_app() -> FastAPI:
         d = day or datetime.now(views.IST).strftime("%Y-%m-%d")
         return clean({"symbol": symbol.upper(), "day": d, "tf": tf, "candles": _bars(sch.store.reader(), symbol.upper(), d, tf)})
 
+    @api.get("/screening/chart")
+    def screening_chart(symbol: str, day: str = "", at: str = ""):
+        """Chart Analyst for one stock: 5-minute candles with EMA20/50, VWAP and RSI series, support and resistance levels, trend
+        on 5m/15m/daily, patterns, a plain read, and the account's own buys and sells that day. `at` (HH:MM) reads the
+        chart as it stood at that time (completed candles before it only). Read-only."""
+        from nseql.screening.chart_analysis import analyse
+        from nseql.screening.metrics import _next_day
+        sch = _need_screening()
+        d = day or datetime.now(views.IST).strftime("%Y-%m-%d")
+        sym = symbol.upper()
+        if sym not in sch.reg.symbols:
+            raise HTTPException(404, f"{sym} is not on the watchlist")
+        as_of = pd.Timestamp(f"{d}T{at}:00") if at else min(pd.Timestamp(_next_day(d)), pd.Timestamp(datetime.now(views.IST).replace(tzinfo=None)) + pd.Timedelta(minutes=1))
+        db = sch.store.reader()
+        a = analyse(db, sym, as_of, series=True)
+        fills = db.execute("SELECT side, ts, qty, price, realized_paise FROM paper_fills WHERE symbol=? AND ts >= ? AND ts < ? ORDER BY ts",
+                           (sym, d, _next_day(d))).fetchall()
+        a["trades"] = [{"side": f[0], "t": str(f[1])[11:16], "qty": f[2], "price": f[3], "profit": (f[4] or 0) / 100 if f[0] == "SELL" else None} for f in fills]
+        a["watchlist"] = list(sch.reg.symbols)
+        return clean(a)
+
     @api.get("/assistant/status")
     def assistant_status():
         """Everything the assistant needs to answer "how is it going?" in one read-only call: market, bot, account, positions,

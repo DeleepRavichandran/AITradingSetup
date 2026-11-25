@@ -58,6 +58,18 @@ ACTIONS = [
      "Bought into lower highs and lower lows on the 5-minute chart.",
      "Wait for the structure to turn (a higher low) before buying.",
      "experiment: structure filter vs no filter"),
+    ("against_trend", lambda t: t.get("ch_trend") == "5m and 15m both down" and t["outcome"] == "lost",
+     "Bought against the trend: both the 5- and 15-minute charts were in a downtrend.",
+     "Only buy when the 5- and 15-minute trends are not both down.",
+     "experiment: multi-timeframe trend filter vs no filter"),
+    ("no_room", lambda t: str(t.get("ch_room", "")).startswith("resistance within") and t["outcome"] == "lost",
+     "Bought right under resistance: there was less than 0.5% of room to run.",
+     "Skip buys with less than 0.5% to the next resistance, unless it is a confirmed breakout.",
+     "experiment: room-to-resistance filter vs no filter"),
+    ("overbought", lambda t: str(t.get("ch_rsi", "")).startswith("RSI >= 70") and t["outcome"] == "lost",
+     "Bought when RSI was overbought (70+): late to the move.",
+     "Avoid new buys with RSI above 70 on the 5-minute chart.",
+     "experiment: RSI filter vs no filter"),
     ("time_out", lambda t: t["primary_cause"].startswith("intraday time ran out"),
      "Ran out of time and was sold at 15:15 at a loss.",
      "No new intraday entries after 14:30.",
@@ -90,7 +102,8 @@ def report(db: sqlite3.Connection, day: str) -> dict:
                        "net_inr": round(t["net_inr"], 2), "charges_inr": round(t["charges_inr"], 2), "outcome": t["outcome"],
                        "why": t["primary_cause"], "also": t["causes"], "exit": t["exit_reason"],
                        "chart_at_buy": {"pattern": t["pa_pattern"], "structure": t["pa_structure"], "location": t["pa_location"],
-                                        "vwap": t["pa_vwap"], "volume": t["pa_volume"]}})
+                                        "vwap": t["pa_vwap"], "volume": t["pa_volume"], "trend": t["ch_trend"], "room": t["ch_room"],
+                                        "rsi": t["ch_rsi"], "chart_pattern": t["ch_pattern"], "read": (raw.get("chart") or {}).get("read")}})
     won = [t for t in rc if t["outcome"] == "won"]
     lost = [t for t in rc if t["outcome"] == "lost"]
     nxt = []

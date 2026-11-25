@@ -404,6 +404,15 @@ describe("Accessibility and layout", () => {
     await ctx.close();
   });
 
+  test("Chart analyst: candles with indicators, trend, levels and the plain read", async () => {
+    const { page, ctx, errors } = await open("/charts");
+    await page.getByTestId("chart-read").getByText("Next resistance: round number at 1,380.00", { exact: false }).waitFor();
+    await page.getByTestId("chart-trend").getByText("15m: up").waitFor();
+    await page.getByRole("heading", { name: "Support and resistance" }).waitFor();
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  });
+
   test("Fundamental agent: market mood, proof status, stock evidence, missing inputs shown", async () => {
     const { page, ctx, errors } = await open("/fundamental");
     await page.getByTestId("fa-mood").getByText("fear", { exact: true }).waitFor();

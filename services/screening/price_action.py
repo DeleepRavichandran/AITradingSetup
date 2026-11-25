@@ -116,13 +116,21 @@ def at_entry(db: sqlite3.Connection, symbol: str, fill_ts: str) -> dict:
         ph = db.execute("SELECT MAX(high) FROM events WHERE symbol=? AND late=0 AND ts >= ? AND ts < ?",
                         (symbol, last_day, (pd.Timestamp(last_day) + pd.Timedelta(days=1)).strftime("%Y-%m-%d"))).fetchone()[0]
         out["vs_prev_high"] = round(last / float(ph) - 1, 5) if ph else None
+    try:                                                   # the full chart read at that moment (chart_analysis.py)
+        from nseql.screening.chart_analysis import analyse
+        a = analyse(db, symbol, ts)
+        out["chart"] = {k: a.get(k) for k in ("trend", "support", "resistance", "indicators", "patterns", "read")}
+    except Exception:       # noqa: BLE001 - recording context must never stop trading
+        out["chart"] = None
     return out
 
 
 def labels(pa: dict) -> dict:
     """Readable buckets for the daily review (loss study factors)."""
     dp, vw, vr = pa.get("day_position"), pa.get("vs_vwap"), pa.get("volume_ratio")
-    return {"pa_pattern": pa.get("pattern") or "unknown", "pa_structure": pa.get("structure") or "unknown",
+    from nseql.screening.chart_analysis import entry_labels
+    ch = entry_labels(pa.get("chart") or {})
+    return {**ch, "pa_pattern": pa.get("pattern") or "unknown", "pa_structure": pa.get("structure") or "unknown",
             "pa_location": "unknown" if dp is None else "near the day's low (bottom 25%)" if dp <= 0.25 else
                            "near the day's high (top 25%)" if dp >= 0.75 else "middle of the day's range",
             "pa_vwap": "unknown" if vw is None else "above VWAP" if vw > 0 else "below VWAP",
