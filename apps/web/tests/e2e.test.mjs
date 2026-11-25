@@ -206,7 +206,7 @@ describe("Command Deck safety", () => {
 });
 
 describe("Accessibility and layout", () => {
-  for (const path of ["/", "/radar", "/book", "/integrity", "/today", "/hud", "/contest", "/deck", "/screening", "/universe", "/planner", "/funds"]) for (const colorScheme of ["light", "dark"]) {
+  for (const path of ["/", "/radar", "/book", "/integrity", "/brain", "/today", "/hud", "/contest", "/deck", "/screening", "/universe", "/planner", "/funds"]) for (const colorScheme of ["light", "dark"]) {
     test(`${path} (${colorScheme}): no serious or critical axe violations`, async () => {
       const { page, ctx } = await open(path, { colorScheme });
       await page.waitForLoadState("networkidle");
@@ -217,7 +217,7 @@ describe("Accessibility and layout", () => {
       await ctx.close();
     });
   }
-  for (const path of ["/", "/radar", "/integrity", "/book", "/today", "/deck", "/screening", "/universe", "/planner", "/funds"]) {
+  for (const path of ["/", "/radar", "/integrity", "/brain", "/book", "/today", "/deck", "/screening", "/universe", "/planner", "/funds"]) {
     for (const width of [360, 768, 1280]) {
       test(`${path} at ${width}px: no horizontal scroll, key controls visible`, async () => {
         const { page, ctx, errors } = await open(path, { viewport: { width, height: 800 } });
@@ -599,6 +599,21 @@ describe("VEGA: Mission Control, radar, dossier, portfolio and evidence integrit
     const { page, ctx, errors } = await open("/book");
     await page.getByTestId("reconciliation").getByText("Marked equity now").waitFor();
     await page.getByTestId("benchmarks").getByText("buy and hold watchlist").waitFor();
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  });
+
+  test("Brain Intelligence: gates, decision versus outcome, versioned knowledge, shadow outcomes, measures and what is not built", async () => {
+    const { page, ctx, errors } = await open("/brain");
+    await page.getByRole("heading", { level: 1, name: "Brain Intelligence" }).waitFor();
+    await page.getByTestId("gate-summary").getByText("Familiar market conditions").waitFor();
+    await page.getByTestId("quality-matrix").locator("div").first().waitFor();
+    assert.equal(await page.getByTestId("knowledge").locator("tbody tr").count(), V.brain.knowledge.length);
+    await page.getByTestId("knowledge").getByText("K-PATTERN-opening").waitFor();
+    await page.getByTestId("shadow").getByText("no trade").waitFor();
+    await page.getByTestId("brain-metrics").getByText("False positives removed by correction").waitFor();
+    await page.getByTestId("not-implemented").getByText(/futures and options/).waitFor();
+    assert.equal(await page.getByText(/intelligence score:/i).count(), 0);
     assert.deepEqual(errors, []);
     await ctx.close();
   });

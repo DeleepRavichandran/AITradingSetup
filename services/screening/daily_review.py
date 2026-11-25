@@ -29,7 +29,7 @@ from pathlib import Path
 
 import pandas as pd
 
-STEPS = ("trade_report", "benchmarks", "opportunities", "loss_study", "day_backtest", "monte_carlo", "fundamental_agent", "integrity")
+STEPS = ("trade_report", "benchmarks", "opportunities", "loss_study", "day_backtest", "monte_carlo", "fundamental_agent", "integrity", "brain")
 VERSION = "1.0"
 
 
@@ -119,8 +119,21 @@ def _integrity(exp_dir: Path, day: str) -> dict:
     from nseql.config import get_settings
     from nseql.screening import integrity as I
     rep = I.report(exp_dir, get_settings().data_dir, research=_research_counts(exp_dir))
-    rep["recorded"] = I.record(I.Ledger(exp_dir), rep, day)
+    L = I.Ledger(exp_dir)
+    rep["recorded"] = I.record(L, rep, day)
+    rep["sealed_days"] = I.record_digests(L, exp_dir, before_day=I._next(day))     # this session is closed: seal it too
     return rep
+
+
+def _brain(exp_dir: Path, rep: dict | None, trade_report: dict | None) -> dict:
+    """Brain (brain.py, observation only): knowledge versions from today's evidence, shadow outcomes, gates, decay."""
+    from nseql.config import get_settings
+    from nseql.screening import brain as B, integrity as I
+    rep = rep or I.report(exp_dir, get_settings().data_dir, research=_research_counts(exp_dir))
+    out = B.report(exp_dir, rep)
+    out["knowledge_written"] = B.sync_knowledge(B.Knowledge(I.Ledger(exp_dir)), rep, trade_report)
+    return {k: out.get(k) for k in ("version", "account", "uncertainty", "quality", "shadow", "decay", "shared_risk", "data_quality",
+                                    "metrics", "knowledge_written", "corrections")}
 
 
 def _research_counts(exp_dir: Path) -> dict:
@@ -198,6 +211,9 @@ def run(account: Path, day: str, exp_dir: Path, steps: tuple[str, ...] = STEPS, 
             elif s == "integrity":
                 results[s] = _integrity(exp_dir, day)
                 _write(out / "integrity.json", results[s])
+            elif s == "brain":
+                results[s] = _brain(exp_dir, results.get("integrity"), results.get("trade_report"))
+                _write(out / "brain.json", results[s])
             st["steps"][s] = {"state": "done", "seconds": round(time.time() - t0, 1)}
         except Exception as e:      # noqa: BLE001 - one failing analysis never stops the others
             st["steps"][s] = {"state": "failed", "seconds": round(time.time() - t0, 1), "error": f"{type(e).__name__}: {e}",

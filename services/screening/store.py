@@ -43,6 +43,8 @@ CREATE INDEX IF NOT EXISTS ix_journal_ts ON journal(ts);
 CREATE TABLE IF NOT EXISTS paper_fills (fill_key TEXT PRIMARY KEY, order_key TEXT, config_id TEXT, symbol TEXT, side TEXT, ts TEXT,
   qty INTEGER, price REAL, charges_paise INTEGER, realized_paise INTEGER);
 CREATE INDEX IF NOT EXISTS ix_fills_order ON paper_fills(order_key);
+CREATE TABLE IF NOT EXISTS event_quarantine (symbol TEXT, ts TEXT, open REAL, high REAL, low REAL, close REAL, volume REAL,
+  source TEXT, received_at REAL, reason TEXT);
 CREATE TABLE IF NOT EXISTS refusals (minute TEXT, reason TEXT, n INTEGER, PRIMARY KEY (minute, reason));
 CREATE TABLE IF NOT EXISTS portfolio_events (ts TEXT, event TEXT, detail TEXT, PRIMARY KEY (ts, event));
 CREATE TABLE IF NOT EXISTS configs (id TEXT PRIMARY KEY, idx INTEGER, symbol TEXT, timeframe TEXT, horizon TEXT, family TEXT,
@@ -63,6 +65,22 @@ def _locked(fn):
 
 def _iso(ts) -> str:
     return pd.Timestamp(ts).strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def bar_defect(o: float, h: float, l: float, c: float, v: float) -> str | None:
+    """Why a 1-minute bar is impossible (None if it is plausible). Corrupt input is quarantined, never traded on.
+    Only physically impossible values are refused; a large but possible move is kept (circuit moves are real)."""
+    import math
+    if not all(math.isfinite(x) for x in (o, h, l, c, v)):
+        return "non-finite value"
+    if min(o, h, l, c) <= 0:
+        return "price not positive"
+    if v < 0:
+        return "negative volume"
+    tol = 5e-4 * max(o, h, l, c)                # vendor rounding is tolerated; a real inconsistency is not
+    if h < max(o, c, l) - tol or l > min(o, c, h) + tol:
+        return "high/low inconsistent with open/close"
+    return None
 
 
 class ScreeningStore:
@@ -103,7 +121,7 @@ class ScreeningStore:
     @_locked
     def add_events(self, bars: list[dict], *, processed_upto: str | None, source: str) -> dict:
         """bars: dicts with symbol, ts, open, high, low, close, volume. Returns counts by outcome."""
-        out = {"accepted": 0, "duplicate": 0, "conflict": 0, "late": 0}
+        out = {"accepted": 0, "duplicate": 0, "conflict": 0, "late": 0, "quarantined": 0}
         now = time.time()
         cur = self.db.cursor()
         cur.execute("BEGIN")
@@ -112,6 +130,11 @@ class ScreeningStore:
                 ts = _iso(b["ts"])
                 late = 1 if processed_upto is not None and ts <= processed_upto else 0
                 row = (b["symbol"], ts, float(b["open"]), float(b["high"]), float(b["low"]), float(b["close"]), float(b["volume"]))
+                bad = bar_defect(*row[2:])
+                if bad:                         # impossible bar: never reaches the engine; kept for inspection
+                    cur.execute("INSERT INTO event_quarantine VALUES (?,?,?,?,?,?,?,?,?,?)", (*row, source, now, bad))
+                    out["quarantined"] += 1
+                    continue
                 cur.execute("INSERT OR IGNORE INTO events VALUES (?,?,?,?,?,?,?,?,?,?)", (*row, source, now, late))
                 if cur.rowcount == 1:
                     out["late" if late else "accepted"] += 1

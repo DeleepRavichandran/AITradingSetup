@@ -150,7 +150,7 @@ export default function Integrity() {
           </section>
           <section className="vp" aria-labelledby="lg-h">
             <div className="h"><div><h2 id="lg-h">Evidence ledger</h2><div className="sub2">Latest entries · nothing is ever rewritten</div></div></div>
-            <ul className="events" data-testid="ei-ledger">{[...(d.ledger_entries || [])].reverse().slice(0, 14).map((e: any) => <li key={e.seq}>
+            <ul className="events" data-testid="ei-ledger" tabIndex={0} aria-label="Evidence ledger entries, newest first">{[...(d.ledger_entries || [])].reverse().slice(0, 14).map((e: any) => <li key={e.seq}>
               <span className="t">{String(e.at).slice(5, 10)}</span><span className="d" style={{ color: e.kind === "result" ? (e.body.status === "falsified" ? "var(--crit)" : e.body.status === "survived" ? "var(--good)" : "var(--warn)") : "var(--violet)" }} />
               <div><b><span className="k">{e.kind.toUpperCase()}</span>{e.subject}</b><p>{e.body.status || e.body.statement || e.body.decision || e.body.detail || ""}{e.body.reason ? ` · ${e.body.reason}` : ""}</p></div></li>)}</ul>
           </section>

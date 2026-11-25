@@ -2070,6 +2070,21 @@ def create_app() -> FastAPI:
         rep = _integrity_report(max_age=0 if refresh else 600)
         return {**rep, "ledger_entries": [{k: e[k] for k in ("seq", "at", "kind", "subject", "body")} for e in I.Ledger(st.exp_dir).entries()][-60:]}
 
+    @api.get("/brain")
+    def brain_view(refresh: bool = False):
+        """VEGA brain (observation only): uncertainty gates per entry, decision vs outcome vs execution, knowledge with its
+        versions and corrections, shadow outcomes, strategy decay, shared risk, the brain's own measures and what is not built."""
+        from nseql.screening import brain as B
+        hit = _ig.get("brain")
+        if hit and not refresh and time.time() - hit[0] < 600:
+            return hit[1]
+        out = clean(B.report(st.exp_dir, _integrity_report(max_age=0 if refresh else 600), st.data_dir))
+        sch = screening.get("sch")
+        if sch is not None:
+            out["gates_now"] = clean(B.gates_now(sch, datetime.now(views.IST).replace(tzinfo=None)))
+        _ig["brain"] = (time.time(), out)
+        return out
+
     class IntegrityDecision(BaseModel):
         subject: str = Field(min_length=2, max_length=80)
         decision: str = Field(pattern="^(approve|reject)$")

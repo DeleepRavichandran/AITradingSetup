@@ -10,7 +10,7 @@ export const AREAS: Area[] = [
     ["/market", "Market Intelligence"], ["/screening", "Strategy Monitor"], ["/universe", "Strategy Universe"]] },
   { key: "portfolio", label: "Portfolio", pages: [["/book", "Paper Portfolio"], ["/paper", "Paper Trading"], ["/portfolio", "Portfolio Simulation"],
     ["/funds", "Mutual Funds"], ["/planner", "SIP & Goal Planner"]] },
-  { key: "research", label: "Research", pages: [["/integrity", "Evidence Integrity"], ["/contest", "Incumbent vs Challenger"], ["/learning", "AI Research Brain"],
+  { key: "research", label: "Research", pages: [["/integrity", "Evidence Integrity"], ["/brain", "Brain Intelligence"], ["/contest", "Incumbent vs Challenger"], ["/learning", "AI Research Brain"],
     ["/backtest", "Backtesting Studio"], ["/walkforward", "Walk-Forward Testing"], ["/compare", "Strategy Comparison"], ["/replay", "Trade Replay"],
     ["/memory", "Experiment Memory"], ["/factory", "Strategy Factory"], ["/code", "Strategy Code"], ["/agents", "AI Research Agents"], ["/chat", "Analyst Chat"]] },
   { key: "risk", label: "Risk", pages: [["/risk", "Risk Control"], ["/brokers", "Broker Connections"]] },

@@ -298,3 +298,5 @@ dialog.dossier .body { padding: 16px 18px; display: grid; gap: 16px; }
 .shell { background: linear-gradient(to right, var(--rail) 75px, var(--border) 75px, var(--border) 76px, transparent 76px); }
 .strip .acts button { font-size: 12.5px; padding: 6px 11px; }
 @media (max-width: 900px) { .shell { background: none; } }
+.kv { grid-template-columns: minmax(0, max-content) minmax(0, 1fr); } .kv dt { overflow-wrap: anywhere; }
+@media (max-width: 700px) { .kv { grid-template-columns: minmax(0, 1fr); gap: 0 12px; } .kv dd { margin-bottom: 8px; } }

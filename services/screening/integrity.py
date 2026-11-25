@@ -55,6 +55,8 @@ SUSPEND = {
     "S3": "the current account is 6% or more below its own peak equity",
     "S4": "performance deterioration (Page-Hinkley alarm on net per round trip, at least 30 round trips) while the "
           "random-entry placebo shows no skill (p > 0.5)",
+    "S5": "the financial record does not hold: cash differs from the fills by more than Rs 1, or a recorded day's trades were "
+          "altered or removed afterwards",
 }
 DRAWDOWN_SUSPEND = 0.06
 
@@ -77,6 +79,10 @@ HYPOTHESES = [
      "metric": "placebo", "subject": "incumbent", "compare": "random entries",
      "falsification": f"Falsified if, after {MIN_TRADES} confirmatory round trips, fewer than {1 - ALPHA:.0%} of {PLACEBO_DRAWS:,} seeded "
                       "random-entry portfolios do worse than the bot."},
+    {"id": "H-ABSTAIN", "statement": "Entries that pass every uncertainty gate (fresh, complete, positive expected edge, familiar "
+     "conditions) do better than entries that fail at least one.", "metric": "gate_split", "subject": "incumbent", "compare": "entries failing a gate",
+     "falsification": f"Falsified if, with at least {MIN_TRADES} confirmatory round trips in each group, entries passing every gate are not "
+                      f"better per rupee at {ALPHA}."},
     {"id": "H-BLACKOUT", "statement": "Entries after the first 30 minutes do better than entries in them (rules 1.3).",
      "metric": "late_minus_early", "subject": "challenger", "compare": "entries before 09:46",
      "falsification": f"Falsified if, with at least {MIN_TRADES} confirmatory round trips in each group (measured on the challenger, which "
@@ -91,7 +97,7 @@ CREATE TABLE IF NOT EXISTS entries (seq INTEGER PRIMARY KEY AUTOINCREMENT, at TE
 CREATE TRIGGER IF NOT EXISTS entries_no_update BEFORE UPDATE ON entries BEGIN SELECT RAISE(ABORT, 'evidence ledger is append-only'); END;
 CREATE TRIGGER IF NOT EXISTS entries_no_delete BEFORE DELETE ON entries BEGIN SELECT RAISE(ABORT, 'evidence ledger is append-only'); END;
 """
-KINDS = ("hypothesis", "result", "decision", "suspension", "acknowledged")
+KINDS = ("hypothesis", "result", "decision", "suspension", "acknowledged", "criteria", "ledger_digest", "knowledge")
 
 
 def _digest(prev: str, at: str, kind: str, subject: str | None, body: str) -> str:
@@ -148,6 +154,106 @@ def register_seed_hypotheses(ledger: Ledger, at: str | None = None) -> list[str]
                                                   "version": VERSION}, at=when)
             new.append(h["id"])
     return new
+
+
+# ================================================================================================ 1b. protected criteria
+BENCHMARKS = ("cash", "NIFTY 50", "buy and hold watchlist", "trend rule (above 20-day average)")
+
+
+def criteria_manifest() -> dict:
+    """Everything that decides a verdict. Its hash is registered once; a later change is visible and needs the
+    operator's recorded approval (subject 'criteria <hash>'), so the evaluated system cannot quietly loosen its own test."""
+    return {"version": VERSION, "min_sessions": MIN_SESSIONS, "min_trades": MIN_TRADES, "alpha": ALPHA, "fdr_configs": FDR_CONFIGS,
+            "placebo_draws": PLACEBO_DRAWS, "seed": SEED, "cost_mult": COST_MULT, "delay_min": DELAY_MIN, "drawdown_suspend": DRAWDOWN_SUSPEND,
+            "suspend": SUSPEND, "benchmarks": list(BENCHMARKS),
+            "hypotheses": [{k: h[k] for k in ("id", "statement", "metric", "compare", "falsification")} for h in HYPOTHESES]}
+
+
+def _hash(obj) -> str:
+    return hashlib.sha256(json.dumps(obj, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def check_criteria(ledger: "Ledger", register: bool = True) -> dict:
+    cur = _hash(criteria_manifest())
+    recs = ledger.entries("criteria")
+    if not recs:
+        if register:
+            ledger.append("criteria", cur[:16], {"hash": cur, "manifest": criteria_manifest()})
+        return {"hash": cur, "registered": cur, "changed": False, "approved": True}
+    first = recs[0]["body"]["hash"]
+    if cur != recs[-1]["body"]["hash"] and register:
+        ledger.append("criteria", cur[:16], {"hash": cur, "previous": recs[-1]["body"]["hash"], "manifest": criteria_manifest()})
+    approved = cur == first or any(e["subject"] == f"criteria {cur[:16]}" and e["body"].get("decision") == "approve"
+                                   for e in ledger.entries("decision"))
+    return {"hash": cur, "registered": first, "changed": cur != first, "approved": approved}
+
+
+def cash_reconciliation(account: Path) -> dict:
+    """Independent accounting check: start cash + every recorded fill (proceeds minus cost minus charges) must equal the
+    cash the engine reported at its last processed minute."""
+    m = _meta(account)
+    con = _ro(account)
+    try:
+        fills = con.execute("SELECT side, qty, price, charges_paise FROM paper_fills").fetchall()
+        last = con.execute("SELECT cash_inr FROM cycles WHERE cash_inr IS NOT NULL ORDER BY minute DESC LIMIT 1").fetchone()
+    finally:
+        con.close()
+    start = m.get("start_cash") or m.get("capital")
+    if last is None or start is None:
+        return {"checked": False}
+    calc = float(start) + sum((-1 if sd == "BUY" else 1) * q * p - (c or 0) / 100 for sd, q, p, c in fills)
+    return {"checked": True, "from_fills_inr": round(calc, 2), "engine_inr": round(float(last[0]), 2), "difference_inr": round(float(last[0]) - calc, 2),
+            "fills": len(fills), "ok": abs(float(last[0]) - calc) <= 1.0}
+
+
+def day_digest(account: Path, day: str) -> dict:
+    con = _ro(account)
+    try:
+        rows = con.execute("SELECT fill_key, side, qty, price, charges_paise, realized_paise FROM paper_fills WHERE ts >= ? AND ts < ? ORDER BY fill_key",
+                           (day, _next(day))).fetchall()
+    finally:
+        con.close()
+    return {"fills": len(rows), "net_paise": int(sum(r[5] or 0 for r in rows)), "digest": _hash(rows)}
+
+
+def _next(day: str) -> str:
+    from datetime import date, timedelta
+    return (date.fromisoformat(day) + timedelta(days=1)).isoformat()
+
+
+def record_digests(ledger: "Ledger", exp_dir: Path, before_day: str) -> int:
+    """Seal each closed session's fills (all accounts) once, so hiding or editing a losing trade later is detected."""
+    have = {e["subject"] for e in ledger.entries("ledger_digest")}
+    n = 0
+    for kind, accs in accounts(exp_dir).items():
+        for a in accs:
+            con = _ro(a)
+            try:
+                days = [r[0] for r in con.execute("SELECT DISTINCT substr(ts,1,10) FROM paper_fills ORDER BY 1")]
+            finally:
+                con.close()
+            for d in days:
+                key = f"{a.name}:{d}"
+                if d < before_day and key not in have:
+                    ledger.append("ledger_digest", key, day_digest(a, d))
+                    n += 1
+    return n
+
+
+def verify_digests(ledger: "Ledger", exp_dir: Path) -> dict:
+    base = Path(exp_dir) / "screening"
+    bad, n = [], 0
+    for e in ledger.entries("ledger_digest"):
+        acc, day = e["subject"].rsplit(":", 1)
+        if not (base / acc / "screening.sqlite").exists():
+            bad.append({"day": e["subject"], "problem": "account ledger missing"})
+            continue
+        n += 1
+        now = day_digest(base / acc, day)
+        if now["digest"] != e["body"]["digest"]:
+            bad.append({"day": e["subject"], "problem": f"fills changed after sealing: {e['body']['fills']} -> {now['fills']} fills, "
+                                                        f"net {e['body']['net_paise'] / 100:,.2f} -> {now['net_paise'] / 100:,.2f} INR"})
+    return {"sealed_days": n, "altered": bad, "ok": not bad}
 
 
 # ================================================================================================ 2. ledgers -> evidence
@@ -454,6 +560,31 @@ def evaluate(h: dict, ev: dict) -> dict:
         res["confirmatory"] = {"round_trips": len(cf), **pl}
         res["exploratory_placebo"] = placebo(inc["account"], ex) if len(ex) >= 2 else None
         tt = {"p": pl.get("p"), "lo": None, "hi": None, "mean": pl.get("actual_mean_ret")}
+    elif m == "gate_split":
+        from nseql.screening.brain import gate_table
+        g = pd.concat([gate_table(a) for a in ev["incumbent_accounts"]], ignore_index=True) if ev["incumbent_accounts"] else pd.DataFrame()
+        if g.empty:
+            res.update(status="abstain", reason="no completed entries yet", p=None, need=f"{MIN_TRADES} per group", enough=False,
+                       confirmatory={"round_trips": 0})
+            return res
+        g = g.assign(late=~g.abstain)                       # 'late' = the group expected to be better (passes every gate)
+        r = g.rename(columns={"exit_ts": "exit_ts"})
+        ex = r[r.exit_ts.str[:10] <= reg_at[:10]]
+        cf = r[r.exit_ts.str[:10] > reg_at[:10]]
+        from scipy import stats as _s
+
+        def welch2(d):
+            a, b = d[d.late].ret.to_numpy(), d[~d.late].ret.to_numpy()
+            if len(a) < 2 or len(b) < 2:
+                return {"pass_n": len(a), "fail_n": len(b), "p": None, "diff": None}
+            t = _s.ttest_ind(a, b, equal_var=False, alternative="greater")
+            return {"pass_n": len(a), "fail_n": len(b), "diff": float(a.mean() - b.mean()), "p": float(t.pvalue)}
+        res["exploratory"] = welch2(ex) if len(ex) else None
+        w = welch2(cf)
+        res["confirmatory"] = {"round_trips": len(cf), **w}
+        res["need"] = f"{MIN_TRADES} confirmatory round trips per group"
+        res["enough"] = min(w["pass_n"], w["fail_n"]) >= MIN_TRADES
+        tt = {"p": w["p"], "mean": w["diff"], "lo": None, "hi": None}
     elif m == "late_minus_early":
         if chl is None:
             res.update(status="not measurable yet", reason="no challenger account is running", p=None)
@@ -638,7 +769,7 @@ def _evidence(exp_dir: Path, data_dir: Path | None) -> dict:
         cd = daily_returns(chl_acc)
         chl = {"account": chl_acc, "daily": cd, "rt": round_trips(chl_acc)}
     inc = {"account": cur, "daily": daily, "rt": rt_all, "rt_current": round_trips(cur) if cur else rt_all.iloc[:0], "bench_daily": bench_daily}
-    return {"incumbent": inc, "challenger": chl, "bench": bench, "history": {"versions": versions},
+    return {"incumbent": inc, "challenger": chl, "bench": bench, "history": {"versions": versions}, "incumbent_accounts": acc["incumbent"],
             "configs": _config_evidence(rts), "accounts": {k: [p.name for p in v] for k, v in acc.items()}}
 
 
@@ -663,6 +794,8 @@ def report(exp_dir: Path, data_dir: Path | None = None, research: dict | None = 
     if register:
         register_seed_hypotheses(ledger)
     chain = ledger.verify()
+    crit = check_criteria(ledger, register=register)
+    seals = verify_digests(ledger, exp_dir)
     hyps = {e["subject"]: e["body"] for e in ledger.entries("hypothesis")}
     approvals = [{"subject": e["subject"], **e["body"]} for e in ledger.entries("decision")]
     ev = _evidence(exp_dir, data_dir)
@@ -685,11 +818,30 @@ def report(exp_dir: Path, data_dir: Path | None = None, research: dict | None = 
             regime.append({"regime": k, "round_trips": len(g), "net_inr": round(float(g.net.sum()), 2), "mean_ret": round(float(g.ret.mean()), 5),
                            "share_won": round(float((g.net > 0).mean()), 3)})
     audit = bias_audit(ev, chain, approvals, research)
+    recon = {a.name: cash_reconciliation(a) for a in ([inc["account"]] if inc["account"] is not None else []) + ([ev["challenger"]["account"]] if ev["challenger"] else [])}
+    audit.append({"bias": "Evaluation manipulation (Goodhart, reward hacking)", "risk": "the evaluated system loosens its own test or benchmarks",
+                  "guard": "the evaluation criteria (thresholds, benchmarks, hypotheses, stop rules) are hashed into the ledger; a change is "
+                           "flagged and blocks promotion until the operator approves that exact version",
+                  "status": "detected" if crit["changed"] and not crit["approved"] else "guarded",
+                  "evidence": (f"criteria changed since registration ({crit['registered'][:12]} -> {crit['hash'][:12]}), not approved"
+                               if crit["changed"] and not crit["approved"] else f"criteria {crit['hash'][:12]} as registered"
+                               + (" (change approved by the operator)" if crit["changed"] else ""))})
+    bad_cash = [k for k, v in recon.items() if v.get("checked") and not v["ok"]]
+    audit.append({"bias": "Accounting integrity (hidden or reclassified trades)", "risk": "losing trades removed or edited; cash that does not add up",
+                  "guard": "each closed day's fills are sealed by hash in the evidence ledger; cash is recomputed from every fill",
+                  "status": "detected" if bad_cash or not seals["ok"] else "guarded" if any(v.get("checked") for v in recon.values()) else "not measurable yet",
+                  "evidence": "; ".join([f"{k}: cash differs from the fills by Rs {recon[k]['difference_inr']:,.2f}" for k in bad_cash]
+                                        + [f"{b['day']}: {b['problem']}" for b in seals["altered"]])
+                              or f"cash reconciles with every fill ({', '.join(f'{k}: {v.get('fills', 0)} fills' for k, v in recon.items() if v.get('checked')) or 'no account'}); "
+                                 f"{seals['sealed_days']} sealed day(s) unchanged"})
     # predeclared suspension rules
     trig = []
     la = _lookahead(inc["account"]) if inc["account"] is not None else {"checked": False}
     if la.get("checked") and (la["early_fills"] or la["catch_up_orders"]):
         trig.append({"rule": "S1", "detail": f"{la['early_fills']} early fill(s), {la['catch_up_orders']} catch-up buy(s)"})
+    if bad_cash or not seals["ok"]:
+        trig.append({"rule": "S5", "detail": "; ".join([f"{k} cash off by Rs {recon[k]['difference_inr']:,.2f}" for k in bad_cash]
+                                                       + [b["day"] for b in seals["altered"]])})
     if not chain["ok"]:
         trig.append({"rule": "S2", "detail": f"chain broken at entry {chain['broken_at']}"})
     dd = _peak_drawdown(inc["account"]) if inc["account"] is not None else None
@@ -718,6 +870,7 @@ def report(exp_dir: Path, data_dir: Path | None = None, research: dict | None = 
         {"gate": "survives doubled costs and a one-minute delay", "pass": bool(st_ch.get("survives_costs") and st_ch.get("survives_delay"))},
         {"gate": f"beats random entries (placebo p < {ALPHA})", "pass": bool(pl_ch.get("p") is not None and pl_ch["p"] < ALPHA)},
         {"gate": "no integrity violation and no active suspension", "pass": not trig},
+        {"gate": "evaluation criteria unchanged since registration (or the change approved by the operator)", "pass": crit["approved"]},
         {"gate": "no performance-deterioration alarm", "pass": not ph.get("alarm")},
         {"gate": "operator approval recorded in the evidence ledger", "pass": approved},
     ]
@@ -741,7 +894,7 @@ def report(exp_dir: Path, data_dir: Path | None = None, research: dict | None = 
         "verdict_plain": {"abstain": "Abstain: there is not enough confirmatory evidence to say the bot has an edge. Paper trading continues only to collect it.",
                           "no edge shown": "The edge hypothesis was falsified on confirmatory data: the bot has not shown it beats cash after costs.",
                           "edge not falsified": "The edge hypothesis survived its pre-registered test. That is not proof; checks continue."}[verdict],
-        "ledger": chain, "accounts": ev["accounts"],
+        "ledger": chain, "accounts": ev["accounts"], "criteria": crit, "financial": {"reconciliation": recon, "sealed": seals},
         "hypotheses": results, "biases": audit, "critic": ev["critic"],
         "validation": {"stress": st_inc, "placebo": pl_inc, "drift": ph, "regimes": regime, "configs": ev["configs"],
                        "benchmarks": (ev["bench"] or {}).get("plain"),

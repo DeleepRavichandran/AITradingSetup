@@ -174,3 +174,60 @@ def test_api_reads_with_the_viewer_key_and_only_the_operator_records_decisions(d
         for k, v in saved.items():
             os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
         config.get_settings.cache_clear()
+
+
+# ------------------------------------------------------------------ P0: protected evaluation and financial record
+def test_corrupt_bars_are_quarantined_never_traded(tmp_path):
+    from nseql.screening.store import ScreeningStore, bar_defect
+    assert bar_defect(100, 101, 99, 100.5, 10) is None
+    assert bar_defect(100, 99, 98, 100.5, 10) == "high/low inconsistent with open/close"
+    assert bar_defect(float("nan"), 101, 99, 100, 10) == "non-finite value"
+    assert bar_defect(0, 1, 0, 1, 10) == "price not positive" and bar_defect(1, 1, 1, 1, -5) == "negative volume"
+    st = ScreeningStore(tmp_path / "s")
+    good = {"symbol": "AAA", "ts": "2026-11-16T09:15:00", "open": 100, "high": 101, "low": 99, "close": 100.5, "volume": 10}
+    out = st.add_events([good, {**good, "symbol": "BBB", "high": 50}], processed_upto=None, source="test")
+    assert out["accepted"] == 1 and out["quarantined"] == 1
+    assert st.db.execute("SELECT COUNT(*) FROM events WHERE symbol='BBB'").fetchone()[0] == 0
+    assert st.db.execute("SELECT reason FROM event_quarantine").fetchone()[0].startswith("high/low")
+
+
+def _copy(exp, tmp_path):
+    import shutil
+    e2 = tmp_path / "exp"
+    shutil.copytree(exp / "screening", e2 / "screening")
+    return e2
+
+
+def test_hiding_a_losing_trade_is_detected_and_suspends(lab, tmp_path):
+    exp, _ = lab
+    e2 = _copy(exp, tmp_path)
+    L = I.Ledger(e2)
+    assert I.record_digests(L, e2, before_day="2099-01-01") >= len(DAYS)
+    r = I.report(e2)
+    assert r["financial"]["sealed"]["ok"] and all(v["ok"] for v in r["financial"]["reconciliation"].values() if v.get("checked"))
+    acc = e2 / "screening" / "live_t_v14"
+    db = sqlite3.connect(acc / "screening.sqlite")
+    k = db.execute("SELECT fill_key FROM paper_fills WHERE side='SELL' AND realized_paise < 0 ORDER BY realized_paise LIMIT 1").fetchone()
+    assert k, "fixture has a losing exit"
+    db.execute("DELETE FROM paper_fills WHERE fill_key=?", k)            # the evaluated system 'hides' its worst loss
+    db.commit()
+    db.close()
+    r = I.report(e2)
+    assert not r["financial"]["sealed"]["ok"] and any(t["rule"] == "S5" for t in r["suspension"]["triggered"])
+    b = next(x for x in r["biases"] if x["bias"].startswith("Accounting integrity"))
+    assert b["status"] == "detected" and "changed after sealing" in b["evidence"]
+
+
+def test_loosening_the_evaluation_criteria_is_detected_and_blocks_promotion(lab, tmp_path, monkeypatch):
+    exp, _ = lab
+    e2 = _copy(exp, tmp_path)
+    r = I.report(e2)
+    assert r["criteria"]["changed"] is False
+    monkeypatch.setattr(I, "ALPHA", 0.5)                                 # an attempt to make hypotheses 'pass' more easily
+    r = I.report(e2)
+    assert r["criteria"]["changed"] and not r["criteria"]["approved"]
+    assert next(x for x in r["biases"] if x["bias"].startswith("Evaluation manipulation"))["status"] == "detected"
+    assert not next(g for g in r["promotion"]["gates"] if g["gate"].startswith("evaluation criteria"))["pass"]
+    I.Ledger(e2).append("decision", f"criteria {r['criteria']['hash'][:16]}", {"decision": "approve", "reason": "operator reviewed the change"})
+    assert I.report(e2)["criteria"]["approved"]
+    assert len(I.Ledger(e2).entries("criteria")) == 2                    # both versions stay on record

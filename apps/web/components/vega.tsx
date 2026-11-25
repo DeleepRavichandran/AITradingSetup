@@ -118,7 +118,7 @@ const KIND: Record<string, [string, string]> = { BUY: ["var(--good)", "PAPER BUY
 export function Stream({ events, limit = 12 }: { events: any[]; limit?: number }) {
   if (!events?.length) return <p className="empty" style={{ padding: 16 }}>No decision recorded in this session yet.</p>;
   return (
-    <ul className="events" data-testid="decision-stream">
+    <ul className="events" data-testid="decision-stream" tabIndex={0} aria-label="Decision stream, newest first">
       {events.slice(0, limit).map((e, i) => {
         const [c, k] = KIND[e.kind] || ["var(--muted)", e.kind];
         return <li key={i}><span className="t">{hhmm(e.ts)}</span><span className="d" style={{ color: c }} />

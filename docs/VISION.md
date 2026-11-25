@@ -96,3 +96,6 @@ Each phase ships tested code and needs the operator's approval before any rule c
 
 Real-money execution is a separate project. It needs explicit operator authorisation, broker validation, and the
 live-readiness checklist (`docs/LIVE_READINESS_CHECKLIST.md`).
+
+## VEGA brain (2026-11-25)
+`services/screening/brain.py` covers the uncertainty gates, decision vs outcome quality, versioned knowledge with corrections, counterfactual shadow outcomes, strategy decay, shared risk and the brain's own measures. It is observation only; integrity.py decides its hypotheses (H-ABSTAIN). The gap analysis, the mandatory-test map and what is still missing are in docs/VEGA_BRAIN.md.
