@@ -6,7 +6,7 @@ export type Area = { key: string; label: string; pages: [string, string][] };
 export const AREAS: Area[] = [
   { key: "overview", label: "Overview", pages: [["/", "Mission Control"], ["/hud", "Account Core"], ["/today", "My Trading"], ["/review", "Daily Review"],
     ["/command", "Command Center"], ["/deck", "Vega Deck"]] },
-  { key: "radar", label: "Radar", pages: [["/radar", "Opportunity Radar"], ["/charts", "Chart Analyst"], ["/fundamental", "Fundamental Agent"],
+  { key: "radar", label: "Radar", pages: [["/radar", "Opportunity Radar"], ["/heatmaps", "Heatmap Intelligence"], ["/charts", "Chart Analyst"], ["/fundamental", "Fundamental Agent"],
     ["/market", "Market Intelligence"], ["/screening", "Strategy Monitor"], ["/universe", "Strategy Universe"]] },
   { key: "portfolio", label: "Portfolio", pages: [["/book", "Paper Portfolio"], ["/paper", "Paper Trading"], ["/portfolio", "Portfolio Simulation"],
     ["/funds", "Mutual Funds"], ["/planner", "SIP & Goal Planner"]] },

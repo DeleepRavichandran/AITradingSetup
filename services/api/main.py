@@ -1976,6 +1976,46 @@ def create_app() -> FastAPI:
         out["study_run"] = lat.get("run")
         return clean(out)
 
+    @api.get("/heatmaps")
+    def heatmaps_catalog():
+        """The sixteen heatmaps, each available / limited / unavailable (with the reason), plus the latest feature study."""
+        from nseql.screening import feature_study as FS, heatmaps as HM
+        meta = screening.get("meta") or {}
+        return clean({"catalog": HM.catalog(), "timeframes": list(HM.TIMEFRAMES), "sectors": sorted(set(HM.SECTORS.values())),
+                      "sector_of": HM.SECTORS, "account": meta.get("account"), "features": FS.latest(st.exp_dir)})
+
+    @api.get("/heatmaps/{hid}")
+    def heatmap(hid: str, tf: str = "1d", sector: str = "", at: str = ""):
+        """One heatmap from stored data. `at` (YYYY-MM-DDTHH:MM) plays history back: only rows at or before it are used."""
+        from nseql.screening import heatmaps as HM
+        if hid not in {c[0] for c in HM.CATALOG}:
+            raise HTTPException(404, f"no heatmap {hid}")
+        if tf not in HM.TIMEFRAMES:
+            raise HTTPException(400, f"tf must be one of {', '.join(HM.TIMEFRAMES)}")
+        if at and not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}", at):
+            raise HTTPException(400, "at must be YYYY-MM-DDTHH:MM")
+        meta = screening.get("meta") or {}
+        root = Path(meta["root"]) if meta.get("root") else None
+        sch = screening.get("sch")
+        pos, eq = [], None
+        if sch is not None and hid in ("portfolio_risk", "correlation"):
+            pos = screening_positions()["rows"]
+            eq = float(sch.engine.x.snapshot()["equity_inr"])
+        items = watch.recent(300, "", "") if hid == "news" else None
+        fa = (_fa_cache.get(next(iter(_fa_cache), None)) or (0, None))[1] if hid == "news" and _fa_cache else None
+        h = HM.build(hid, root, st.exp_dir, as_of=f"{at}:00" if at else None, tf=tf, sectors=[sector] if sector else None,
+                     positions=pos, equity=eq, news_items=items, fa=fa, live_from=meta.get("live_from"))
+        if sch is not None:
+            h["data_source"] = sch.provenance()
+        h["generated_at"] = datetime.now(views.IST).replace(tzinfo=None).isoformat(timespec="seconds")
+        return clean(h)
+
+    @api.get("/research/features")
+    def research_features():
+        """Latest heatmap-feature study: information coefficients, incremental value over momentum, holdout, after costs."""
+        from nseql.screening import feature_study as FS
+        return clean(FS.latest(st.exp_dir))
+
     @api.get("/research/concepts")
     def research_concepts():
         """Latest concept study: every market-structure concept against zero after costs, its simpler rule and random timing."""

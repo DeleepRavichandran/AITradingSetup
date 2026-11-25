@@ -5,16 +5,18 @@
    Market structure (services/screening/market_structure.py) from /api/structure: BOS/CHoCH/MSS, fair value gaps, order /
    breaker / mitigation blocks, liquidity levels and sweeps, value area; each concept with its research verdict
    (concept_study.py). Patterns are inferred from candles; order flow is not available and is never drawn. */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Candles, LineChart, type Note, type Zone } from "@/components/charts";
 import { Tag } from "@/components/vega";
 import { Err, Panel, Skeleton } from "@/components/ui";
-import { num, pct, useApi } from "@/lib/api";
+import { num, pct, useApi, useQuery } from "@/lib/api";
 
 const TREND: Record<string, string> = { up: "var(--good)", down: "var(--crit)", mixed: "var(--warn)" };
 
 export default function Charts() {
   const [sym, setSym] = useState("");
+  const qs = useQuery();
+  useEffect(() => { const x = qs.get("symbol"); if (x) setSym(x.toUpperCase()); }, [qs]);
   const [at, setAt] = useState("");
   const first = useApi<any>(sym ? null : "/screening/chart?symbol=RELIANCE", 0);
   const q = sym ? `/screening/chart?symbol=${encodeURIComponent(sym)}${at ? `&at=${at}` : ""}` : null;

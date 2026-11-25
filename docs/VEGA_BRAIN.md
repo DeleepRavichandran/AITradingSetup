@@ -157,3 +157,13 @@ ICT, SMC, classical price action, liquidity, Wyckoff, auction theory, volume pro
 - verdicts recorded in the ledger and the knowledge store.
 
 None of them trades. Order-book concepts (depth, spread, delta, footprint) are reported as unavailable from candle data. See docs/MARKET_STRUCTURE.md.
+
+## Heatmap intelligence (added 2026-11-25)
+
+Sixteen heatmaps are built from stored data.
+- **Unavailable, and explained instead of drawn:** order-book liquidity history, order flow (volume delta) and options OI.
+- **Labelled as inferred, not observed:** chart-inferred liquidity.
+- **Features to the brain:** the maps' features go to a point-in-time feature study (information coefficient, incremental value over momentum, holdout, after costs). Verdicts reach the evidence ledger and the knowledge store.
+- **Trading:** no trade uses a feature until it is validated and approved.
+
+See docs/HEATMAPS.md.

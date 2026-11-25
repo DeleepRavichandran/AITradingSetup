@@ -206,7 +206,7 @@ describe("Command Deck safety", () => {
 });
 
 describe("Accessibility and layout", () => {
-  for (const path of ["/", "/radar", "/book", "/integrity", "/brain", "/today", "/hud", "/contest", "/deck", "/screening", "/universe", "/planner", "/funds"]) for (const colorScheme of ["light", "dark"]) {
+  for (const path of ["/", "/radar", "/heatmaps", "/book", "/integrity", "/brain", "/today", "/hud", "/contest", "/deck", "/screening", "/universe", "/planner", "/funds"]) for (const colorScheme of ["light", "dark"]) {
     test(`${path} (${colorScheme}): no serious or critical axe violations`, async () => {
       const { page, ctx } = await open(path, { colorScheme });
       await page.waitForLoadState("networkidle");
@@ -217,7 +217,7 @@ describe("Accessibility and layout", () => {
       await ctx.close();
     });
   }
-  for (const path of ["/", "/radar", "/integrity", "/brain", "/book", "/today", "/deck", "/screening", "/universe", "/planner", "/funds"]) {
+  for (const path of ["/", "/radar", "/heatmaps", "/integrity", "/brain", "/book", "/today", "/deck", "/screening", "/universe", "/planner", "/funds"]) {
     for (const width of [360, 768, 1280]) {
       test(`${path} at ${width}px: no horizontal scroll, key controls visible`, async () => {
         const { page, ctx, errors } = await open(path, { viewport: { width, height: 800 } });
@@ -636,6 +636,28 @@ describe("VEGA: Mission Control, radar, dossier, portfolio and evidence integrit
     const { page, ctx, errors } = await open("/brain");
     await page.getByTestId("concepts").locator("tbody tr").first().waitFor();
     assert.equal(await page.getByTestId("concepts").locator("tbody tr").count(), V.concepts.results.filter((r) => r.horizon === 6).length);
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  });
+
+  test("Heatmaps: market map tiles open the dossier, grids drill down, unavailable maps say why, provenance and evidence shown", async () => {
+    const { page, ctx, errors } = await open("/heatmaps");
+    await page.getByRole("heading", { level: 1, name: "Heatmap Intelligence" }).waitFor();
+    await page.getByTestId("treemap").locator("button").first().waitFor();
+    assert.equal(await page.getByTestId("treemap").locator("button").count(), V.heatmaps.market_cap.tiles.length);
+    await page.getByTestId("hm-provenance").getByText(/Source: ledger 1-minute candles/).waitFor();
+    await page.getByTestId("treemap").locator("button").first().click();
+    await page.getByTestId("dossier").getByRole("heading").first().waitFor();
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "Order-book liquidity (history)" }).click();
+    await page.getByTestId("hm-unavailable").getByText(/not market depth/).waitFor();
+    assert.equal(await page.getByTestId("hm-grid").count(), 0);                  // nothing drawn for data we do not have
+    await page.getByRole("button", { name: "Relative strength" }).click();
+    await page.getByTestId("hm-grid").waitFor();
+    await page.getByTestId("hm-features").getByText("rs_60").waitFor();
+    await page.getByRole("button", { name: "ICT/SMC inferred liquidity zones" }).click();
+    await page.getByTestId("hm-grid").locator("button.hm-r").first().click();
+    await page.getByTestId("hm-levels").getByText(/not resting orders/).waitFor();
     assert.deepEqual(errors, []);
     await ctx.close();
   });
