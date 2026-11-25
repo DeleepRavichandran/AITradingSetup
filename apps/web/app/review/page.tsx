@@ -11,7 +11,8 @@ const STATE: Record<string, [string, string]> = {
   queued: ["Waiting for the close", "var(--muted)"], interrupted: ["Interrupted (run again)", "var(--crit)"], none: ["Not run yet", "var(--muted)"],
 };
 const STEP: Record<string, string> = { loss_study: "Why trades lost (loss study)", day_backtest: "Every strategy on its own (day backtest)", monte_carlo: "Trade-order luck (Monte Carlo)",
-  fundamental_agent: "Fundamental agent snapshot", trade_report: "Every trade, why, and next time" };
+  fundamental_agent: "Fundamental agent snapshot", trade_report: "Every trade, why, and next time", benchmarks: "Versus benchmarks",
+  opportunities: "Opportunity ledger (taken, refused, missed)" };
 const signed = (x: number | null | undefined, d = 2) => (x == null ? "—" : `${x >= 0 ? "+" : "−"}${num(Math.abs(x), d)}`);
 
 export default function Review() {
@@ -82,7 +83,9 @@ export default function Review() {
               </div>)}
           </div>
         </section>)}
+      {rev?.benchmarks?.series && <Bench b={rev.benchmarks} />}
       {rev?.trade_report && <Trades tr={rev.trade_report} />}
+      {rev?.opportunities?.gate_review && <Ledger o={rev.opportunities} />}
       {rev?.loss_study && <Loss ls={rev.loss_study} />}
       {rev?.day_backtest && <Backtest bt={rev.day_backtest} />}
       {rev?.monte_carlo && <MonteCarlo mc={rev.monte_carlo} />}
@@ -176,5 +179,42 @@ function Trades({ tr }: { tr: any }) {
         ]} />
       </Panel>
     </>
+  );
+}
+
+function Bench({ b }: { b: any }) {
+  const rows = Object.entries(b.series).map(([name, v]: [string, any]) => ({ name, ...v }));
+  return (
+    <Panel id="rv-bench" title="Versus benchmarks" hint={`${b.sessions?.length ?? 0} session(s), after costs`}>
+      <p className="ink2" style={{ marginTop: 0 }}>{b.plain}</p>
+      <DataTable rows={rows} cols={[
+        { key: "name", label: "Series" },
+        { key: "return", label: "Return", r: true, f: (x: any) => <span className={x.return < 0 ? "down" : x.return > 0 ? "up" : ""}>{pct(x.return, 2)}</span> },
+        { key: "max_drawdown", label: "Max drawdown", r: true, f: (x: any) => pct(x.max_drawdown, 2) },
+        { key: "sharpe", label: "Sharpe", r: true, f: (x: any) => (x.sharpe == null ? "—" : num(x.sharpe, 2)) },
+        { key: "worst_day", label: "Worst day", r: true, f: (x: any) => pct(x.worst_day, 2) },
+      ]} />
+      {b.notes?.length > 0 && <ul className="dim" style={{ fontSize: 12.5, margin: "8px 0 0", paddingLeft: 18 }}>{b.notes.map((n: string) => <li key={n}>{n}</li>)}</ul>}
+    </Panel>
+  );
+}
+
+function Ledger({ o }: { o: any }) {
+  return (
+    <Panel id="rv-ledger" title="Opportunity ledger" hint="hindsight, for research only: never used by a trading decision">
+      <ul data-testid="review-ledger" className="ink2" style={{ marginTop: 0, paddingLeft: 18, lineHeight: 1.55 }}>{(o.plain || []).map((p: string, i: number) => <li key={i}>{p}</li>)}</ul>
+      <DataTable rows={o.gate_review} maxHeight={300} cols={[
+        { key: "decision", label: "Bot's decision" }, { key: "reason", label: "Reason" },
+        { key: "setups", label: "Setups", r: true, f: (x: any) => num(x.setups, 0) },
+        { key: "avg_30min_net", label: "30 min later, after costs", r: true, f: (x: any) => <span className={(x.avg_30min_net ?? 0) < 0 ? "down" : "up"}>{pct(x.avg_30min_net, 2)}</span> },
+        { key: "avg_to_close_net", label: "At 15:15", r: true, f: (x: any) => pct(x.avg_to_close_net, 2) },
+      ]} />
+      {o.missed?.length > 0 && <>
+        <h3 style={{ margin: "14px 0 6px" }}>Missed moves</h3>
+        <DataTable rows={o.missed} cols={[{ key: "symbol", label: "Stock" }, { key: "start", label: "From" }, { key: "peak", label: "Peak" },
+          { key: "move_net", label: "Move after costs", r: true, f: (x: any) => pct(x.move_net, 1) },
+          { key: "refused_because", label: "Why not bought", f: (x: any) => x.refused_because || (x.signalled ? "signalled, not bought" : "no strategy signalled") }]} />
+      </>}
+    </Panel>
   );
 }

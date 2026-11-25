@@ -1827,7 +1827,7 @@ def create_app() -> FastAPI:
         elif age is not None and age > 180:
             bot = {"state": "stale", "message": f"No new prices for {int(age // 60)} minutes. Check that this laptop is online and awake."}
         else:
-            bot = {"state": "ok", "message": f"Working: checked {int(last[1] or 0):,} strategies at {str(last[0])[11:16]}." if last else "Working: waiting for the first candle."}
+            bot = {"state": "ok", "message": f"Working: last candle {str(last[0])[11:16]} IST processed." if last else "Working: waiting for the first candle."}
         out.update({
             "bot": bot,
             "account": {"starting_capital": fig["starting_capital"], "value_now": fig["equity_now"], "cash_free": fig["cash_free"],
@@ -1910,6 +1910,27 @@ def create_app() -> FastAPI:
         a["trades"] = [{"side": f[0], "t": str(f[1])[11:16], "qty": f[2], "price": f[3], "profit": (f[4] or 0) / 100 if f[0] == "SELL" else None} for f in fills]
         a["watchlist"] = list(sch.reg.symbols)
         return clean(a)
+
+    @api.get("/benchmarks")
+    def benchmarks_view():
+        """The live account after costs next to cash, NIFTY 50, buy-and-hold of the watchlist and a simple trend rule."""
+        from nseql.screening.benchmarks import compare
+        meta = screening.get("meta") or {}
+        if not meta.get("root"):
+            raise HTTPException(404, "no live paper account yet")
+        return clean(compare(Path(meta["root"]), st.data_dir))
+
+    @api.get("/research/opportunities")
+    def research_opportunities(day: str = ""):
+        """The opportunity ledger of a reviewed day (taken, refused by reason, missed), from the research store. Hindsight, for
+        research only; no trading decision reads it."""
+        from nseql.screening.daily_review import live_accounts, review_dir
+        d = day or datetime.now(views.IST).strftime("%Y-%m-%d")
+        for acc in reversed(live_accounts(st.exp_dir)):
+            f = review_dir(st.exp_dir, acc.name, d) / "opportunities.json"
+            if f.exists():
+                return clean(json.loads(f.read_text()))
+        raise HTTPException(404, f"no reviewed opportunity ledger for {d} yet (written by the daily review after the close)")
 
     @api.get("/assistant/status")
     def assistant_status():

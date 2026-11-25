@@ -39,6 +39,11 @@ UNIVERSE (what is tradable, liquid, allowed) ──► SETUPS per horizon (few, 
                                    REVIEW (daily) ─► RESEARCH PROPOSALS ─► VALIDATION ─► HUMAN APPROVAL ─► versioned promotion
 ```
 
+**Built so far:**
+- `services/screening/benchmarks.py`: the account against cash, NIFTY 50, buy-and-hold and the trend rule (`GET /api/benchmarks`).
+- `services/screening/opportunities.py`: the gate review per refusal reason, plus missed moves (`GET /api/research/opportunities`).
+- Both are steps of the daily review and appear on the Daily Review page.
+
 ## Rules of the cycle
 1. **Every decision is recorded**, including rejected signals, each with its reason. Their later outcomes are
    attached **only in the research store**, as labelled hindsight. They never feed a live decision.
@@ -79,8 +84,8 @@ Each phase ships tested code and needs the operator's approval before any rule c
 
 | Phase | Deliverable | Done when |
 |---|---|---|
-| 0 | This objective. Strategy count removed as a headline. Benchmark panel: cash, NIFTY 50, buy-and-hold watchlist, simple trend rule, incumbent. | dashboards and the daily review show results vs benchmarks after costs |
-| 1 | **Decision record and opportunity ledger:** every BUY/EXIT/REJECT with reason and context; rejected and missed opportunities tracked forward in the research store only | the review lists taken, rejected and missed with outcomes, and a test proves no hindsight leaks into decisions |
+| 0 ✅ | This objective. Strategy count removed as a headline (bot status shows the last candle, not strategies checked). Benchmark panel: cash, NIFTY 50, buy-and-hold watchlist, simple trend rule, incumbent. | dashboards and the daily review show results vs benchmarks after costs |
+| 1 ✅ (first version) | **Decision record and opportunity ledger** (`services/screening/opportunities.py`, research store `experiments/research/opportunities.sqlite`, isolation test): every BUY/EXIT/REJECT with reason and context; rejected and missed opportunities tracked forward in the research store only | the review lists taken, rejected and missed with outcomes, and a test proves no hindsight leaks into decisions |
 | 2 | **Setup library and gate:** a small set of interpretable setups per horizon (e.g. breakout-retest, trend pull-back, mean reversion in range, quality-momentum), each with thesis, invalidation and exit; a "when not to trade" gate on context and regime | each setup validated walk-forward on real data against benchmarks, then approved |
 | 3 | **Swing and positional book on daily data:** the laptop already has two years of Angel One daily candles; fundamentals from results imports; first real-data walk-forward and holdout | results vs NIFTY, buy-and-hold and cash after costs, with intervals |
 | 4 | **Portfolio across books:** one risk budget split between intraday, swing, positional and long-term; correlation-aware; cash as a position | portfolio-level drawdown and risk limits hold in replay and forward paper |

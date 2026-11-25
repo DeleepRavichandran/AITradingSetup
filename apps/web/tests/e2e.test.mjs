@@ -433,6 +433,8 @@ describe("Accessibility and layout", () => {
     await page.getByTestId("review-steps").getByText("RuntimeError: boom", { exact: false }).waitFor();
     await page.getByText("first 30 min (09:16-09:45)").first().waitFor();
     await page.getByTestId("review-next").getByText("No new entries before 09:46.").waitFor();
+    await page.getByRole("heading", { name: "Versus benchmarks" }).waitFor();
+    await page.getByTestId("review-ledger").getByText("it protected the account", { exact: false }).waitFor();
     await page.getByText("stop did its job: price kept falling after the 0.5% stop").waitFor();
     await page.getByRole("button", { name: /20 Nov/ }).click();
     await page.getByTestId("review-state").getByText("Not run yet").waitFor();
