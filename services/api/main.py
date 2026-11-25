@@ -1951,6 +1951,37 @@ def create_app() -> FastAPI:
         a["watchlist"] = list(sch.reg.symbols)
         return clean(a)
 
+    @api.get("/structure")
+    def structure_view(symbol: str, day: str = "", at: str = "", tf: int = 5):
+        """Market structure for one stock as it stood at `at` (completed candles only): BOS/CHoCH/MSS, fair value gaps,
+        order/breaker/mitigation blocks, liquidity levels and sweeps, premium/discount, OTE, opening range, VWAP, value
+        area, with each concept's latest research verdict. Patterns are inferences from candles; order flow is not available."""
+        from nseql.screening import concept_study as CS, market_structure as M
+        from nseql.screening.metrics import _next_day
+        if tf not in (5, 15):
+            raise HTTPException(400, "tf must be 5 or 15")
+        sch = _need_screening()
+        sym = symbol.upper()
+        if sym not in sch.reg.symbols:
+            raise HTTPException(404, f"{sym} is not on the watchlist")
+        d = day or datetime.now(views.IST).strftime("%Y-%m-%d")
+        as_of = pd.Timestamp(f"{d}T{at}:00") if at else min(pd.Timestamp(_next_day(d)), pd.Timestamp(datetime.now(views.IST).replace(tzinfo=None)))
+        out = M.annotate(sch.store.reader(), sym, as_of, tf)
+        lat = CS.latest(st.exp_dir)
+        verdicts = {}
+        for r in lat.get("results", []):
+            if r["horizon"] == CS.HORIZONS[0]:
+                verdicts.setdefault(r["concept"], []).append({"source": r["source"], "verdict": r["verdict"], "n": r["n"], "mean_net": r["mean_net"]})
+        out["verdicts"] = verdicts
+        out["study_run"] = lat.get("run")
+        return clean(out)
+
+    @api.get("/research/concepts")
+    def research_concepts():
+        """Latest concept study: every market-structure concept against zero after costs, its simpler rule and random timing."""
+        from nseql.screening import concept_study as CS
+        return clean(CS.latest(st.exp_dir))
+
     @api.get("/benchmarks")
     def benchmarks_view():
         """The live account after costs next to cash, NIFTY 50, buy-and-hold of the watchlist and a simple trend rule."""

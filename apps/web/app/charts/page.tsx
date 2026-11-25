@@ -1,9 +1,13 @@
 "use client";
 /* Chart Analyst (services/screening/chart_analysis.py) from /api/screening/chart: 5-minute candles with EMA20, EMA50 and
    VWAP, support and resistance levels, the account's own buys and sells, RSI(14), trend on 5m/15m/daily, patterns and a plain
-   read. "As of" replays the chart as it stood at a time of day (completed candles before it only). */
+   read. "As of" replays the chart as it stood at a time of day (completed candles before it only).
+   Market structure (services/screening/market_structure.py) from /api/structure: BOS/CHoCH/MSS, fair value gaps, order /
+   breaker / mitigation blocks, liquidity levels and sweeps, value area; each concept with its research verdict
+   (concept_study.py). Patterns are inferred from candles; order flow is not available and is never drawn. */
 import { useState } from "react";
-import { Candles, LineChart } from "@/components/charts";
+import { Candles, LineChart, type Note, type Zone } from "@/components/charts";
+import { Tag } from "@/components/vega";
 import { Err, Panel, Skeleton } from "@/components/ui";
 import { num, pct, useApi } from "@/lib/api";
 
@@ -23,6 +27,25 @@ export default function Charts() {
     return i < 0 ? null : { ts: s.t[i], price: t.price, side: t.side === "BUY" ? 1 : -1, label: t.side === "BUY" ? "buy" : `sell ${t.profit != null ? (t.profit >= 0 ? "+" : "") + num(t.profit, 0) : ""}` };
   }).filter(Boolean);
   const near = [d?.support, d?.resistance].filter(Boolean).map((l: any) => ({ price: l.price, label: `${l.label} ${num(l.price, 2)}` }));
+  const symNow = sym || d?.symbol;
+  const ms = useApi<any>(symNow ? `/structure?symbol=${encodeURIComponent(symNow)}${at ? `&at=${at}` : ""}` : null, at ? 0 : 60000).data;
+  const [layers, setLayers] = useState<Record<string, boolean>>({ structure: true, gaps: true, blocks: true, liquidity: true, value: false });
+  const BULL = "var(--good)", BEAR = "var(--crit)", BLOCK = "var(--data)", LIQ = "var(--warn)", VAL = "var(--violet)";
+  const zones: Zone[] = (ms?.zones || []).filter((z: any) => !z.invalidated_at || at).flatMap((z: any) => {
+    const gap = z.kind.startsWith("fvg") || z.kind.startsWith("bpr"), block = /^(ob|breaker|mitigation)/.test(z.kind);
+    if ((gap && !layers.gaps) || (block && !layers.blocks)) return [];
+    return [{ from: z.observable_at, to: z.invalidated_at, lo: z.lo, hi: z.hi, dashed: !!z.mitigated_at,
+      color: block ? BLOCK : z.direction > 0 ? BULL : BEAR, label: `${z.kind.replace(/_/g, " ")} ${z.lo}–${z.hi} (observable ${String(z.observable_at).slice(11, 16)})` }];
+  });
+  const SHORT: Record<string, string> = { bos_up: "BOS↑", bos_down: "BOS↓", choch_up: "CHoCH↑", choch_down: "CHoCH↓", mss_up: "MSS↑", mss_down: "MSS↓",
+    sweep_bsl: "BSL swept", sweep_ssl: "SSL swept", false_breakout_up: "false BO", false_breakout_down: "false BO", spring: "spring", upthrust: "upthrust" };
+  const notes: Note[] = (ms?.events || []).filter((e: any) => SHORT[e.type] && ((layers.structure && /bos|choch|mss/.test(e.type)) || (layers.liquidity && !/bos|choch|mss/.test(e.type))))
+    .map((e: any) => ({ ts: e.observable_at, price: e.price, label: SHORT[e.type], color: e.direction > 0 ? BULL : BEAR, up: e.direction > 0 }));
+  const lvl = layers.liquidity ? (ms?.levels || []).filter((l: any) => l.active && !/swing/.test(l.kind) && !/value|point of control/.test(l.kind))
+    .map((l: any) => ({ price: l.price, label: `${l.kind} ${num(l.price, 2)}`, color: LIQ })) : [];
+  const val = layers.value && ms?.profile_today ? [{ price: ms.profile_today.vah, label: `VAH ${num(ms.profile_today.vah, 2)}`, color: VAL },
+    { price: ms.profile_today.poc, label: `POC ${num(ms.profile_today.poc, 2)}`, color: VAL }, { price: ms.profile_today.val, label: `VAL ${num(ms.profile_today.val, 2)}`, color: VAL }] : [];
+  const verdictTone = (v?: string) => (v === "candidate" ? "ok" : v === "insufficient sample" ? "wait" : v ? "no" : "");
   return (
     <>
       <h1>Chart Analyst</h1>
@@ -43,7 +66,13 @@ export default function Charts() {
         <div className="grid g2" style={{ alignItems: "start" }}>
           <div style={{ minWidth: 0 }}>
             <Panel id="ch-candles" title={`${d.symbol} · 5-minute`} hint={d.price ? `last ${num(d.price, 2)} · as of ${String(d.as_of).replace("T", " ")}` : undefined}>
-              {s?.t?.length ? <Candles ts={s.t} open={s.open} high={s.high} low={s.low} close={s.close} markers={markers as any} lines={near} height={340}
+              <div className="row" role="group" aria-label="Structure layers" style={{ gap: 12, marginBottom: 6, fontSize: 12.5 }}>
+                {[["structure", "BOS / CHoCH / MSS"], ["gaps", "Fair value gaps"], ["blocks", "Order / breaker blocks"], ["liquidity", "Liquidity and sweeps"], ["value", "Value area"]].map(([k, l]) =>
+                  <label key={k} style={{ display: "inline-flex", gap: 5, alignItems: "center", fontSize: 12.5 }}><input type="checkbox" checked={!!layers[k]}
+                    onChange={(e) => setLayers({ ...layers, [k]: e.target.checked })} />{l}</label>)}
+              </div>
+              {s?.t?.length ? <Candles ts={s.t} open={s.open} high={s.high} low={s.low} close={s.close} markers={markers as any} lines={[...near, ...lvl, ...val]} height={340}
+                zones={zones} notes={notes}
                 overlays={[{ label: "EMA 20", values: s.ema20, color: "var(--s1)" }, { label: "EMA 50", values: s.ema50, color: "var(--s3)" },
                   { label: "VWAP", values: s.vwap, color: "var(--s5)" }]} /> : <p className="dim">No completed 5-minute candles yet.</p>}
             </Panel>
@@ -54,6 +83,18 @@ export default function Charts() {
               </Panel></div>)}
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
+            <Panel id="ch-ms" title="Market structure" hint={ms ? `${ms.timeframe} · trend ${ms.trend || "none"} · 15m ${ms.htf_trend_15m || "none"}` : "loading"}>
+              <p className="dim" style={{ margin: "0 0 8px", fontSize: 12.5 }} data-testid="ms-labels">
+                <b className="ink2">Observed:</b> {ms?.labels?.observed}. <b className="ink2">Inferred:</b> {ms?.labels?.inferred}. <b className="ink2">Validated:</b> {ms?.labels?.validated}.</p>
+              {ms?.events?.length ? <div className="tw" style={{ ["--mh" as any]: "260px" }} tabIndex={0} aria-label="Structure events today (scrollable)"><table data-testid="ms-events">
+                <thead><tr><th>Seen</th><th>Pattern</th><th>Detail</th><th>Research verdict</th></tr></thead>
+                <tbody>{[...ms.events].reverse().slice(0, 40).map((e: any, i: number) => { const v = ms.verdicts?.[e.type]?.[0]; return (
+                  <tr key={i}><td>{String(e.observable_at).slice(11, 16)}</td><td>{e.type.replace(/_/g, " ")}<span className="st">{e.family}{e.session ? ` · ${e.session.split(" ")[0]}` : ""}</span></td>
+                    <td style={{ whiteSpace: "normal", minWidth: 160, fontSize: 12.5 }}>{e.detail}{e.formed_at !== e.observable_at && <span className="st">formed {String(e.formed_at).slice(11, 16)}</span>}</td>
+                    <td>{v ? <Tag tone={verdictTone(v.verdict)}>{v.verdict}</Tag> : <span className="dim">not studied yet</span>}{v && <span className="st">n {v.n}</span>}</td></tr>); })}</tbody>
+              </table></div> : <p className="dim" style={{ margin: 0 }}>No structure event in this session yet.</p>}
+              <p className="dim" style={{ fontSize: 12, margin: "8px 0 0" }} data-testid="ms-unavailable">Not available from 1-minute candles, so never drawn: {(ms?.unavailable || []).join(", ")}.</p>
+            </Panel>
             <Panel id="ch-read" title="The read">
               <ul data-testid="chart-read" style={{ margin: 0, paddingLeft: 18, lineHeight: 1.6 }}>{(d.read || []).map((r: string, i: number) => <li key={i}>{r}</li>)}</ul>
             </Panel>

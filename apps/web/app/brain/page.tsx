@@ -11,6 +11,8 @@ const yn = (v: any) => (v === true ? "pass" : v === false ? "fail" : "unknown");
 
 export default function Brain() {
   const q = useApi<any>("/brain", 120000);
+  const cs = useApi<any>("/research/concepts", 300000).data;
+  const csRows = (cs?.results || []).filter((r: any) => r.horizon === 6);
   const d = q.data;
   const u = d?.uncertainty;
   return (
@@ -50,7 +52,7 @@ export default function Brain() {
 
         <section className="vp" style={{ marginTop: 14 }} aria-labelledby="kn-h">
           <div className="h"><div><h2 id="kn-h">Knowledge</h2><div className="sub2">Versioned on the evidence ledger; a correction is a new version, never a deletion</div></div></div>
-          <div className="tw" style={{ ["--mh" as any]: "420px" }}><table className="wrap" data-testid="knowledge">
+          <div className="tw" style={{ ["--mh" as any]: "420px" }} tabIndex={0} aria-label="Knowledge entries (scrollable)"><table className="wrap" data-testid="knowledge">
             <thead><tr><th>Id</th><th>Status</th><th>Statement</th><th>Evidence</th><th>Limitations</th></tr></thead>
             <tbody>{d.knowledge.map((k: any) => <tr key={k.id}><td><b>{k.id}</b><span className="st">v{k.version} · {String(k.at).slice(0, 10)}</span></td>
               <td><Tag tone={KTONE[k.status] ?? ""}>{k.status}</Tag></td><td style={{ minWidth: 260 }}>{k.statement}
@@ -71,7 +73,7 @@ export default function Brain() {
           </section>
           <section className="vp" aria-labelledby="dc-h">
             <div className="h"><div><h2 id="dc-h">Strategy decay and shared risk</h2><div className="sub2">Page-Hinkley per strategy type; correlated strategies count as one bet</div></div></div>
-            <div className="tw" style={{ ["--mh" as any]: "260px" }}><table data-testid="decay"><thead><tr><th>Strategy type</th><th className="r">Trades</th><th className="r">1st half</th><th className="r">2nd half</th><th>Deterioration</th></tr></thead>
+            <div className="tw" style={{ ["--mh" as any]: "260px" }} tabIndex={0} aria-label="Strategy decay by type (scrollable)"><table data-testid="decay"><thead><tr><th>Strategy type</th><th className="r">Trades</th><th className="r">1st half</th><th className="r">2nd half</th><th>Deterioration</th></tr></thead>
               <tbody>{d.decay.map((x: any) => <tr key={x.strategy_type}><td>{x.strategy_type}</td><td className="r">{x.round_trips}</td><td className="r">{signedPct(x.first_half_mean, 3)}</td>
                 <td className="r">{signedPct(x.second_half_mean, 3)}</td><td>{x.deterioration === "alarm" ? <Tag tone="no">alarm</Tag> : x.deterioration}</td></tr>)}</tbody></table></div>
             <div className="ft"><span>At most {d.shared_risk.max_concurrent} positions open together · {d.shared_risk.same_stock_same_day_by_several_strategies} stock-days traded by several strategies · {d.shared_risk.highly_correlated_types?.length || 0} highly correlated pairs</span></div>
@@ -82,6 +84,19 @@ export default function Brain() {
           <div className="h"><div><h2 id="ms-h">Measuring the brain itself</h2><div className="sub2">{d.principles}</div></div></div>
           <div className="tw" style={{ ["--mh" as any]: "none" }}><table className="wrap" data-testid="brain-metrics"><thead><tr><th>Measure</th><th>Now</th><th>Reference baseline</th><th>Evidence</th></tr></thead>
             <tbody>{d.metrics.map((m: any) => <tr key={m.measure}><td><b>{m.measure}</b></td><td>{m.value}</td><td className="ink2">{m.baseline}</td><td className="dim">{m.evidence}</td></tr>)}</tbody></table></div>
+        </section>
+
+        <section className="vp" style={{ marginTop: 14 }} aria-labelledby="cs-h">
+          <div className="h"><div><h2 id="cs-h">Market-structure concepts on trial</h2><div className="sub2">ICT, SMC, price action, liquidity, Wyckoff, auction theory: each against zero after costs, a simpler rule and random timing (6 candles ahead)</div></div>
+            {cs?.run && <Tag tone="vio">run {cs.run}</Tag>}</div>
+          {csRows.length ? <div className="tw" style={{ ["--mh" as any]: "420px" }} tabIndex={0} aria-label="Concept study results (scrollable)"><table data-testid="concepts">
+            <thead><tr><th>Concept</th><th>Source</th><th className="r">Events</th><th className="r">Mean after costs</th><th className="r">Simpler rule</th><th className="r">Random timing</th><th className="r">Holdout</th><th>Verdict</th></tr></thead>
+            <tbody>{csRows.map((r: any) => <tr key={`${r.source}-${r.concept}`}><td><b>{r.concept.replace(/_/g, " ")}</b><span className="st">{r.family}</span></td><td className="dim">{r.source}</td>
+              <td className="r">{r.n}</td><td className="r">{signedPct(r.mean_net, 3)}</td><td className="r">{r.baseline ? signedPct(r.baseline_mean, 3) : "—"}</td>
+              <td className="r">{signedPct(r.placebo_mean, 3)}</td><td className="r">{signedPct(r.holdout_mean, 3)}</td>
+              <td><Tag tone={r.verdict === "candidate" ? "ok" : r.verdict === "insufficient sample" ? "wait" : "no"}>{r.verdict}</Tag></td></tr>)}</tbody>
+          </table></div> : <p className="empty">No concept study yet: it runs with each daily review.</p>}
+          <div className="ft"><span>Candle patterns are inferences, not evidence of institutional orders. Not available: {(cs?.unavailable || []).slice(0, 4).join(", ")}.</span></div>
         </section>
 
         <section className="vp" style={{ marginTop: 14 }} aria-labelledby="ni-h">

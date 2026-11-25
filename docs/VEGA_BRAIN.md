@@ -147,3 +147,13 @@ All 30 are in `tests/screening/test_vega_brain.py`, or mapped there (`MAPPED`, i
 2. Swing book on the laptop's daily history, with walk-forward and a sealed holdout.
 3. Correlation-aware sizing proposal (as a challenger).
 4. An independent dashboard–ledger reconciliation test for every money figure.
+
+## Market-structure intelligence (added 2026-11-25)
+
+ICT, SMC, classical price action, liquidity, Wyckoff, auction theory, volume profile and sessions are now research objects:
+- exact, point-in-time definitions (no repainting, tested);
+- a study against zero after costs, the simpler rule of the same kind and random timing;
+- multiple-testing correction, a holdout, and splits by stock, session window and regime;
+- verdicts recorded in the ledger and the knowledge store.
+
+None of them trades. Order-book concepts (depth, spread, delta, footprint) are reported as unavailable from candle data. See docs/MARKET_STRUCTURE.md.

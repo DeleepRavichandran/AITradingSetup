@@ -96,7 +96,7 @@ export function Dossier({ symbol, onClose }: { symbol: string | null; onClose: (
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{Object.entries(x.signal_categories).map(([k, n]: any) =>
               <Tag key={k} tone={k === "accepted" ? "ok" : "no"}>{k}: {n}</Tag>)}</div>
           </section>}
-          {x.signals.length > 0 && <div className="tw" style={{ ["--mh" as any]: "240px" }}><table>
+          {x.signals.length > 0 && <div className="tw" style={{ ["--mh" as any]: "240px" }} tabIndex={0} aria-label="Signals today (scrollable)"><table>
             <thead><tr><th>Time</th><th>Setup</th><th>Decision</th><th className="r">Edge</th><th>Recorded reason</th></tr></thead>
             <tbody>{x.signals.slice(0, 40).map((s: any, i: number) => <tr key={i}><td>{s.time}</td><td>{s.setup} <span className="dim">{s.timeframe}</span></td>
               <td>{s.status === "accepted" ? <Tag tone="ok">accepted</Tag> : <Tag tone="no">{s.category}</Tag>}</td>

@@ -78,9 +78,13 @@ export function LineChart({ x, series, height = 240, fmt = compact, area = false
 export type Marker = { ts: string; price: number; side: number; label: string };
 
 /** OHLC candles with fill markers. Up/down is encoded by fill (hollow vs solid) AND colour. */
-export function Candles({ ts, open, high, low, close, markers = [], height = 300, lines = [], overlays = [] }: {
-  ts: string[]; open: number[]; high: number[]; low: number[]; close: number[]; markers?: Marker[]; height?: number; lines?: { price: number; label: string }[];
-  overlays?: { label: string; values: (number | null)[]; color: string }[];
+export type Zone = { from: string; to?: string | null; lo: number; hi: number; color: string; label: string; dashed?: boolean };
+export type Note = { ts: string; price: number; label: string; color: string; up?: boolean };
+
+export function Candles({ ts, open, high, low, close, markers = [], height = 300, lines = [], overlays = [], zones = [], notes = [] }: {
+  ts: string[]; open: number[]; high: number[]; low: number[]; close: number[]; markers?: Marker[]; height?: number;
+  lines?: { price: number; label: string; color?: string }[];
+  overlays?: { label: string; values: (number | null)[]; color: string }[]; zones?: Zone[]; notes?: Note[];
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [hi, setHi] = useState<number | null>(null);
@@ -94,6 +98,8 @@ export function Candles({ ts, open, high, low, close, markers = [], height = 300
   const X = (i: number) => m.l + (i + 0.5) * bw;
   const Y = (v: number) => m.t + (1 - (v - lo) / (up - lo)) * (height - m.t - m.b);
   const idx = (t: string) => ts.findIndex((x) => x === t);
+  const near = (t: string) => { const k = ts.findIndex((x) => x >= t); return k < 0 ? n - 1 : k; };   // zones that began before the window start at its edge
+  const inView = (p: number) => p >= lo && p <= up;
   const move = (e: React.MouseEvent) => {
     const r = ref.current!.getBoundingClientRect();
     setHi(Math.max(0, Math.min(n - 1, Math.floor((((e.clientX - r.left) / r.width) * W - m.l) / bw))));
@@ -106,6 +112,13 @@ export function Candles({ ts, open, high, low, close, markers = [], height = 300
       <svg viewBox={`0 0 ${W} ${height}`} role="img" aria-label="Candlestick chart with trade fills">
         {ticks(lo, up).map((t) => <g key={t}><line x1={m.l} x2={W - m.r} y1={Y(t)} y2={Y(t)} stroke="var(--grid)" /><text className="axis" x={m.l - 6} y={Y(t) + 4} textAnchor="end">{compact(t)}</text></g>)}
         {[0, Math.floor(n / 2), n - 1].map((i, k) => <text key={k} className="axis" x={X(i)} y={height - 5} textAnchor={k === 0 ? "start" : k === 2 ? "end" : "middle"}>{ts[i].slice(0, 16)}</text>)}
+        {zones.map((z, k) => {
+          const a = near(z.from.slice(0, 16)), b = z.to ? near(z.to.slice(0, 16)) : n - 1;
+          if (!inView(z.lo) && !inView(z.hi) && !(z.lo < lo && z.hi > up)) return null;
+          const y1 = Y(Math.min(z.hi, up)), y2 = Y(Math.max(z.lo, lo));
+          return <g key={`z${k}`}><rect x={X(a) - bw / 2} y={y1} width={Math.max((b - a + 1) * bw, 2)} height={Math.max(y2 - y1, 1)} fill={z.color} fillOpacity={0.14}
+            stroke={z.color} strokeOpacity={0.55} strokeDasharray={z.dashed ? "3 3" : undefined} /><title>{z.label}</title></g>;
+        })}
         {ts.map((_, i) => {
           const upc = close[i] >= open[i], c = upc ? "var(--up)" : "var(--down)";
           const y1 = Y(Math.max(open[i], close[i])), y2 = Y(Math.min(open[i], close[i]));
@@ -117,7 +130,13 @@ export function Candles({ ts, open, high, low, close, markers = [], height = 300
           o.values.forEach((v, i) => { if (v == null) { pen = false; return; } d += `${pen ? "L" : "M"}${X(i).toFixed(1)},${Y(v).toFixed(1)}`; pen = true; });
           return <path key={o.label} d={d} fill="none" stroke={o.color} strokeWidth={1.6} />;
         })}
-        {lines.map((l) => <g key={l.label}><line x1={m.l} x2={W - m.r} y1={Y(l.price)} y2={Y(l.price)} stroke="var(--axis)" strokeDasharray="4 4" /><text className="axis" x={W - m.r} y={Y(l.price) - 4} textAnchor="end">{l.label}</text></g>)}
+        {lines.filter((l) => inView(l.price)).map((l) => <g key={l.label}><line x1={m.l} x2={W - m.r} y1={Y(l.price)} y2={Y(l.price)} stroke={l.color || "var(--axis)"} strokeDasharray="4 4" /><text className="axis" x={W - m.r} y={Y(l.price) - 4} textAnchor="end" style={l.color ? { fill: l.color } : undefined}>{l.label}</text></g>)}
+        {notes.map((t, k) => {
+          const i = idx(t.ts.slice(0, 16));
+          if (i < 0 || !inView(t.price)) return null;
+          const y = t.up ? Y(t.price) + 14 : Y(t.price) - 8;
+          return <text key={`n${k}`} x={X(i)} y={y} textAnchor="middle" fontSize="10.5" fontWeight="700" style={{ fill: t.color }}>{t.label}<title>{t.label}</title></text>;
+        })}
         {markers.map((k, j) => {
           const i = idx(k.ts);
           if (i < 0) return null;

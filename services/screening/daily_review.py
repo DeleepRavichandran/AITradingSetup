@@ -29,7 +29,7 @@ from pathlib import Path
 
 import pandas as pd
 
-STEPS = ("trade_report", "benchmarks", "opportunities", "loss_study", "day_backtest", "monte_carlo", "fundamental_agent", "integrity", "brain")
+STEPS = ("trade_report", "benchmarks", "opportunities", "loss_study", "day_backtest", "monte_carlo", "fundamental_agent", "integrity", "brain", "concepts")
 VERSION = "1.0"
 
 
@@ -211,6 +211,15 @@ def run(account: Path, day: str, exp_dir: Path, steps: tuple[str, ...] = STEPS, 
             elif s == "integrity":
                 results[s] = _integrity(exp_dir, day)
                 _write(out / "integrity.json", results[s])
+            elif s == "concepts":
+                from nseql.config import get_settings
+                from nseql.screening import concept_study as CS
+                r_ = CS.run(account, exp_dir, get_settings().data_dir)
+                results[s] = {k: r_[k] for k in ("run", "runs", "version", "params_hash", "note")} | {
+                    "verdicts": {v: sum(1 for x in r_["results"] if x["verdict"] == v and x["horizon"] == CS.HORIZONS[0])
+                                 for v in {x["verdict"] for x in r_["results"]}},
+                    "candidates": [f"{x['concept']} ({x['source']})" for x in r_["results"] if x["verdict"] == "candidate" and x["horizon"] == CS.HORIZONS[0]]}
+                _write(out / "concepts.json", results[s])
             elif s == "brain":
                 results[s] = _brain(exp_dir, results.get("integrity"), results.get("trade_report"))
                 _write(out / "brain.json", results[s])
@@ -294,6 +303,10 @@ def build(account: str, day: str, r: dict, st: dict) -> dict:
         bits = [f"{k}: {', '.join(v[:6])}{' ...' if len(v) > 6 else ''}" for k, v in lean.items() if v] + ([f"results due: {', '.join(due)}"] if due else [])
         if bits:
             head.append("Stocks: " + "; ".join(bits) + ".")
+    cs = r.get("concepts")
+    if cs:
+        head.append("Market-structure concepts (research only): " + (f"{len(cs['candidates'])} candidate(s) for forward testing: " + ", ".join(cs["candidates"][:5])
+                    if cs["candidates"] else "none has shown value after costs over a simpler rule and random timing") + ".")
     ig = r.get("integrity")
     if ig:
         head.append("Evidence integrity: " + ig["verdict_plain"])

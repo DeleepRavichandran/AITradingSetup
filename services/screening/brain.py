@@ -44,7 +44,7 @@ ALTERNATIVES = (            # predeclared; never chosen after seeing outcomes
 )
 STATUSES = ("observed fact", "unverified hypothesis", "experimental finding", "validated finding", "contradicted finding",
             "superseded finding", "invalidated finding")
-KNOWLEDGE_SOURCES = ("ledger", "integrity", "daily_review", "operator")
+KNOWLEDGE_SOURCES = ("ledger", "integrity", "daily_review", "operator", "concept_study")
 LEVELS = ("observed fact", "heuristic interpretation", "statistically supported finding")
 
 

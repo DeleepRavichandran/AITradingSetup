@@ -184,6 +184,8 @@ export function fixtures(state) {
     "/decisions": () => VEGA.decisions,
     "/integrity": () => VEGA.integrity,
     "/brain": () => VEGA.brain,
+    "/structure": () => VEGA.structure,
+    "/research/concepts": () => VEGA.concepts,
     "/benchmarks": () => ({ account: "live_x_v14", sessions: ["2026-11-23", "2026-11-24", "2026-11-25"], start_value: 100000, notes: ["3 session(s): risk-adjusted figures (Sharpe, Sortino) are not meaningful before 20"],
       plain: "Over 3 session(s) the account returned -2.59% after costs; behind cash, buy and hold watchlist.",
       series: { "account (after costs)": { return: -0.0259, max_drawdown: -0.0259, sharpe: null, worst_day: -0.0214, daily: [-0.0214, -0.0011, -0.0035] },

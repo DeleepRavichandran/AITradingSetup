@@ -617,4 +617,26 @@ describe("VEGA: Mission Control, radar, dossier, portfolio and evidence integrit
     assert.deepEqual(errors, []);
     await ctx.close();
   });
+
+  test("Chart Analyst: market structure with layers, every pattern labelled inferred, its research verdict, and order flow stated unavailable", async () => {
+    const { page, ctx, errors } = await open("/charts");
+    await page.getByTestId("ms-events").locator("tbody tr").first().waitFor();
+    assert.equal(await page.getByTestId("ms-events").locator("tbody tr").count(), Math.min(40, V.structure.events.length));
+    await page.getByTestId("ms-labels").getByText(/not institutional intent/).waitFor();
+    await page.getByTestId("ms-unavailable").getByText(/cumulative volume delta/).waitFor();
+    const tags = await page.getByTestId("ms-events").locator(".tag").allTextContents();
+    assert.ok(tags.length > 0 && tags.every((t) => ["no value after costs", "insufficient sample", "no edge over the simpler rule", "no edge over random timing", "candidate"].includes(t.trim())));
+    await page.getByRole("checkbox", { name: "Value area" }).check();
+    await page.getByRole("checkbox", { name: "Fair value gaps" }).uncheck();
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  });
+
+  test("Brain: market-structure concepts on trial with verdicts against the simpler rule and random timing", async () => {
+    const { page, ctx, errors } = await open("/brain");
+    await page.getByTestId("concepts").locator("tbody tr").first().waitFor();
+    assert.equal(await page.getByTestId("concepts").locator("tbody tr").count(), V.concepts.results.filter((r) => r.horizon === 6).length);
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  });
 });
