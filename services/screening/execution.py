@@ -92,13 +92,17 @@ class PortfolioRules:
         """Rules for the live paper account (version LIVE_RULES_VERSION).
         1.1 (2026-11-23): churn limits. 1.2 (operator choice A, 2026-11-23): fewer, larger trades - 10% of equity
         per buy (about Rs 10,000 on Rs 1 lakh, so stocks above Rs 2,000 become buyable), at most 8 positions,
-        12% per stock (one 10% buy plus the cost buffer)."""
+        12% per stock (one 10% buy plus the cost buffer). 1.3 (2026-11-25): no new entries before 09:46."""
         return cls(capital=capital, per_trade_pct=0.10, max_positions=8, max_symbol_pct=0.12,
                    cooldown_minutes=15, max_entries_per_symbol_day=4, max_entries_per_config_day=1,
-                   max_open_per_symbol=1, group_gate_trades=30)
+                   max_open_per_symbol=1, group_gate_trades=30, no_entry_first_minutes=30)
 
 
-LIVE_RULES_VERSION = "1.2"
+# 1.3 (2026-11-25): no new entries before 09:46. Evidence: entries in the first 30 minutes lost on both real days
+# (23 Nov: -8.94 INR per trade over 120 trades; 25 Nov: -50.91 INR per trade over 15 trades, 95% range below zero) and
+# the opening blackout (H2) was accepted on the synthetic walk-forward validation (docs/REVIEW_1376b45.md). Exits are not
+# affected. Risk limits are unchanged.
+LIVE_RULES_VERSION = "1.3"
 
 # Execution assumptions (review of 1376b45, 2026-11-25). A ledger produced under an earlier version keeps its rows; the
 # ledger audit flags it for recomputation (results are not comparable across versions).

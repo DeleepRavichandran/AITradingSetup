@@ -139,8 +139,8 @@ def _scheduler(root: Path, syms: list[str], v: dict):
     def make(symbols, exec_cfg, portfolio):
         reg = build(symbols, None)
         return reg, ScreeningEngine(reg, exec_cfg, portfolio, alloc)
-    return MinuteScheduler(root, syms, portfolio=replace(PortfolioRules.live(CAPITAL), **v["rules"]), exec_cfg=ec, mode="replay",
-                           engine_factory=make)
+    base = replace(PortfolioRules.live(CAPITAL), no_entry_first_minutes=0)     # the experiment's baseline is rules 1.2 (as recorded)
+    return MinuteScheduler(root, syms, portfolio=replace(base, **v["rules"]), exec_cfg=ec, mode="replay", engine_factory=make)
 
 
 def run_variant(args) -> dict:

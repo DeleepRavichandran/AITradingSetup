@@ -62,10 +62,10 @@ CHALLENGER_CONFIG = ChallengerConfig()
 
 def challenger_rules(capital: float) -> PortfolioRules:
     """The incumbent's live risk ceilings (cash, per-trade, per-symbol, gross, positions, daily loss, churn limits).
-    The incumbent's strategy-SELECTION gate (group_gate_trades) is not a risk ceiling and would stop the frozen
-    challenger rule from trading mid-evaluation, so it is off."""
+    The incumbent's strategy-SELECTION gate (group_gate_trades) and its opening blackout (no_entry_first_minutes) are not
+    risk ceilings and would change the frozen challenger rule mid-evaluation, so they are off."""
     from dataclasses import replace
-    return replace(PortfolioRules.live(capital), group_gate_trades=0)
+    return replace(PortfolioRules.live(capital), group_gate_trades=0, no_entry_first_minutes=0)   # its own frozen rule decides entry times
 
 
 def build_registry(symbols: list[str], cfg: ChallengerConfig = CHALLENGER_CONFIG) -> Registry:
