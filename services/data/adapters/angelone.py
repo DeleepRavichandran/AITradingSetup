@@ -78,7 +78,7 @@ def missing_credentials(env=os.environ) -> list[str]:
 class AngelHistorical:
     def __init__(self, *, api_key: str | None = None, client_code: str | None = None, pin: str | None = None,
                  totp_secret: str | None = None, session_dir: Path | None = None, transport: httpx.BaseTransport | None = None,
-                 min_interval_s: float = 0.4, max_retries: int = 4, clock=time.time, sleep=time.sleep):
+                 min_interval_s: float = 0.4, max_retries: int = 4, max_backoff_s: float = 16, clock=time.time, sleep=time.sleep):
         e = os.environ
         self.api_key = api_key or e.get("ANGEL_API_KEY")
         self.client_code = client_code or e.get("ANGEL_CLIENT_CODE")
@@ -91,6 +91,7 @@ class AngelHistorical:
         self._client = httpx.Client(base_url=BASE_URL, transport=transport, timeout=30.0)
         self._transport = transport
         self._min, self._retries, self._clock, self._sleep = min_interval_s, max_retries, clock, sleep
+        self._max_backoff = max_backoff_s
         self._last = 0.0
         self.jwt: str | None = None
         self.feed_token: str | None = None
@@ -151,7 +152,7 @@ class AngelHistorical:
 
     def _post(self, path: str, body: dict) -> dict:
         self.ensure_login()
-        relogged, busy = False, 0
+        relogged, busy, last = False, 0, ""
         for _ in range(self._retries + 2):
             wait = self._min - (self._clock() - self._last)
             if wait > 0:
@@ -169,15 +170,16 @@ class AngelHistorical:
                 relogged = True
                 continue
             if rate_limited or r.status_code >= 500:
+                last = f"HTTP {r.status_code}" + (f" {code}" if code and code != str(r.status_code) else "") + f": {str(d.get('message') or r.text)[:120]}"
                 if busy >= self._retries:
                     break
-                self._sleep(min(2 ** busy, 16))
+                self._sleep(min(2 ** busy, self._max_backoff))
                 busy += 1
                 continue
             if not d.get("status"):
                 raise AngelError(f"Angel One error: {d.get('message')} ({code or r.status_code})")
             return d
-        raise AngelError(f"Angel One kept refusing {path} after {self._retries} retries (rate limit or server error)")
+        raise AngelError(f"Angel One kept refusing {path} after {self._retries} retries; last answer {last or 'none'}")
 
     def candles(self, token, interval: str, start: datetime, end: datetime, oi: bool = False, exchange: str = "NSE") -> pd.DataFrame:
         """Bars in the platform convention (exchange-local, tz-naive, stamped at bar END; daily at 15:30)."""

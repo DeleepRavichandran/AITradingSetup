@@ -62,6 +62,12 @@ def _status(exp_dir: Path, **kw) -> None:
 
 
 # ================================================================================================ 1. data
+# Bulk import pacing (2026-11-26: the first real run was refused after ~15 s of back-off at 2.5 requests/s and aborted the
+# whole import). About 1 request a second, up to 8 retries with waits up to a minute; a symbol still refused after that
+# is reported as not imported and the run continues with the rest.
+IMPORT_PACING = {"min_interval_s": 1.0, "max_retries": 8, "max_backoff_s": 60}
+
+
 def import_history(api, data_dir: Path, exp_dir: Path, symbols: list[str], months: int = 12, end: date | None = None) -> dict:
     """1-minute candles for the watchlist and NIFTY 50 from Angel One, in 30-day requests. Whatever Angel One returns is
     what is used; coverage is reported per symbol, nothing is filled in."""

@@ -1426,6 +1426,9 @@ def create_app() -> FastAPI:
                      "detail": st.kill.reason or "clear" if st.kill.engaged else "clear; engage from the Risk page or the Deck"})
         rows.append({"module": "Live order routing", "status": "disabled", "detail": "LIVE_TRADING_ENABLED=false; no agent can change it"
                      if not st.settings.live_trading_enabled else "flag set in the environment; the live gate still requires human authorisation"})
+        from nseql.screening.data_audit import update_status
+        up = update_status(st.exp_dir)
+        rows.append({"module": "Self-update", "status": up["status"], "detail": up["detail"]})
         n = st.notifier.status()
         rows.append({"module": "WhatsApp notifications", "status": "unverified" if n["configured"] else "not configured", "detail": n["status"]})
         return rows

@@ -70,3 +70,24 @@ def audit(exp_dir: Path, data_dir: Path | None = None) -> dict:
         out["history_status"] = ("no historical minute dataset on this machine yet: the laptop's weekly history-validate job "
                                  "imports it (Angel One credentials stay on the laptop)")
     return out
+
+
+def update_status(exp_dir: Path) -> dict:
+    """The laptop's daily self-update, from the last line of experiments/logs/update.log (written by daily_update.ps1).
+    2026-11-26: the updater refused for two days because of a staged edit to a doc ("NOT updated: local changes") and
+    nothing on the dashboard said so; the lab traded on rules two versions old. A refusal or rollback is now 'blocked'."""
+    f = Path(exp_dir) / "logs" / "update.log"
+    if not f.exists():
+        return {"status": "not configured", "detail": "no update log (the daily self-update is not installed on this machine)"}
+    lines = [ln.strip().lstrip("﻿") for ln in f.read_text(encoding="utf-8", errors="replace").splitlines()]
+    dated = [ln for ln in lines if len(ln) > 20 and ln[:4].isdigit() and ln[4] == "-" and ln[10] == " "]
+    if not dated:
+        return {"status": "unverified", "detail": "update log has no dated entry yet"}
+    last = dated[-1]
+    at, msg = last[:19], last[20:]
+    bad = ("NOT updated", "rolling back", "ROLLBACK", "unhealthy")
+    if any(b in msg for b in bad):
+        fix = (" Fix: on the laptop run 'git status --short' in the lab folder; set the change aside with 'git stash', then run "
+               "scripts\\windows\\daily_update.ps1." if "local changes" in msg else "")
+        return {"status": "blocked", "detail": f"{at}: {msg}.{fix}", "at": at}
+    return {"status": "ready", "detail": f"{at}: {msg}", "at": at}

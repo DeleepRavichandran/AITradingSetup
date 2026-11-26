@@ -180,3 +180,22 @@ def test_few_sessions_never_read_as_ahead():
     rng = np.random.default_rng(1)
     a = list(0.003 + rng.normal(0, 0.002, 40))
     assert H._excess(a, [0.0] * 40)["reading"] == "ahead (interval above zero)"               # a real effect is still read
+
+
+def test_a_blocked_self_update_is_shown_never_silent(tmp_path):
+    """2026-11-26: the laptop's updater refused for two days ('NOT updated: local changes in tracked files') and the lab
+    traded on rules two versions old without any warning. The refusal now appears as a blocked module with the fix."""
+    from nseql.screening.data_audit import update_status
+    assert update_status(tmp_path)["status"] == "not configured"
+    log = tmp_path / "logs" / "update.log"
+    log.parent.mkdir()
+    log.write_text("﻿2026-11-25 16:10:04 updated and healthy at 52b18df\n git : From https://github.com/x/y\n"
+                   "2026-11-26 16:10:06 NOT updated: local changes in tracked files (left untouched)\n", encoding="utf-8")
+    u = update_status(tmp_path)
+    assert u["status"] == "blocked" and "local changes" in u["detail"] and "git stash" in u["detail"] and u["at"] == "2026-11-26 16:10:06"
+    with log.open("a", encoding="utf-8") as f:
+        f.write("2026-11-26 19:35:30 updated and healthy at 87354f9\n")
+    assert update_status(tmp_path)["status"] == "ready"
+    with log.open("a", encoding="utf-8") as f:
+        f.write("2026-11-27 16:12:00 new version unhealthy (build ok: True): rolling back to 87354f9\n")
+    assert update_status(tmp_path)["status"] == "blocked"

@@ -412,7 +412,8 @@ def main(argv: list[str] | None = None) -> int:
             if miss:
                 print("missing in .env:", ", ".join(miss)); return 2
             try:
-                cov = H.import_history(AngelHistorical(session_dir=s.experiments_dir), s.data_dir, s.experiments_dir, watchlist(s.experiments_dir), a.months)
+                api = AngelHistorical(session_dir=s.experiments_dir, **H.IMPORT_PACING)     # patient: a multi-hour bulk import
+                cov = H.import_history(api, s.data_dir, s.experiments_dir, watchlist(s.experiments_dir), a.months)
             except AngelError as e:
                 H._status(s.experiments_dir, state="failed", phase="import", error=str(e))
                 print(e); return 1

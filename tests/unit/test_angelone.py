@@ -3,7 +3,7 @@ import json
 import os
 import stat
 import time
-from datetime import datetime
+from datetime import date, datetime
 
 import httpx
 import numpy as np
@@ -329,3 +329,36 @@ def test_suggest_offers_renamed_symbols():
                       [("TMPV", "TATA MOTORS PASSENGER VEHICLES"), ("TMCV", "TATA MOTORS"), ("TATASTEEL", "TATA STEEL"), ("INFY", "INFOSYS")]])
     out = suggest(m, "TATAMOTORS")
     assert "TMPV" in out and "TMCV" in out and "INFY" not in out
+
+
+def test_bulk_import_is_patient_names_the_refusal_and_continues_past_one_symbol(tmp_path, monkeypatch):
+    """2026-11-26, first real history import: Angel One refused getCandleData and the importer gave up after ~15 s with
+    'rate limit or server error', aborting every symbol. Now: patient pacing for bulk imports, the last answer is named,
+    and one refused symbol does not stop the others."""
+    from nseql.data.adapters import angel_import as AI
+    from nseql.screening import history_validation as H
+    assert H.IMPORT_PACING["min_interval_s"] >= 1.0 and H.IMPORT_PACING["max_retries"] >= 8 and H.IMPORT_PACING["max_backoff_s"] >= 60
+    srv = Server()
+    api, sleeps = _api(srv, tmp_path, max_retries=8, max_backoff_s=60)
+    srv.fail = ["rate403"] * 7                                          # refused for a long time, then served
+    df = api.candles("2885", "1d", datetime(2026, 11, 16), datetime(2026, 11, 20))
+    assert len(df) == 5 and sleeps[-7:] == [1, 2, 4, 8, 16, 32, 60]      # waits grow to a minute instead of giving up at 16 s
+    srv.fail = ["rate403"] * 20
+    with pytest.raises(A.AngelError, match=r"last answer HTTP 403: Access denied because of exceeding access rate"):
+        api.candles("2885", "1d", datetime(2026, 11, 16), datetime(2026, 11, 20))
+    # one symbol refused throughout, the other served: the import continues and reports which and why
+    srv.fail = []
+    master = pd.DataFrame([{"symbol": "AAA", "token": "1"}, {"symbol": "BBB", "token": "2"}])
+    monkeypatch.setattr(api, "instruments", lambda cache_dir=None: master)
+    monkeypatch.setattr(AI, "resolve", lambda m, wanted: ([{"symbol": s, "token": t, "kind": "EQ", "tick": 0.05}
+                                                          for s, t in (("AAA", "1"), ("BBB", "2")) if s in wanted], []))
+    real = api.candles
+    def candles(token, *a, **k):
+        if token == "1":
+            raise A.AngelError("Angel One kept refusing getCandleData after 8 retries; last answer HTTP 500: busy")
+        return real(token, *a, **k)
+    monkeypatch.setattr(api, "candles", candles)
+    msgs = []
+    ds, missing = AI.import_angel(api, ["AAA", "BBB"], date(2026, 11, 16), date(2026, 11, 20), tmp_path / "data", "t", licence="test",
+                                  include_nifty=False, progress=msgs.append)
+    assert missing == ["AAA"] and ds.symbols("1d") == ["BBB"] and any("AAA: not imported" in m and "HTTP 500" in m for m in msgs)
