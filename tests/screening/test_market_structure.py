@@ -27,19 +27,19 @@ def walk(days: int, seed: int, per_day: int = 75, plant: bool = False):
     rows, px = [], 1000.0
     for d in pd.bdate_range("2026-01-05", periods=days):
         k = 0
-        plants = {20, 50} if plant else set()
+        plants = {5, 25, 45} if plant else set()
         while k < per_day:
             t = d + pd.Timedelta(hours=9, minutes=20 + 5 * k)
             if k in plants and k + 16 < per_day:
                 seq = [(px, px + 1, px - 1, px + 0.5), (px + 0.5, px + 6, px + 0.4, px + 5.8), (px + 5.8, px + 7.5, px + 3, px + 7.2)]
                 px = 7.2 + px
-                seq += [(px + 0.6 * j, px + 0.6 * j + 0.8, px + 0.6 * j - 0.3, px + 0.6 * (j + 1)) for j in range(13)]
+                seq += [(px + 0.6 * j, px + 0.6 * j + 0.8, px + 0.6 * j - 1.0, px + 0.6 * (j + 1)) for j in range(13)]   # overlapping: no gaps
                 px = seq[-1][3]
                 for j, (o, h, l, c) in enumerate(seq):
                     rows.append({"open": o, "high": h, "low": l, "close": c, "volume": 1000.0, "end": d + pd.Timedelta(hours=9, minutes=20 + 5 * (k + j))})
                 k += len(seq)
                 continue
-            r = rng.normal(0, 1.2)
+            r = rng.normal(0, 1.2) - (45.0 / 27 if plant else 0.0)     # the 3 planted rises (+15 each) are offset over the other 27 bars
             o, c = px, px + r
             rows.append({"open": o, "high": max(o, c) + abs(rng.normal(0, 0.6)), "low": min(o, c) - abs(rng.normal(0, 0.6)), "close": c,
                          "volume": float(rng.integers(500, 1500)), "end": t})
@@ -114,17 +114,19 @@ def test_intraday_outcomes_never_cross_the_close():
 def test_study_rejects_noise(tmp_path):
     frames = [(f"S{k}", walk(30, 100 + k), None, True) for k in range(4)]
     out = CS.run(None, tmp_path, frames=frames, record=False)
-    assert out["results"] and not any(r["verdict"] == "candidate" for r in out["results"])
-    assert {r["verdict"] for r in out["results"]} <= {"insufficient sample", "no value after costs", "no edge over the simpler rule",
-                                                       "no edge over random timing"}
+    from nseql.screening.validation_protocol import STATUSES
+    assert out["results"] and not any(r["verdict"] == "holdout-supported finding" for r in out["results"])
+    assert {r["verdict"] for r in out["results"]} <= set(STATUSES)
 
 
 def test_study_finds_a_planted_effect(tmp_path):
     frames = [(f"S{k}", walk(30, 200 + k, plant=True), None, True) for k in range(4)]
     out = CS.run(None, tmp_path, frames=frames, record=False)
     f = next(r for r in out["results"] if r["concept"] == "fvg_bull" and r["horizon"] == 12)
-    assert f["n"] >= CS.MIN_EVENTS and f["p_bh_pass"] and f["mean_net"] > 0          # real value after costs is found
-    assert f["verdict"] in ("candidate", "no edge over the simpler rule", "no edge over random timing")
+    assert f["n"] >= CS.MIN_EVENTS and f["p_bh_pass"] and f["mean_net"] > 0          # real value after costs is found in development
+    # a pattern-specific effect (day drift cancelled, so random timing earns ~0) passes development AND the sealed holdout,
+    # beating zero, the simpler rule and random timing: the controls are strict but not blind
+    assert f["verdict"] == "holdout-supported finding" and f["holdout_sessions"] >= 8
 
 
 def test_study_records_verdicts_and_knowledge(tmp_path):

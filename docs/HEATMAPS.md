@@ -76,3 +76,21 @@ A candidate still needs forward sessions, the challenger contest and your approv
 - A planted relative-volume signal is found, and unrelated features stay rejected.
 
 Results go to the research store, the evidence ledger (`HM-*`) and the knowledge store. No trading module reads them (test-enforced).
+
+## Playback is point in time (updated 2026-11-26)
+
+Every map rebuilds from records that were **available** at the chosen time.
+
+| Map or input | What playback uses |
+|---|---|
+| Live bars | only bars that had arrived (the arrival clock is used when it is real; replayed history uses the bar's close time) |
+| Decisions | only decisions already made by that minute |
+| Positions | rebuilt from fills up to then (stop distance unavailable: stops are not stored per minute) |
+| Trading performance | only exits by then |
+| Methodology | only research runs completed by then |
+| News | only headlines first seen by then (tone unavailable in playback) |
+| Data quality | late and quarantined bars counted only once they had arrived |
+
+Corrected candles never overwrite the ledger (re-sent bars go to a conflicts table), so they cannot leak into earlier playback.
+
+A test changes everything observable after the chosen time (prices, decisions, exits, positions, quarantine, research, news) and checks that all 16 maps are unchanged. The feature study now uses the same staged protocol as the concept study, clustered by day.

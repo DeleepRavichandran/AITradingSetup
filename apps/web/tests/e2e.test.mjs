@@ -582,7 +582,7 @@ describe("VEGA: Mission Control, radar, dossier, portfolio and evidence integrit
     assert.equal(await page.getByTestId("ei-hypotheses").locator("tbody tr").count(), V.integrity.hypotheses.length);
     await page.getByTestId("ei-hypotheses").getByText("H-EDGE").waitFor();
     await page.getByTestId("ei-biases").getByText("Survivorship").waitFor();
-    await page.getByTestId("ei-gates").getByText("operator approval recorded in the evidence ledger").waitFor();
+    await page.getByTestId("ei-gates").getByText("operator approval bound to this exact candidate (fingerprint)").waitFor();
     await page.getByTestId("ei-suspend").getByText("S1").waitFor();
     const f = page.getByTestId("decision-form");
     assert.ok(await f.getByRole("button", { name: "Record decision" }).isDisabled());
@@ -591,6 +591,13 @@ describe("VEGA: Mission Control, radar, dossier, portfolio and evidence integrit
     await f.getByText(/Recorded in the ledger/).waitFor();
     const p = state.posts.find((x) => x.path === "/integrity/decision");
     assert.equal(p.body.decision, "reject");
+    // a decision on the challenger names the exact candidate it was made on
+    const fp = V.integrity.promotion.candidate_fingerprint;
+    if (fp) { assert.equal(p.body.subject, `challenger ${fp.fingerprint.slice(0, 16)}`); assert.equal(p.body.candidate_fingerprint, fp.fingerprint); }
+    await page.getByTestId("ei-states").getByText("deployed: no").waitFor();                       // eligible, approved, deployed kept apart
+    if (fp) await page.getByTestId("ei-fingerprint").getByText(new RegExp(fp.fingerprint.slice(0, 16))).waitFor();
+    assert.equal(await page.getByTestId("ei-protocols").locator("tbody tr").count(), V.integrity.research_protocols.length);
+    await page.getByTestId("ei-anchors").getByText(V.integrity.ledger.anchors.ok ? "consistent" : "mismatch").waitFor();
     assert.deepEqual(errors, []);
     await ctx.close();
   });
@@ -614,6 +621,10 @@ describe("VEGA: Mission Control, radar, dossier, portfolio and evidence integrit
     await page.getByTestId("brain-metrics").getByText("False positives removed by correction").waitFor();
     await page.getByTestId("not-implemented").getByText(/futures and options/).waitFor();
     assert.equal(await page.getByText(/intelligence score:/i).count(), 0);
+    await page.getByTestId("shadow-b").getByText(V.brain.shadow_B.reading).waitFor();               // hypothetical forward test, not account results
+    assert.equal(await page.getByTestId("research-questions").locator(":scope > li").count(), Math.min(8, V.brain.research_questions.length));
+    assert.equal(await page.getByTestId("recommendations").locator("li").count(), V.brain.recommendations.length);
+    assert.equal(await page.getByTestId("recommendations").getByText(/: switch/).count(), 0);
     assert.deepEqual(errors, []);
     await ctx.close();
   });
@@ -625,7 +636,8 @@ describe("VEGA: Mission Control, radar, dossier, portfolio and evidence integrit
     await page.getByTestId("ms-labels").getByText(/not institutional intent/).waitFor();
     await page.getByTestId("ms-unavailable").getByText(/cumulative volume delta/).waitFor();
     const tags = await page.getByTestId("ms-events").locator(".tag").allTextContents();
-    assert.ok(tags.length > 0 && tags.every((t) => ["no value after costs", "insufficient sample", "no edge over the simpler rule", "no edge over random timing", "candidate"].includes(t.trim())));
+    const STATUSES = ["insufficient evidence", "rejected", "exploratory finding", "validation candidate", "holdout-supported finding"];
+    assert.ok(tags.length > 0 && tags.every((t) => STATUSES.includes(t.trim())), tags.join(","));  // never "validated"
     await page.getByRole("checkbox", { name: "Value area" }).check();
     await page.getByRole("checkbox", { name: "Fair value gaps" }).uncheck();
     assert.deepEqual(errors, []);
@@ -668,6 +680,9 @@ describe("VEGA: Mission Control, radar, dossier, portfolio and evidence integrit
     await page.getByTestId("hv-kind").getByText(/SYNTHETIC replay/).waitFor();
     await page.getByTestId("hv-segment").getByText("buy and hold watchlist").waitFor();
     assert.ok(await page.getByTestId("hv-readings").locator(".tag").count() >= 2);
+    await page.getByTestId("hv-segment").getByText("B0 matched control").waitFor();
+    for (const k of Object.keys(V.history.report.segments.holdout.ablation)) await page.getByTestId("hv-ablation").getByText(k, { exact: true }).waitFor();
+    assert.equal(await page.getByTestId("hv-quality").locator("tbody tr").count(), Object.keys(V.history.report.variants.trade_quality).length);
     await page.getByRole("button", { name: /^contaminated/ }).click();
     await page.getByText("sessions the live rules were shaped on: shown, never counted as evidence").waitFor();
     await page.getByTestId("hv-run").click();

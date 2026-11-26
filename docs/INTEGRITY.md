@@ -31,7 +31,7 @@ The layer reads the ledgers read-only. It never changes a trading rule, a limit 
 | 14 | Rejected opportunities without hindsight | `opportunities.py` writes to a separate research store. A source scan proves no trading module reads it, or reads this module. |
 | 15 | Controls AI cannot override | Limits live in `PortfolioRules`; only operator-key routes change them. A test proves this module cannot set rules or the live flag. |
 | 16 | Abstention | Without enough confirmatory evidence the verdict is **abstain**, never "works". |
-| 17 | Human approval | Promotion gates end with "operator approval recorded in the evidence ledger" (`POST /api/integrity/decision`). Recording an approval changes nothing by itself: a rule change still ships as reviewed code. |
+| 17 | Human approval | Promotion gates end with "operator approval bound to this exact candidate (fingerprint)" (`POST /api/integrity/decision`). Recording an approval changes nothing by itself: a rule change still ships as reviewed code. |
 | 18 | Suspension and rollback | Rules S1–S4 are fixed in code (`SUSPEND`). They are checked every 15 minutes while live, and after each daily review. Each one engages the kill switch. On reset, the current triggers are recorded as acknowledged, and a new trigger engages it again. A rollback of rules is a revert to the previous rules version, made by the operator; the AI does not change trading code on its own. |
 
 ## Pre-registered hypotheses (version ei-1.0)
@@ -64,3 +64,27 @@ Known weaknesses, stated in advance (the laptop's first report will confirm or c
 - **Automation (expected to be detected).** Those rule versions were approved in chat, not in the ledger.
 
 Agreement between AI systems (Claude, ChatGPT or any agent) is never read as evidence.
+
+## Promotion and approval (updated 2026-11-26)
+
+**Benchmarks.** These are required:
+- cash;
+- NIFTY 50;
+- buy and hold of the watchlist;
+- buy and hold at the challenger's own exposure;
+- the trend rule.
+
+Each must be available for every session compared; a missing one blocks promotion (it never counts as zero). Each comparison needs a block-bootstrap interval above zero and at least 0.02% a day.
+
+**Approval binding.** An approval binds to a candidate fingerprint covering:
+- the challenger version and configuration;
+- its risk policy;
+- the incumbent rules version;
+- the code commit and the execution version;
+- the frozen manifest and the account.
+
+Any change voids the approval. The states are kept separate: eligible for review, approved, then deployed (a reviewed code change).
+
+**Rule S2** now also fires when an anchored ledger entry no longer matches its anchor.
+
+**Execution 2.1** (causal fills) and the trust boundary (roles, anchors, backups, residual risk) are described in docs/VALIDATION.md.

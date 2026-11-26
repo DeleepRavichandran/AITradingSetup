@@ -53,7 +53,8 @@ class ExecConfig:
     impact_bps: float = 25.0
     entry_ttl_minutes: int = 5
     tick: float = 0.05
-    delay_bars: int = 0                 # extra bars between the decision bar and the first fill bar (stress test: 1)
+    delay_bars: int = 1                 # 2.1: fill at the first price observed AFTER the decision (see EXECUTION_CHANGES);
+                                        # 0 reproduces the optimistic pre-2.1 model for comparisons only
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -110,8 +111,13 @@ LIVE_RULES_VERSION = "1.4"
 
 # Execution assumptions (review of 1376b45, 2026-11-25). A ledger produced under an earlier version keeps its rows; the
 # ledger audit flags it for recomputation (results are not comparable across versions).
-EXECUTION_VERSION = "2.0"
+EXECUTION_VERSION = "2.1"
 EXECUTION_CHANGES = {
+    "2.1": ["causal fills: a decision is made after its candle closes (up to 55 s later, measured per minute), so the next "
+            "candle's OPEN (the first price at the very second the decision candle closed) was not obtainable. Orders now fill "
+            "at the open of the candle after that: the first price observed after the decision was completed and the order "
+            "submitted, plus the modelled spread and impact. Exits use the same rule. Earlier ledgers are not rewritten; the "
+            "account's execution.json records from which minute 2.1 applies."],
     "2.0": ["kill switch / daily loss halt cancels working buys (and the rest of partial buys) BEFORE the next bar; exits continue",
             "symbol, gross and cash limits rechecked at the actual fill price, with the dated charges; reservations cover the "
             "worst-case price plus charges",
@@ -248,14 +254,15 @@ class Executor:
         q0 = np.where(px > 0, (rules.per_trade_pct * lim) // np.where(px > 0, px, 1), 0).astype(np.int64)
         if self.qty_cap:                           # a strategy's own size limit; the portfolio limits below still apply
             q0 = np.minimum(q0, np.array([self.qty_cap.get(int(i), int(q)) for i, q in zip(b, q0)], dtype=np.int64))
+        if rules.explore_fraction:                 # H1b: small size until the configuration's forward evidence qualifies.
+            # Applied BEFORE ranking: the ranked allocator sizes from q0, so scaling afterwards had no effect (found 2026-11-26)
+            q0 = np.where(est["qualified"][b], q0, np.floor(q0 * rules.explore_fraction)).astype(np.int64)
         ranked = rules.allocation == "ranked"
         info: dict[int, dict] = {}
         if ranked:
             order, info = self._rank(b, px, q0, est, held_sym, lim)
         else:
             order = list(buys)                                         # registry order
-        if rules.explore_fraction:                 # H1b: small size until the configuration's forward evidence qualifies
-            q0 = np.where(est["qualified"][b], q0, np.floor(q0 * rules.explore_fraction)).astype(np.int64)
         q_of = dict(zip(buys, (int(x) for x in q0)))
         earlier = "higher-ranked" if ranked else "earlier"
         new_in_sym: dict[int, int] = {}

@@ -71,19 +71,20 @@ def test_d1_kill_switch_cancels_the_rest_of_a_partial_buy_and_keeps_protective_e
     sch = sched(tmp_path, [("AAA", True), ("BBB", True)], {"09:17": {1: "BUY"}, "09:20": {0: "BUY"}, "09:23": {1: "EXIT"}}, kill=kill,
                 portfolio=rules(100_000, per_trade_pct=0.3))
     bars = flat(100.0, 12, vol=1_000_000)
-    bars["09:21"] = [bar("AAA", T("09:21"), 100.0, vol=1_000), bar("BBB", T("09:21"), 100.0)]     # thin bar: 100 of 500 fill
-    run(sch, {k: v for k, v in bars.items() if k <= "09:21"})
+    # execution 2.1: a buy decided at 09:20 first fills at the open of 09:22 (first price after the decision)
+    bars["09:22"] = [bar("AAA", T("09:22"), 100.0, vol=1_000), bar("BBB", T("09:22"), 100.0)]     # thin bar: 100 of 500 fill
+    run(sch, {k: v for k, v in bars.items() if k <= "09:22"})
     part = fills(sch, "BUY")
-    assert [f[3] for f in part if f[2].endswith("09:21:00")] == [100]                              # partial before the halt
+    assert [f[3] for f in part if f[2].endswith("09:22:00")] == [100]                              # partial before the halt
     kill.engaged = True
-    run(sch, {k: v for k, v in bars.items() if k > "09:21"})
-    after = [f for f in fills(sch, "BUY") if f[2] > f"{DAY}T09:21:00"]
+    run(sch, {k: v for k, v in bars.items() if k > "09:22"})
+    after = [f for f in fills(sch, "BUY") if f[2] > f"{DAY}T09:22:00"]
     assert after == []                                                                             # remainder cancelled
     st = sch.store.db.execute("SELECT status, qty, reason FROM paper_orders WHERE side='BUY' AND symbol='AAA'").fetchone()
     assert st[0] == "partial" and st[1] == 100 and "kill switch" in st[2]
     # protective exit decided while halted is accepted and fills (reduce-only); the position is closed
     ex = fills(sch, "SELL")
-    assert len(ex) == 1 and ex[0][2].endswith("09:24:00") and sch.engine.pos[1] == 0
+    assert len(ex) == 1 and ex[0][2].endswith("09:25:00") and sch.engine.pos[1] == 0               # decided 09:23, filled 09:25
 
 
 def test_d1_kill_switch_same_semantics_on_the_real_incumbent_engine(tmp_path):
@@ -149,8 +150,8 @@ def test_d2_partial_fill_then_retry_counts_what_is_already_held(tmp_path):
     sch = sched(tmp_path, [("AAA", True), ("AAA", True)], {"09:20": {0: "BUY"}, "09:30": {1: "BUY"}}, qty={0: 8, 1: 8},
                 portfolio=rules(10_000, max_symbol_pct=0.10))
     bars = flat(100.0, 20)
-    for hm in ("09:21", "09:22", "09:23", "09:24", "09:25"):                                       # thin: 5 then nothing
-        bars[hm] = [bar("AAA", T(hm), 100.0, vol=50 if hm == "09:21" else 0), bar("BBB", T(hm), 100.0)]
+    for hm in ("09:22", "09:23", "09:24", "09:25", "09:26"):                                       # thin: 5 then nothing (2.1: first fill bar 09:22)
+        bars[hm] = [bar("AAA", T(hm), 100.0, vol=50 if hm == "09:22" else 0), bar("BBB", T(hm), 100.0)]
     run(sch, bars)
     held = sum(f[3] * f[4] for f in fills(sch, "BUY"))
     assert held <= 1_000

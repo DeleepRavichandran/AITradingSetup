@@ -177,3 +177,20 @@ Every week, on the laptop, 12 months of Angel One 1-minute history are replayed 
 - Results are measured against cash, NIFTY 50 and buy-and-hold, with placebo and stress tests, and run through the concept and feature studies.
 
 See docs/HISTORY.md.
+
+## Brain validation (added 2026-11-26)
+
+See docs/VALIDATION.md for the reproduced findings and the fixes.
+
+- **Research questions** (`research_agenda.py`). Each question states:
+  - its mechanism;
+  - the evidence for and against;
+  - the alternative explanations;
+  - what would falsify it;
+  - the experiment to run;
+  - a priority (expected value × uncertainty ÷ cost).
+
+  A rejected question is not researched again unless the evidence is at least half as large again as when it was rejected.
+- **Adaptation recommendations.** The actions are continue, observe, investigate, revalidate, suspend, roll back and abstain. There is no "switch": changing the methodology only happens through the challenger contest and your approval.
+- **Shadow B** (`brain_comparison.py`). The uncertainty-aware variant runs forward as a hypothetical paper follower on the same bars. Its results are shown next to the incumbent's and are never counted as account performance.
+- **Roles and anchors.** Research code can write only results, knowledge and concepts. Criteria, protocols, holdout accesses and suspensions are written by the evaluation layer. Decisions are written only by the operator through the API.

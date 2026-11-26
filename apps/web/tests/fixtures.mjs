@@ -1,5 +1,7 @@
 /* Mocked API responses shared by the e2e and visual tests. Shapes mirror the real endpoints.
-   vega-fixture.json was produced by the real radar.py and integrity.py on a synthetic replay (made-up prices). */
+   vega-fixture.json was produced by the real radar.py and integrity.py on a synthetic replay (made-up prices); the promotion,
+   research partitions, anchors, brain agenda, shadow B, history variants and concept statuses by the real code of the brain
+   validation phase on synthetic labs (tests/screening helpers). */
 import { readFileSync } from "node:fs";
 const VEGA = JSON.parse(readFileSync(new URL("./vega-fixture.json", import.meta.url), "utf8"));
 export const SOURCE = { kind: "synthetic_replay", label: "Synthetic replay (made-up prices)", live: false, verified: false, synthetic: true,
@@ -183,6 +185,7 @@ export function fixtures(state) {
     [`/radar/${VEGA.dossier_symbol}`]: () => VEGA.dossier,
     "/decisions": () => VEGA.decisions,
     "/integrity": () => VEGA.integrity,
+    "/integrity/anchors": () => VEGA.anchors,
     "/brain": () => VEGA.brain,
     "/structure": () => VEGA.structure,
     "/research/concepts": () => VEGA.concepts,

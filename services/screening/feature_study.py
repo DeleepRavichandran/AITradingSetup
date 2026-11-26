@@ -29,7 +29,7 @@ import pandas as pd
 from nseql.screening import heatmaps as HM
 from nseql.screening import integrity as I
 
-VERSION = "fs-1.0"
+VERSION = "fs-2.0"
 FEATURES = ("mom_60", "rs_60", "rs_day", "sector_rs_60", "rel_volume", "vol_change", "liq_above", "liq_below")
 TIMES = [f"{h:02d}:{m:02d}" for h, m in [(10, 15), (10, 45), (11, 15), (11, 45), (12, 15), (12, 45), (13, 15), (13, 45), (14, 15), (14, 45)]]
 HORIZON_MIN = 30
@@ -133,45 +133,75 @@ def _resid(df: pd.DataFrame, col: str) -> pd.Series:
     return out
 
 
-def study(df: pd.DataFrame) -> list[dict]:
+def _top_net(df: pd.DataFrame, f: str) -> pd.Series:
+    """Per decision time: mean outcome of the top third by the feature, minus the round-trip cost (long-only use)."""
+    out = {}
+    for t, g in df.groupby("time"):
+        g = g[[f, "fwd"]].dropna()
+        if len(g) >= MIN_STOCKS and g[f].nunique() > 1:
+            out[t] = float(g[g[f] >= g[f].quantile(2 / 3)].fwd.mean()) - COST
+    return pd.Series(out, dtype=float)
+
+
+def _by_day(s: pd.Series) -> tuple[np.ndarray, np.ndarray]:
+    return s.to_numpy(), np.array([str(t)[:10] for t in s.index])
+
+
+def study(df: pd.DataFrame, part: dict | None = None, access=None) -> list[dict]:
+    """Staged validation (validation_protocol.py): development selects (day-clustered information coefficients, correction
+    across features, incremental value over own momentum, after costs); the sealed holdout is read only for development
+    survivors, through `access()` (which logs the access and says whether the holdout was already used by other
+    definitions). Missing or small holdout evidence never qualifies."""
+    from nseql.screening import validation_protocol as V
     if df.empty:
         return []
     days = sorted(df.day.unique())
-    cut = days[int(len(days) * 0.6)] if len(days) >= 5 else None
-    res = []
+    if part is None:
+        k = max(1, int(len(days) * V.DEV_SHARE))
+        part = {"dev_until": days[k - 1], "embargo": days[k:k + V.EMBARGO_SESSIONS],
+                "holdout_from": days[k + V.EMBARGO_SESSIONS] if len(days) > k + V.EMBARGO_SESSIONS else None}
+    dev_days, _, hold_days = V.split(days, part)
+    dev_df, hold_df = df[df.day.isin(dev_days)], df[df.day.isin(hold_days)]
+    rows = []
     for f in FEATURES:
-        ic = _ic(df, f)
-        t = I.t_test(ic.to_numpy())
+        ic = _ic(dev_df, f)
+        dev = V.cluster_test(*_by_day(ic))
         inc = None
         if f != "mom_60":
-            r = df.assign(_r=_resid(df, f))
-            ic_r = _ic(r, "_r")
-            inc = I.t_test(ic_r.to_numpy())
-        hold = ic[[str(x)[:10] >= cut for x in ic.index]] if cut else pd.Series(dtype=float)
-        # long-only use: buy the top third by the feature at each time
-        tops = []
-        for _, g in df.groupby("time"):
-            g = g[[f, "fwd"]].dropna()
-            if len(g) >= MIN_STOCKS:
-                tops.append(float(g[g[f] >= g[f].quantile(2 / 3)].fwd.mean()) - COST)
-        res.append({"feature": f, "times": int(len(ic)), "mean_ic": None if ic.empty else float(ic.mean()), "p": t["p"],
-                    "incremental_mean_ic": None if inc is None else inc["mean"], "p_incremental": None if inc is None else inc["p"],
-                    "holdout_mean_ic": None if hold.empty else float(hold.mean()), "top_third_net": float(np.mean(tops)) if tops else None})
-    keep = I.bh([r["p"] if r["times"] >= MIN_TIMES else None for r in res], ALPHA)
-    keep_i = I.bh([r["p_incremental"] if r["times"] >= MIN_TIMES else None for r in res], ALPHA)
-    for r, k, ki in zip(res, keep, keep_i):
-        r["p_bh_pass"] = bool(k)
-        if r["times"] < MIN_TIMES:
-            v = "insufficient sample"
-        elif not k or (r["holdout_mean_ic"] is not None and r["holdout_mean_ic"] <= 0):
-            v = "no predictive value"
-        elif r["feature"] != "mom_60" and not ki:
-            v = "no incremental value over momentum"
-        elif r["top_third_net"] is None or r["top_third_net"] <= 0:
-            v = "no value after costs"
-        else:
-            v = "candidate"
-        r["verdict"] = v
+            ic_r = _ic(dev_df.assign(_r=_resid(dev_df, f)), "_r")
+            inc = V.cluster_test(*_by_day(ic_r))
+        top = V.cluster_test(*_by_day(_top_net(dev_df, f)))
+        rows.append({"feature": f, "dev": dev, "inc": inc, "top": top})
+    k0 = V.bh([r["dev"]["p"] for r in rows])
+    ki = V.bh([r["inc"]["p"] if r["inc"] else None for r in rows])
+    for r, a0, ai in zip(rows, k0, ki):
+        r["fail"] = [] if a0 and (r["dev"]["mean"] or 0) > 0 else ["no predictive value in development"]
+        if r["inc"] is not None and not ai:
+            r["fail"].append("no incremental value over own momentum in development")
+        if (r["top"]["mean"] or 0) <= 0:
+            r["fail"].append("buying the top third does not beat doing nothing after costs in development")
+        r["dev_pass"] = not r["fail"]
+    cands = [r for r in rows if r["dev_pass"] and r["dev"]["clusters"] >= V.MIN_DEV_SESSIONS and r["dev"]["n"] >= V.MIN_EVENTS]
+    acc = access() if (cands and hold_days and access) else ({"reused": False} if cands and hold_days else None)
+    for r in cands:
+        r["hold"] = V.cluster_test(*_by_day(_ic(hold_df, r["feature"])))
+        r["hold_top"] = V.cluster_test(*_by_day(_top_net(hold_df, r["feature"])))
+    kh = V.bh([r["hold"]["p"] for r in cands])
+    for r, ok in zip(cands, kh):
+        r["hold_pass"] = bool(ok and (r["hold"]["mean"] or 0) > 0 and (r["hold_top"]["mean"] or 0) > 0)
+    res = []
+    for r in rows:
+        status, reason = V.decide(r["dev"], r["dev_pass"], r.get("hold"), r.get("hold_pass", False), bool(acc and acc.get("reused")))
+        if status == "rejected" and not r["dev_pass"]:
+            reason = "; ".join(r["fail"])
+            if r["fail"][0].startswith("no predictive value") and (r["dev"]["p"] or 1) < V.ALPHA and (r["dev"]["mean"] or 0) > 0:
+                status, reason = "exploratory finding", "raw development signal that does not survive correction: " + reason
+        h = r.get("hold") or {}
+        res.append({"feature": r["feature"], "times": int(r["dev"]["n"] + h.get("n", 0)), "dev_days": r["dev"]["clusters"],
+                    "holdout_days": h.get("clusters", 0), "mean_ic": r["dev"]["mean"], "p": r["dev"]["p"], "ci": [r["dev"]["lo"], r["dev"]["hi"]],
+                    "incremental_mean_ic": (r["inc"] or {}).get("mean"), "p_incremental": (r["inc"] or {}).get("p"),
+                    "holdout_mean_ic": h.get("mean"), "holdout_p": h.get("p"), "top_third_net": r["top"]["mean"],
+                    "holdout_top_third_net": (r.get("hold_top") or {}).get("mean"), "verdict": status, "reason": reason})
     return res
 
 
@@ -181,7 +211,18 @@ SCHEMA = """CREATE TABLE IF NOT EXISTS feature_results (run TEXT, at TEXT, sourc
 
 def run(account: Path, exp_dir: Path, df: pd.DataFrame | None = None, record: bool = True, source_label: str | None = None) -> dict:
     df = panel(account) if df is None else df
-    res = study(df)
+    from nseql.screening import validation_protocol as V
+    from nseql.screening.evidence_guard import GuardedLedger
+    label = source_label or (Path(account).name if account is not None else "supplied panel")
+    part, access = None, None
+    if record and len(df):
+        EV = GuardedLedger(I.Ledger(exp_dir), "evaluation")
+        days = sorted(df.day.unique())
+        data_fp = V.fingerprint({"source": label, "days": days, "symbols": sorted(df.symbol.unique())})
+        defs = V.fingerprint({"study": VERSION, "features": FEATURES, "times": TIMES, "horizon": HORIZON_MIN, "cost": COST})
+        part = V.register_partition(EV, f"features {label}", days, data_fp, defs)
+        access = lambda: V.holdout_access(EV, f"features {label}", defs, data_fp)
+    res = study(df, part, access)
     out = {"run": datetime.now().strftime("%Y%m%dT%H%M%S"), "version": VERSION, "source": source_label or (Path(account).name if account is not None else "supplied panel"),
            "observations": int(len(df)), "times": int(df.time.nunique()) if len(df) else 0, "results": res, "features": list(FEATURES),
            "note": "information coefficients from point-in-time features; a 'candidate' still needs forward sessions and the operator's approval"}
@@ -196,7 +237,7 @@ def run(account: Path, exp_dir: Path, df: pd.DataFrame | None = None, record: bo
             db.commit()
         finally:
             db.close()
-        L = I.Ledger(exp_dir)
+        L = GuardedLedger(I.Ledger(exp_dir), "research")
         last = {e["subject"]: e["body"] for e in L.entries("result") if e["subject"].startswith("HM-")}
         from nseql.screening.brain import Knowledge
         K = Knowledge(L)
@@ -204,13 +245,14 @@ def run(account: Path, exp_dir: Path, df: pd.DataFrame | None = None, record: bo
             sub = f"HM-{r['feature']}"
             if last.get(sub, {}).get("verdict") != r["verdict"] or last.get(sub, {}).get("times") != r["times"]:
                 L.append("result", sub, {"verdict": r["verdict"], "status": r["verdict"], "times": r["times"], "mean_ic": r["mean_ic"], "p": r["p"]})
-            st = {"candidate": "experimental finding", "insufficient sample": "unverified hypothesis"}.get(r["verdict"], "contradicted finding")
+            from nseql.screening.concept_study import STATUS_TO_KNOWLEDGE
+            st = STATUS_TO_KNOWLEDGE.get(r["verdict"], "unverified hypothesis")
             prev = K.current().get(sub)
             if st == "contradicted finding" and prev and prev["status"] == "experimental finding":
                 st = "invalidated finding"
             K.write(sub, st, f"Heatmap feature '{r['feature']}' predicts the next 30 minutes' cross-section beyond own momentum, after costs",
                     "concept_study", evidence={k: r[k] for k in ("times", "mean_ic", "p", "incremental_mean_ic", "holdout_mean_ic", "top_third_net")},
-                    contradicting=[] if r["verdict"] == "candidate" else [f"verdict: {r['verdict']}"],
+                    contradicting=[f"verdict: {r['verdict']} ({r['reason']})"] if r["verdict"] in ("rejected", "insufficient evidence") else [],
                     limitations="watchlist cross-section of about 20 stocks; candle data only", revalidate="every daily review", reason=r["verdict"])
     return out
 

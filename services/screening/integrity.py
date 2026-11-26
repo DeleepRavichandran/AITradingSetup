@@ -51,7 +51,7 @@ SEED = 20261125
 # Predeclared suspension rules: fixed here, in code, before any data is seen. Changing them needs a commit and review.
 SUSPEND = {
     "S1": "a fill earlier than its decision allows, or a trade decided on retrospective (catch-up) data, in the current account",
-    "S2": "the evidence ledger's hash chain is broken (a record was altered)",
+    "S2": "the evidence ledger's hash chain is broken, or an anchored entry no longer matches its anchor (history rewritten)",
     "S3": "the current account is 6% or more below its own peak equity",
     "S4": "performance deterioration (Page-Hinkley alarm on net per round trip, at least 30 round trips) while the "
           "random-entry placebo shows no skill (p > 0.5)",
@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS entries (seq INTEGER PRIMARY KEY AUTOINCREMENT, at TE
 CREATE TRIGGER IF NOT EXISTS entries_no_update BEFORE UPDATE ON entries BEGIN SELECT RAISE(ABORT, 'evidence ledger is append-only'); END;
 CREATE TRIGGER IF NOT EXISTS entries_no_delete BEFORE DELETE ON entries BEGIN SELECT RAISE(ABORT, 'evidence ledger is append-only'); END;
 """
-KINDS = ("hypothesis", "result", "decision", "suspension", "acknowledged", "criteria", "ledger_digest", "knowledge", "concept", "protocol")
+KINDS = ("hypothesis", "result", "decision", "suspension", "acknowledged", "criteria", "ledger_digest", "knowledge", "concept", "protocol", "holdout_access")
 
 
 def _digest(prev: str, at: str, kind: str, subject: str | None, body: str) -> str:
@@ -272,6 +272,8 @@ def accounts(exp_dir: Path) -> dict[str, list[Path]]:
             m = json.loads(f.read_text())
         except (OSError, ValueError):
             continue
+        if m.get("shadow"):
+            continue                                   # shadow portfolios are hypothetical: never the incumbent's evidence
         (ch if m.get("challenger") else inc).append(f.parent)
     key = lambda p: (p / "live.json").stat().st_mtime
     return {"incumbent": sorted(inc, key=key), "challenger": sorted(ch, key=key)}
@@ -627,6 +629,34 @@ def _status(res: dict, survives_bh: bool) -> None:
         res["status"], res["reason"] = "falsified", f"p = {res['p']:.4f} does not survive Benjamini-Hochberg at {ALPHA}"
 
 
+# ================================================================================================ 5b. promotion helpers
+REQUIRED_BENCHMARKS = ("cash", "NIFTY 50", "buy and hold watchlist", "buy and hold at the challenger's exposure", "trend rule (above 20-day average)")
+ECONOMIC_EXCESS = 0.0002                     # 0.02% a day (about 5% a year) after costs: smaller edges are not worth the risk
+
+
+def _exposure(account: Path) -> float | None:
+    con = _ro(account)
+    try:
+        r = con.execute("SELECT AVG(MAX(0, (equity_inr - cash_inr) / equity_inr)) FROM cycles WHERE equity_inr > 0 AND cash_inr IS NOT NULL").fetchone()
+    finally:
+        con.close()
+    return None if not r or r[0] is None else float(r[0])
+
+
+def candidate_fingerprint(chl: dict, exp_dir: Path) -> dict:
+    """Everything an approval is bound to: challenger version and configuration, its risk policy, the code commit, the
+    execution model version, the frozen forward manifest and the account. Any change gives a new fingerprint."""
+    from nseql.screening.challenger import CHALLENGER_CONFIG, CHALLENGER_VERSION, challenger_rules
+    from nseql.screening.contest import code_version
+    from nseql.screening.execution import EXECUTION_VERSION, LIVE_RULES_VERSION
+    meta = _meta(chl["account"])
+    parts = {"challenger": CHALLENGER_VERSION, "config": CHALLENGER_CONFIG.to_dict(),
+             "risk_policy": challenger_rules(float(meta.get("start_cash") or 100_000)).to_dict(), "incumbent_rules": LIVE_RULES_VERSION,
+             "commit": (code_version() or {}).get("commit"), "execution_version": EXECUTION_VERSION,
+             "manifest_sha256": meta.get("manifest_sha256"), "account": chl["account"].name}
+    return {"fingerprint": hashlib.sha256(json.dumps(parts, sort_keys=True, default=str).encode()).hexdigest(), "parts": parts}
+
+
 # ================================================================================================ 6. bias audit
 TRADING_SOURCES = ("engine.py", "scheduler.py", "execution.py", "allocator.py", "challenger.py", "features.py")
 
@@ -794,6 +824,9 @@ def report(exp_dir: Path, data_dir: Path | None = None, research: dict | None = 
     if register:
         register_seed_hypotheses(ledger)
     chain = ledger.verify()
+    from nseql.screening.evidence_guard import verify_anchors
+    anchors = verify_anchors(exp_dir, ledger)
+    chain = {**chain, "anchors": anchors}
     crit = check_criteria(ledger, register=register)
     seals = verify_digests(ledger, exp_dir)
     hyps = {e["subject"]: e["body"] for e in ledger.entries("hypothesis")}
@@ -826,6 +859,13 @@ def report(exp_dir: Path, data_dir: Path | None = None, research: dict | None = 
                   "evidence": (f"criteria changed since registration ({crit['registered'][:12]} -> {crit['hash'][:12]}), not approved"
                                if crit["changed"] and not crit["approved"] else f"criteria {crit['hash'][:12]} as registered"
                                + (" (change approved by the operator)" if crit["changed"] else ""))})
+    from nseql.screening.concept_study import consistency as _cs_consistency
+    cons = _cs_consistency(exp_dir)
+    audit.append({"bias": "Research record consistency (memory poisoning)", "risk": "a research verdict edited outside the protocol",
+                  "guard": "every concept verdict in the research store must equal the evidence ledger's record for it",
+                  "status": "detected" if cons["mismatches"] else "guarded" if cons["checked"] else "not measurable yet",
+                  "evidence": ("; ".join(f"{m['concept']}: store says '{m['research_store']}', ledger says '{m['ledger']}'" for m in cons["mismatches"][:3])
+                               or f"{cons['checked']} verdict(s) match the ledger")})
     bad_cash = [k for k, v in recon.items() if v.get("checked") and not v["ok"]]
     audit.append({"bias": "Accounting integrity (hidden or reclassified trades)", "risk": "losing trades removed or edited; cash that does not add up",
                   "guard": "each closed day's fills are sealed by hash in the evidence ledger; cash is recomputed from every fill",
@@ -844,6 +884,8 @@ def report(exp_dir: Path, data_dir: Path | None = None, research: dict | None = 
                                                        + [b["day"] for b in seals["altered"]])})
     if not chain["ok"]:
         trig.append({"rule": "S2", "detail": f"chain broken at entry {chain['broken_at']}"})
+    elif not anchors["ok"]:
+        trig.append({"rule": "S2", "detail": "; ".join(p_["problem"] for p_ in anchors["problems"][:3])})
     dd = _peak_drawdown(inc["account"]) if inc["account"] is not None else None
     if dd is not None and dd <= -DRAWDOWN_SUSPEND:
         trig.append({"rule": "S3", "detail": f"{dd:.2%} below the account's peak"})
@@ -854,25 +896,54 @@ def report(exp_dir: Path, data_dir: Path | None = None, research: dict | None = 
         t["text"] = SUSPEND[t["rule"]]
     acked = {e["body"].get("trigger") for e in ledger.entries("acknowledged")}
     active = [t for t in trig if t["id"] not in acked]
-    # promotion eligibility of the challenger
+    # promotion eligibility of the challenger: every required benchmark must EXIST for the same sessions (a missing one
+    # blocks; it never counts as zero), comparisons need a block-bootstrap interval above an economic threshold, and the
+    # operator's approval must be bound to this exact candidate (candidate_fingerprint).
+    from nseql.screening.contest import block_bootstrap
     hc = next((r for r in results if r["id"] == "H-CHALLENGER"), None)
     chl = ev["challenger"]
     st_ch = stress(chl["account"], chl["rt"]) if chl and len(chl["rt"]) else {"n": 0}
     pl_ch = placebo(chl["account"], chl["rt"]) if chl and len(chl["rt"]) >= 2 else {"p": None}
-    approved = any(a.get("subject") == "challenger" and a.get("decision") == "approve" for a in approvals)
+    bench_cmp = {}
+    if chl is not None and len(chl["daily"]):
+        cd = chl["daily"]
+        expo = _exposure(chl["account"])
+        refs = {"cash": pd.Series(0.0, index=cd.index)}
+        for k in ("NIFTY 50", "buy and hold watchlist", "trend rule (above 20-day average)"):
+            if k in inc["bench_daily"]:
+                refs[k] = inc["bench_daily"][k]
+        if "buy and hold watchlist" in refs and expo is not None:
+            refs["buy and hold at the challenger's exposure"] = refs["buy and hold watchlist"] * expo
+        for k in REQUIRED_BENCHMARKS:
+            if k not in refs:
+                bench_cmp[k] = {"available": False, "pass": False, "reading": "benchmark not available for these sessions: promotion blocked"}
+                continue
+            j = pd.concat([cd, refs[k]], axis=1, keys=["c", "b"]).dropna()
+            if len(j) < len(cd):
+                bench_cmp[k] = {"available": False, "pass": False, "reading": f"benchmark covers {len(j)} of {len(cd)} sessions: promotion blocked"}
+                continue
+            ci = block_bootstrap((j.c - j.b).to_numpy())
+            bench_cmp[k] = {"available": True, "sessions": int(len(j)), "mean_excess": ci["mean"], "low": ci["low"], "high": ci["high"],
+                            # an interval from fewer sessions than the minimum is not evidence: with n <= the bootstrap block
+                            # length every resample is the whole series and the interval collapses to the mean
+                            "pass": bool(len(j) >= MIN_SESSIONS and ci["low"] is not None and ci["low"] > 0 and ci["mean"] >= ECONOMIC_EXCESS),
+                            **({"reading": f"{len(j)} of {MIN_SESSIONS} sessions: too few for an interval"} if len(j) < MIN_SESSIONS else {})}
+    fp = candidate_fingerprint(chl, exp_dir) if chl is not None else None
+    appr = [a for a in approvals if fp and a.get("subject") == f"challenger {fp['fingerprint'][:16]}"
+            and a.get("candidate_fingerprint", fp["fingerprint"]) == fp["fingerprint"]]
+    approved = bool(appr and appr[-1].get("decision") == "approve")
     gates = [
         {"gate": "falsification criteria registered before the test data", "pass": hc is not None},
-        {"gate": f"{MIN_SESSIONS} confirmatory forward sessions", "pass": bool(hc and hc.get("enough"))},
+        {"gate": f"{MIN_SESSIONS} confirmatory forward sessions (a minimum, not a guarantee of sufficiency)", "pass": bool(hc and hc.get("enough"))},
         {"gate": "beats the incumbent after costs (survives Benjamini-Hochberg)", "pass": bool(hc and hc["status"] == "survived")},
-        {"gate": "beats cash, NIFTY 50 and buy and hold over the same sessions",
-         "pass": bool(chl and len(chl["daily"]) >= MIN_SESSIONS and all(
-             chl["daily"].mean() > (inc["bench_daily"][k].mean() if k in inc["bench_daily"] else 0) for k in ("cash", "NIFTY 50", "buy and hold watchlist")))},
+        *[{"gate": f"beats {k}: interval above zero and at least {ECONOMIC_EXCESS:.2%} a day", "pass": v["pass"], "detail": v.get("reading")}
+          for k, v in (bench_cmp.items() if bench_cmp else [(k, {"pass": False, "reading": "no challenger evidence"}) for k in REQUIRED_BENCHMARKS])],
         {"gate": "survives doubled costs and a one-minute delay", "pass": bool(st_ch.get("survives_costs") and st_ch.get("survives_delay"))},
         {"gate": f"beats random entries (placebo p < {ALPHA})", "pass": bool(pl_ch.get("p") is not None and pl_ch["p"] < ALPHA)},
         {"gate": "no integrity violation and no active suspension", "pass": not trig},
         {"gate": "evaluation criteria unchanged since registration (or the change approved by the operator)", "pass": crit["approved"]},
         {"gate": "no performance-deterioration alarm", "pass": not ph.get("alarm")},
-        {"gate": "operator approval recorded in the evidence ledger", "pass": approved},
+        {"gate": "operator approval bound to this exact candidate (fingerprint)", "pass": approved},
     ]
     eligible_for_review = all(g["pass"] for g in gates[:-1])
     edge = next((r for r in results if r["id"] == "H-EDGE"), {})
@@ -894,6 +965,11 @@ def report(exp_dir: Path, data_dir: Path | None = None, research: dict | None = 
         "verdict_plain": {"abstain": "Abstain: there is not enough confirmatory evidence to say the bot has an edge. Paper trading continues only to collect it.",
                           "no edge shown": "The edge hypothesis was falsified on confirmatory data: the bot has not shown it beats cash after costs.",
                           "edge not falsified": "The edge hypothesis survived its pre-registered test. That is not proof; checks continue."}[verdict],
+        "research_protocols": [{"key": e["subject"], **{k: e["body"].get(k) for k in ("registered_at", "dev_until", "holdout_from", "embargo",
+                                "data_fingerprint_at_registration", "definitions_hash", "dataset", "development_until", "contaminated_from")},
+                                "holdout_accesses": sum(1 for a in ledger.entries("holdout_access") if a["subject"] == e["subject"]),
+                                "holdout_reused": any(a["body"].get("reused_by_other_definitions") for a in ledger.entries("holdout_access")
+                                                      if a["subject"] == e["subject"])} for e in ledger.entries("protocol")],
         "ledger": chain, "accounts": ev["accounts"], "criteria": crit, "financial": {"reconciliation": recon, "sealed": seals},
         "hypotheses": results, "biases": audit, "critic": ev["critic"],
         "validation": {"stress": st_inc, "placebo": pl_inc, "drift": ph, "regimes": regime, "configs": ev["configs"],
@@ -901,8 +977,12 @@ def report(exp_dir: Path, data_dir: Path | None = None, research: dict | None = 
                        "sessions": int(len(inc["daily"])), "round_trips": int(len(inc["rt"]))},
         "failed": [r for r in results if r["status"] == "falsified"],
         "weaknesses": weaknesses,
-        "promotion": {"candidate": chl["account"].name if chl else None, "gates": gates, "eligible_for_operator_review": eligible_for_review,
-                      "promoted": False, "note": "Even when every gate passes, only the operator can promote; nothing here changes a rule."},
+        "promotion": {"candidate": chl["account"].name if chl else None, "gates": gates, "benchmarks": bench_cmp,
+                      "candidate_fingerprint": fp, "eligible_for_operator_review": eligible_for_review,
+                      "approved": approved and eligible_for_review, "deployed": False, "promoted": False,
+                      "states": "eligible for operator review -> approved (operator, bound to the fingerprint) -> deployed (a reviewed code "
+                                "change by the operator); any change to the candidate voids an approval",
+                      "note": "Even when every gate passes, only the operator can approve; nothing here changes a rule."},
         "suspension": {"rules": SUSPEND, "triggered": trig, "active": active,
                        "action": "kill switch engaged (no new buys; exits continue); only the operator can reset it"},
         "decisions": approvals,
@@ -918,6 +998,8 @@ def enforce(rep: dict, kill, ledger: Ledger | None = None) -> list[str]:
         if not kill.engaged:
             kill.engage(f"integrity suspension {t['rule']}: {t['text']} ({t['detail']})", datetime.now())
         if ledger is not None and not any(e["body"].get("trigger") == t["id"] for e in ledger.entries("suspension")):
+            from nseql.screening.evidence_guard import GuardedLedger
+            ledger = ledger if isinstance(ledger, GuardedLedger) else GuardedLedger(ledger, "evaluation")
             ledger.append("suspension", t["rule"], {"trigger": t["id"], "detail": t["detail"], "rule": t["text"]})
         done.append(t["id"])
     return done

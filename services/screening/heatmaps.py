@@ -75,13 +75,14 @@ def unavailable(id_: str) -> dict:
 
 # ================================================================================================ data
 def minute_closes(account: Path, as_of=None, days: int = 30) -> pd.DataFrame:
-    """1-minute close and volume per symbol (columns MultiIndex), at or before `as_of`."""
+    """1-minute bars observable at `as_of`: closed by then and, on a live feed, arrived by then (market_structure.observable)."""
+    from nseql.screening.market_structure import observable
     con = _ro(account)
     try:
         hi = pd.Timestamp(as_of) if as_of is not None else pd.Timestamp(con.execute("SELECT MAX(ts) FROM events WHERE late=0").fetchone()[0] or "2000-01-01")
         lo = (hi.normalize() - pd.Timedelta(days=days)).strftime("%Y-%m-%d")
-        b = pd.read_sql_query("SELECT symbol, ts, open, high, low, close, volume FROM events WHERE late=0 AND ts >= ? AND ts <= ?", con,
-                              params=(lo, hi.strftime("%Y-%m-%dT%H:%M:%S")))
+        cond, params = observable(con, hi)
+        b = pd.read_sql_query(f"SELECT symbol, ts, open, high, low, close, volume FROM events WHERE ts >= ? AND {cond}", con, params=(lo, *params))
     finally:
         con.close()
     b["ts"] = pd.to_datetime(b.ts)
@@ -225,27 +226,68 @@ def correlation(b: pd.DataFrame, holdings: list[str] | None = None) -> dict:
                             "Only the watchlist is stored: cross-asset (USD/INR, crude, gold) needs the market-context feed on the laptop."])
 
 
-def opportunity(account: Path, day: str | None = None, live_from: str | None = None) -> dict:
-    """Best expected edge after costs recorded by the allocator, per stock per 30-minute bucket (decision time only)."""
+def opportunity(account: Path, as_of=None, live_from: str | None = None) -> dict:
+    """Best expected edge after costs recorded by the allocator, per stock per 30-minute bucket. In playback only decisions
+    already MADE by `as_of` (the minute's recorded decision time), not every signal of that date."""
     con = _ro(account)
     try:
-        day = day or (con.execute("SELECT substr(MAX(minute),1,10) FROM cycles WHERE status='processed'").fetchone()[0])
+        T = pd.Timestamp(as_of) if as_of is not None else None
+        day = T.strftime("%Y-%m-%d") if T is not None else con.execute("SELECT substr(MAX(minute),1,10) FROM cycles WHERE status='processed'").fetchone()[0]
         if not day:
             return _hm("opportunity", [], [], [], "bps", "diverging", "allocator scores", None)
-        s = pd.read_sql_query("SELECT symbol, bar_ts, alloc_score, alloc_status FROM signals WHERE decision='BUY' AND bar_ts >= ? AND bar_ts < ? "
-                              "AND alloc_score IS NOT NULL", con, params=(max(day, live_from or ""), (pd.Timestamp(day) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")))
+        q = ("SELECT s.symbol, s.bar_ts, s.alloc_score FROM signals s JOIN cycles c ON c.minute = s.bar_ts WHERE s.decision='BUY' "
+             "AND s.bar_ts >= ? AND s.bar_ts < ? AND s.alloc_score IS NOT NULL")
+        args = [max(day, live_from or ""), (pd.Timestamp(day) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")]
+        if T is not None:
+            q += " AND s.bar_ts <= ? AND (c.decided_at IS NULL OR c.decided_at <= ?)"
+            args += [T.strftime("%Y-%m-%dT%H:%M:%S"), T.isoformat()]
+        s = pd.read_sql_query(q, con, params=args)
     finally:
         con.close()
     if s.empty:
-        return _hm("opportunity", [], [], [], "bps", "diverging", "allocator scores", day)
+        return _hm("opportunity", [], [], [], "bps", "diverging", "allocator scores", as_of or day)
     t = pd.to_datetime(s.bar_ts)
     s["bucket"] = ((t.dt.hour * 60 + t.dt.minute - 556) // 30).clip(0, 12)
     g = s.groupby(["symbol", "bucket"]).alloc_score.max()
     labels = [f"{(555 + 30 * k) // 60:02d}:{(555 + 30 * k) % 60:02d}" for k in range(13)]
     syms = sorted(s.symbol.unique())
     return _hm("opportunity", syms, labels, [[g.get((x, k)) for k in range(13)] for x in syms], "best expected edge (bps, after costs)",
-               "diverging", "allocator score recorded at decision time", day,
+               "diverging", "allocator score recorded at decision time", as_of or day,
                limitations=["Expected edge is the allocator's shrunk estimate from forward evidence, not a probability."])
+
+
+def positions_at(account: Path, as_of) -> tuple[list[dict], float | None]:
+    """Paper positions as they stood at `as_of`, rebuilt from fills up to then and marked at the last observable close."""
+    from nseql.screening.market_structure import observable
+    T = pd.Timestamp(as_of)
+    con = _ro(account)
+    try:
+        f = pd.read_sql_query("SELECT config_id, symbol, side, qty, price FROM paper_fills WHERE ts <= ? ORDER BY ts", con,
+                              params=(T.strftime("%Y-%m-%dT%H:%M:%S"),))
+        cond, params = observable(con, T)
+        ev = pd.read_sql_query(f"SELECT symbol, ts, close FROM events WHERE ts >= ? AND {cond}", con,
+                               params=((T.normalize() - pd.Timedelta(days=10)).strftime("%Y-%m-%d"), *params))
+        last = ev.sort_values("ts").groupby("symbol").close.last().to_dict() if len(ev) else {}
+        eq = con.execute("SELECT equity_inr FROM cycles WHERE minute <= ? AND equity_inr IS NOT NULL ORDER BY minute DESC LIMIT 1",
+                         (T.strftime("%Y-%m-%dT%H:%M:%S"),)).fetchone()
+    finally:
+        con.close()
+    book: dict = {}
+    for r in f.itertuples():
+        b = book.setdefault(r.config_id, {"symbol": r.symbol, "qty": 0, "cost": 0.0})
+        if r.side == "BUY":
+            b["qty"] += r.qty
+            b["cost"] += r.qty * r.price
+        else:
+            b["cost"] -= (b["cost"] / b["qty"]) * r.qty if b["qty"] else 0.0
+            b["qty"] -= r.qty
+    out = []
+    for cid, b in book.items():
+        if b["qty"] > 0:
+            px = float(last.get(b["symbol"], b["cost"] / b["qty"]))
+            out.append({"symbol": b["symbol"], "value_inr": b["qty"] * px, "unrealised_inr": b["qty"] * px - b["cost"], "last_price": px,
+                        "stop_price": None})
+    return out, (float(eq[0]) if eq else None)
 
 
 def portfolio_risk(positions: list[dict], equity: float | None) -> dict:
@@ -263,11 +305,19 @@ def portfolio_risk(positions: list[dict], equity: float | None) -> dict:
     rows = sorted(agg, key=lambda s: -agg[s]["value"])
     vals = [[agg[s]["value"] / equity, (agg[s]["last"] / agg[s]["stop"] - 1) if agg[s]["stop"] else None, agg[s]["unreal"] / max(agg[s]["value"], 1e-9),
              secw[sector(s)]] for s in rows]
-    return _hm("portfolio_risk", rows, cols, vals, "share", "sequential", "paper positions marked at the last close", None)
+    return _hm("portfolio_risk", rows, cols, vals, "share", "sequential", "paper positions marked at the last close", None,
+               limitations=[] if all(p.get("stop_price") for p in positions) else
+               ["Playback: positions rebuilt from fills up to the chosen time; stop levels are not stored per minute, so the stop distance is blank."])
 
 
-def news(items: list[dict], symbols: list[str], fa: dict | None = None) -> dict:
-    """Headline counts per stock per day from the news watcher; tone per stock from the Fundamental Agent when available."""
+def news(items: list[dict], symbols: list[str], fa: dict | None = None, as_of=None) -> dict:
+    """Headline counts per stock per day from the news watcher (by the time this lab first saw each headline); tone per stock
+    from the Fundamental Agent when available. In playback only headlines first seen by `as_of`; tone is not shown (the
+    agent's live dossier is current, not as of then)."""
+    if as_of is not None:
+        T = pd.Timestamp(as_of).isoformat()
+        items = [i for i in items if str(i.get("first_seen") or "") and str(i.get("first_seen")) <= T]
+        fa = None
     if not items:
         return _hm("news", [], [], [], "headlines", "sequential", "news watcher", None, "limited", ["No headlines recorded yet."])
     df = pd.DataFrame([{"symbol": s, "day": str(i.get("first_seen") or i.get("published") or "")[:10]} for i in items
@@ -299,9 +349,12 @@ def regime(b: pd.DataFrame) -> dict:
                "ledger 1-minute candles", b.ts.max(), limitations=["India VIX is not stored with the live bars."])
 
 
-def performance(account: Path) -> dict:
+def performance(account: Path, as_of=None) -> dict:
     from nseql.screening import integrity as I
     rt = I.round_trips(account)
+    if as_of is not None and len(rt):
+        T = pd.Timestamp(as_of).strftime("%Y-%m-%dT%H:%M:%S")
+        rt = rt[rt.exit_ts.astype(str).str.replace(" ", "T") <= T]
     if rt.empty:
         return _hm("performance", [], [], [], "INR", "diverging", "paper round trips", None)
     con = _ro(account)
@@ -318,12 +371,13 @@ def performance(account: Path) -> dict:
                counts=[[int(((rt.group == x) & (rt.hour == h)).sum()) for h in hours] for x in groups])
 
 
-def learning(exp_dir: Path) -> dict:
+def learning(exp_dir: Path, as_of=None) -> dict:
     from nseql.screening import concept_study as CS
-    lat = CS.latest(exp_dir)
+    lat = CS.latest(exp_dir, as_of)
     res = [r for r in lat.get("results", []) if r["horizon"] == CS.HORIZONS[0]]
     if not res:
-        return _hm("learning", [], [], [], "", "diverging", "concept study", None, limitations=["No concept study yet (runs with the daily review)."])
+        return _hm("learning", [], [], [], "", "diverging", "concept study", as_of,
+                   limitations=["No concept study had completed by then." if as_of is not None else "No concept study yet (runs with the daily review)."])
     concepts = sorted({r["concept"] for r in res})
     cols = ["mean after costs", "vs simpler rule", "vs random timing", "holdout"]
     by = {r["concept"]: r for r in res}
@@ -333,13 +387,21 @@ def learning(exp_dir: Path) -> dict:
                lat["run"], verdicts={c: by[c]["verdict"] for c in concepts}, n={c: by[c]["n"] for c in concepts})
 
 
-def data_quality(account: Path) -> dict:
+def data_quality(account: Path, as_of=None) -> dict:
+    from nseql.screening.market_structure import observable
     con = _ro(account)
     try:
-        cov = pd.read_sql_query("SELECT symbol, substr(ts,1,10) AS day, COUNT(*) AS n FROM events WHERE late=0 GROUP BY 1, 2", con)
-        late = dict(((r[0], r[1]), r[2]) for r in con.execute("SELECT symbol, substr(ts,1,10), COUNT(*) FROM events WHERE late=1 GROUP BY 1, 2"))
+        T = pd.Timestamp(as_of) if as_of is not None else pd.Timestamp("2100-01-01")
+        cond, params = observable(con, T)
+        tq = T.tz_localize("Asia/Kolkata").timestamp()
+        cov = pd.read_sql_query(f"SELECT symbol, substr(ts,1,10) AS day, COUNT(*) AS n FROM events WHERE {cond} GROUP BY 1, 2", con, params=params)
+        late = dict(((r[0], r[1]), r[2]) for r in con.execute("SELECT symbol, substr(ts,1,10), COUNT(*) FROM events WHERE late=1 AND ts <= ? "
+                                                               "AND (received_at IS NULL OR received_at <= ?) GROUP BY 1, 2",
+                                                               (T.strftime("%Y-%m-%dT%H:%M:%S"), tq)))
         try:
-            quar = dict(((r[0], r[1]), r[2]) for r in con.execute("SELECT symbol, substr(ts,1,10), COUNT(*) FROM event_quarantine GROUP BY 1, 2"))
+            quar = dict(((r[0], r[1]), r[2]) for r in con.execute("SELECT symbol, substr(ts,1,10), COUNT(*) FROM event_quarantine WHERE ts <= ? "
+                                                                   "AND (received_at IS NULL OR received_at <= ?) GROUP BY 1, 2",
+                                                                   (T.strftime("%Y-%m-%dT%H:%M:%S"), tq)))
         except sqlite3.Error:
             quar = {}
     finally:
@@ -362,31 +424,44 @@ def build(id_: str, account: Path | None, exp_dir: Path, as_of=None, tf: str = "
     if id_ in UNAVAILABLE_WHY:
         return unavailable(id_)
     if id_ == "learning":
-        return learning(exp_dir)
+        return learning(exp_dir, as_of)
     if account is None:
         return {"id": id_, "availability": "unavailable", "why": "no live paper account yet", "rows": [], "cols": [], "values": []}
     if id_ in ("market_cap", "sector_rotation", "relative_strength", "volume", "volatility", "correlation", "regime"):
         b = minute_closes(account, as_of)
         if b.empty:
             return _hm(id_, [], [], [], "", "sequential", "ledger", as_of)
+        held = [p["symbol"] for p in (positions_at(account, as_of)[0] if as_of is not None else positions or [])]
         return {"market_cap": lambda: market_map(b, tf, sectors), "sector_rotation": lambda: sector_rotation(b, sectors),
                 "relative_strength": lambda: relative_strength(b, sectors), "volume": lambda: volume(b), "volatility": lambda: volatility(b),
-                "correlation": lambda: correlation(b, [p["symbol"] for p in positions or []]), "regime": lambda: regime(b)}[id_]()
+                "correlation": lambda: correlation(b, held), "regime": lambda: regime(b)}[id_]()
     if id_ == "inferred_liquidity":
         syms = [s for s in SECTORS if not sectors or sector(s) in sectors] if sectors else None
         return inferred_liquidity(account, as_of, syms)
     if id_ == "opportunity":
-        return opportunity(account, None if as_of is None else str(as_of)[:10], live_from)
+        return opportunity(account, as_of, live_from)
     if id_ == "portfolio_risk":
+        if as_of is not None:                                    # playback: never today's positions
+            positions, equity = positions_at(account, as_of)
         return portfolio_risk(positions or [], equity)
     if id_ == "news":
-        return news(news_items or [], list(SECTORS), fa)
+        return news(news_items or [], list(SECTORS), fa, as_of)
     if id_ == "performance":
-        return performance(account)
+        return performance(account, as_of)
     if id_ == "data_quality":
-        return data_quality(account)
+        return data_quality(account, as_of)
     raise KeyError(id_)
 
 
+PLAYBACK = {
+    "portfolio_risk": "rebuilt from fills up to the chosen time; stop distance unavailable (stops are not stored per minute)",
+    "news": "headlines first seen by the chosen time; tone unavailable (the agent's dossier is current)",
+    "learning": "only research runs completed by the chosen time",
+    "opportunity": "only decisions already made by the chosen minute",
+    "orderbook_liquidity": "unavailable", "order_flow": "unavailable", "options_oi": "unavailable",
+}
+
+
 def catalog() -> list[dict]:
-    return [{"id": i, "title": t, "group": g, "availability": a, **({"why": UNAVAILABLE_WHY[i]} if i in UNAVAILABLE_WHY else {})} for i, t, g, a in CATALOG]
+    return [{"id": i, "title": t, "group": g, "availability": a, "playback": PLAYBACK.get(i, "bars observable (closed and, on a live feed, arrived) by the chosen time"),
+             **({"why": UNAVAILABLE_WHY[i]} if i in UNAVAILABLE_WHY else {})} for i, t, g, a in CATALOG]

@@ -50,7 +50,7 @@ def live_accounts(exp_dir: Path) -> list[Path]:
             m = json.loads(d.read_text())
         except (OSError, ValueError):
             continue
-        if not m.get("challenger") and (d.parent / "screening.sqlite").exists():
+        if not m.get("challenger") and not m.get("shadow") and (d.parent / "screening.sqlite").exists():
             out.append(d.parent)
     return sorted(out, key=lambda p: (p / "live.json").stat().st_mtime)
 
@@ -119,9 +119,11 @@ def _integrity(exp_dir: Path, day: str) -> dict:
     from nseql.config import get_settings
     from nseql.screening import integrity as I
     rep = I.report(exp_dir, get_settings().data_dir, research=_research_counts(exp_dir))
-    L = I.Ledger(exp_dir)
+    from nseql.screening.evidence_guard import GuardedLedger, anchor
+    L = GuardedLedger(I.Ledger(exp_dir), "evaluation")
     rep["recorded"] = I.record(L, rep, day)
     rep["sealed_days"] = I.record_digests(L, exp_dir, before_day=I._next(day))     # this session is closed: seal it too
+    rep["anchor"] = anchor(exp_dir, I.Ledger(exp_dir), note=f"after the review of {day}")   # outside the ledger, with a verified backup
     return rep
 
 
@@ -131,7 +133,8 @@ def _brain(exp_dir: Path, rep: dict | None, trade_report: dict | None) -> dict:
     from nseql.screening import brain as B, integrity as I
     rep = rep or I.report(exp_dir, get_settings().data_dir, research=_research_counts(exp_dir))
     out = B.report(exp_dir, rep)
-    out["knowledge_written"] = B.sync_knowledge(B.Knowledge(I.Ledger(exp_dir)), rep, trade_report)
+    from nseql.screening.evidence_guard import GuardedLedger
+    out["knowledge_written"] = B.sync_knowledge(B.Knowledge(GuardedLedger(I.Ledger(exp_dir), "research")), rep, trade_report)
     return {k: out.get(k) for k in ("version", "account", "uncertainty", "quality", "shadow", "decay", "shared_risk", "data_quality",
                                     "metrics", "knowledge_written", "corrections")}
 
@@ -218,7 +221,7 @@ def run(account: Path, day: str, exp_dir: Path, steps: tuple[str, ...] = STEPS, 
                 results[s] = {k: r_[k] for k in ("run", "runs", "version", "params_hash", "note")} | {
                     "verdicts": {v: sum(1 for x in r_["results"] if x["verdict"] == v and x["horizon"] == CS.HORIZONS[0])
                                  for v in {x["verdict"] for x in r_["results"]}},
-                    "candidates": [f"{x['concept']} ({x['source']})" for x in r_["results"] if x["verdict"] == "candidate" and x["horizon"] == CS.HORIZONS[0]]}
+                    "candidates": [f"{x['concept']} ({x['source']})" for x in r_["results"] if x["verdict"] == "holdout-supported finding" and x["horizon"] == CS.HORIZONS[0]]}
                 _write(out / "concepts.json", results[s])
             elif s == "features":
                 from nseql.screening import feature_study as FS
@@ -311,8 +314,8 @@ def build(account: str, day: str, r: dict, st: dict) -> dict:
             head.append("Stocks: " + "; ".join(bits) + ".")
     cs = r.get("concepts")
     if cs:
-        head.append("Market-structure concepts (research only): " + (f"{len(cs['candidates'])} candidate(s) for forward testing: " + ", ".join(cs["candidates"][:5])
-                    if cs["candidates"] else "none has shown value after costs over a simpler rule and random timing") + ".")
+        head.append("Market-structure concepts (research only): " + (f"{len(cs['candidates'])} holdout-supported finding(s), still needing forward evidence: " + ", ".join(cs["candidates"][:5])
+                    if cs["candidates"] else "none passed development and the sealed holdout against a simpler rule and random timing") + ".")
     ig = r.get("integrity")
     if ig:
         head.append("Evidence integrity: " + ig["verdict_plain"])

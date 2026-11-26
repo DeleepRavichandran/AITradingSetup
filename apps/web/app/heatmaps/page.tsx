@@ -5,7 +5,7 @@
    and rows open the decision dossier and the chart. Features behind the maps are tested before they may matter. */
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { Dossier, Tag, signedPct } from "@/components/vega";
+import { Dossier, Tag, signedPct, statusTone } from "@/components/vega";
 import { useApi, useQuery } from "@/lib/api";
 
 const FEATURE_OF: Record<string, string[]> = { relative_strength: ["rs_60", "rs_day"], sector_rotation: ["sector_rs_60"], volume: ["rel_volume"],
@@ -134,13 +134,13 @@ export default function Heatmaps() {
             {d.limitations?.length > 0 && <div className="ft"><span>{d.limitations.join(" ")}</span></div>}
           </section>}
           {d && d.availability !== "unavailable" && <section className="vp" aria-labelledby="ev-h">
-            <div className="h"><div><h2 id="ev-h">Does this map predict anything?</h2><div className="sub2">Its features against the next 30 minutes, beyond the stock's own momentum, after costs (feature study)</div></div></div>
-            {feats.length ? <div className="tw"><table data-testid="hm-features"><thead><tr><th>Feature</th><th className="r">Sample times</th><th className="r">Mean IC</th><th className="r">Beyond momentum</th><th className="r">Holdout IC</th><th className="r">Top third, net</th><th>Verdict</th></tr></thead>
+            <div className="h"><div><h2 id="ev-h">Does this map predict anything?</h2><div className="sub2">Its features against the next 30 minutes, beyond the stock's own momentum, after costs: development selects (day-clustered), the sealed holdout is read once</div></div></div>
+            {feats.length ? <div className="tw"><table data-testid="hm-features"><thead><tr><th>Feature</th><th className="r">Sample times</th><th className="r">Mean IC</th><th className="r">Beyond momentum</th><th className="r">Holdout IC</th><th className="r">Top third, net</th><th>Status</th></tr></thead>
               <tbody>{feats.map((r: any) => <tr key={r.feature}><td>{r.feature}</td><td className="r">{r.times}</td><td className="r">{r.mean_ic == null ? "—" : r.mean_ic.toFixed(3)}</td>
                 <td className="r">{r.incremental_mean_ic == null ? "—" : r.incremental_mean_ic.toFixed(3)}</td><td className="r">{r.holdout_mean_ic == null ? "—" : r.holdout_mean_ic.toFixed(3)}</td>
-                <td className="r">{signedPct(r.top_third_net, 3)}</td><td><Tag tone={r.verdict === "candidate" ? "ok" : r.verdict === "insufficient sample" ? "wait" : "no"}>{r.verdict}</Tag></td></tr>)}</tbody></table></div>
+                <td className="r">{signedPct(r.top_third_net, 3)}</td><td><Tag tone={statusTone(r.verdict)}>{r.verdict}</Tag>{r.reason && <span className="st" style={{ whiteSpace: "normal", maxWidth: 240 }}>{r.reason}</span>}</td></tr>)}</tbody></table></div>
               : <p className="empty">{FEATURE_OF[id] ? "No feature study yet: it runs with each daily review." : "This map is descriptive; no feature from it is tested yet."}</p>}
-            <div className="ft"><span>Until a feature is a candidate on fresh data and approved, it influences no trade.</span></div>
+            <div className="ft"><span>Means are development figures; holdout figures appear only for development survivors. No feature influences a trade until it is holdout- and forward-supported and approved.</span></div>
           </section>}
         </div>
       </div>

@@ -2,7 +2,7 @@
 /* Brain Intelligence (services/screening/brain.py, observation only). What the brain knows, what it doubts, where it was
    wrong and corrected itself, and how each of its abilities measures against a simple baseline. Data: /brain.
    No combined intelligence score, no confidence percentages, no simulated agent activity. */
-import { Tag, signedPct } from "@/components/vega";
+import { Tag, signedPct, statusTone } from "@/components/vega";
 import { useApi } from "@/lib/api";
 
 const KTONE: Record<string, string> = { "observed fact": "info", "unverified hypothesis": "wait", "experimental finding": "ok", "validated finding": "ok",
@@ -87,17 +87,45 @@ export default function Brain() {
         </section>
 
         <section className="vp" style={{ marginTop: 14 }} aria-labelledby="cs-h">
-          <div className="h"><div><h2 id="cs-h">Market-structure concepts on trial</h2><div className="sub2">ICT, SMC, price action, liquidity, Wyckoff, auction theory: each against zero after costs, a simpler rule and random timing (6 candles ahead)</div></div>
+          <div className="h"><div><h2 id="cs-h">Market-structure concepts on trial</h2><div className="sub2">Development selects (session-clustered, corrected against zero, a simpler rule and random timing); the sealed holdout is read once, only for survivors. 6 candles ahead; means are development</div></div>
             {cs?.run && <Tag tone="vio">run {cs.run}</Tag>}</div>
           {csRows.length ? <div className="tw" style={{ ["--mh" as any]: "420px" }} tabIndex={0} aria-label="Concept study results (scrollable)"><table data-testid="concepts">
-            <thead><tr><th>Concept</th><th>Source</th><th className="r">Events</th><th className="r">Mean after costs</th><th className="r">Simpler rule</th><th className="r">Random timing</th><th className="r">Holdout</th><th>Verdict</th></tr></thead>
+            <thead><tr><th>Concept</th><th>Source</th><th className="r">Events</th><th className="r">Mean after costs</th><th className="r">Simpler rule</th><th className="r">Random timing</th><th className="r">Holdout</th><th>Status</th></tr></thead>
             <tbody>{csRows.map((r: any) => <tr key={`${r.source}-${r.concept}`}><td><b>{r.concept.replace(/_/g, " ")}</b><span className="st">{r.family}</span></td><td className="dim">{r.source}</td>
               <td className="r">{r.n}</td><td className="r">{signedPct(r.mean_net, 3)}</td><td className="r">{r.baseline ? signedPct(r.baseline_mean, 3) : "—"}</td>
               <td className="r">{signedPct(r.placebo_mean, 3)}</td><td className="r">{signedPct(r.holdout_mean, 3)}</td>
-              <td><Tag tone={r.verdict === "candidate" ? "ok" : r.verdict === "insufficient sample" ? "wait" : "no"}>{r.verdict}</Tag></td></tr>)}</tbody>
+              <td><Tag tone={statusTone(r.verdict)}>{r.verdict}</Tag>{r.reason && <span className="st" style={{ maxWidth: 260, whiteSpace: "normal" }}>{r.reason}</span>}</td></tr>)}</tbody>
           </table></div> : <p className="empty">No concept study yet: it runs with each daily review.</p>}
           <div className="ft"><span>Candle patterns are inferences, not evidence of institutional orders. Not available: {(cs?.unavailable || []).slice(0, 4).join(", ")}.</span></div>
         </section>
+
+        <section className="vp" style={{ marginTop: 14 }} aria-labelledby="sb-h">
+          <div className="h"><div><h2 id="sb-h">Forward test: shadow portfolio B vs the incumbent</h2><div className="sub2">Prospective, uncertainty-aware paper portfolio fed the same bars; hypothetical, never account performance</div></div>
+            {d.shadow_B && <Tag tone={d.shadow_B.reading.startsWith("ahead") ? "ok" : d.shadow_B.reading.startsWith("behind") ? "no" : "wait"} testid="shadow-b">{d.shadow_B.reading}</Tag>}</div>
+          {d.shadow_B ? <div className="b vlist">
+            <div><span>Sessions compared (since {String(d.shadow_B.since).slice(0, 10)})</span><b>{d.shadow_B.sessions}</b></div>
+            <div><span>Mean daily difference B - A [95%]</span><b>{signedPct(d.shadow_B.mean_daily_difference, 3)} [{signedPct(d.shadow_B.ci[0], 3)}, {signedPct(d.shadow_B.ci[1], 3)}]</b></div>
+            <div><span>Round trips B / A</span><b>{d.shadow_B.quality_B.round_trips ?? 0} / {d.shadow_B.quality_A.round_trips ?? 0}</b></div>
+          </div> : <p className="empty">Shadow portfolio B starts with the live bot after the next update.</p>}
+          {d.shadow_B && <div className="ft"><span>{d.shadow_B.note}</span></div>}
+        </section>
+
+        <div className="grid g2" style={{ marginTop: 14 }}>
+          <section className="vp" aria-labelledby="rq-h">
+            <div className="h"><div><h2 id="rq-h">Research questions</h2><div className="sub2">Raised by the brain from recorded evidence, ranked by value x uncertainty / cost; rejected ones stay closed without new evidence</div></div></div>
+            {d.research_questions?.length ? <ul className="list" data-testid="research-questions" style={{ padding: "0 16px 12px" }}>{d.research_questions.slice(0, 8).map((q: any) =>
+              <li key={q.id}><div className="t"><b>{q.question}</b>{q.reopened && <Tag tone="wait">reopened: {q.reopened}</Tag>}</div>
+                <div className="d">Evidence: {q.evidence.join("; ") || "—"}{q.contradicting?.length ? ` · Against: ${q.contradicting.join("; ")}` : ""}</div>
+                <div className="d">Falsified if {q.falsification}. Experiment: {q.experiment}.</div></li>)}</ul>
+              : <p className="empty">No open research question from the current evidence.</p>}
+          </section>
+          <section className="vp" aria-labelledby="rc-h">
+            <div className="h"><div><h2 id="rc-h">Adaptation recommendations</h2><div className="sub2">Never a switch by itself; changes need validation and your approval</div></div></div>
+            <div className="b"><ul className="gates" data-testid="recommendations">{(d.recommendations || []).map((r: any) => <li key={r.methodology}>
+              <i style={{ background: r.action === "continue" ? "var(--good)" : r.action === "suspend" || r.action === "roll back" ? "var(--crit)" : "var(--warn)" }} />
+              <span><b>{r.methodology}</b>: {r.action}<span className="st">{r.why}</span></span></li>)}</ul></div>
+          </section>
+        </div>
 
         <section className="vp" style={{ marginTop: 14 }} aria-labelledby="ni-h">
           <div className="h"><div><h2 id="ni-h">Not built yet</h2><div className="sub2">Stated plainly so no page implies more than exists</div></div></div>

@@ -10,15 +10,16 @@ const HSTATUS: Record<string, string> = { survived: "ok", falsified: "no", absta
 const BSTATUS: Record<string, string> = { guarded: "ok", detected: "no", exposed: "wait", "not measurable yet": "" };
 const pv = (p: any) => (p == null ? "—" : p < 0.0001 ? "< 0.0001" : Number(p).toFixed(4));
 
-function Decision({ onDone }: { onDone: () => void }) {
-  const [subject, setSubject] = useState("challenger");
+function Decision({ onDone, candidate }: { onDone: () => void; candidate?: string }) {
+  const [subject, setSubject] = useState(candidate ? `challenger ${candidate.slice(0, 16)}` : "challenger");
   const [decision, setDecision] = useState("reject");
   const [reason, setReason] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const go = async (e: React.FormEvent) => {
     e.preventDefault();
     setMsg(null);
-    try { const r = await post("/integrity/decision", { subject, decision, reason }); setMsg(`Recorded in the ledger (${String(r.digest).slice(0, 12)}).`); setReason(""); onDone(); }
+    try { const r = await post("/integrity/decision", { subject, decision, reason, candidate_fingerprint: subject.startsWith("challenger ") ? candidate : undefined });
+      setMsg(`Recorded in the ledger (${String(r.digest).slice(0, 12)}).`); setReason(""); onDone(); }
     catch (e: any) { setMsg(`Not recorded: ${e.message}`); }
   };
   return (
@@ -29,7 +30,7 @@ function Decision({ onDone }: { onDone: () => void }) {
       </div>
       <label>Reason (at least 20 characters)<textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} style={{ fontFamily: "var(--sans)", fontSize: 13 }} /></label>
       <div className="row" style={{ alignItems: "center" }}><button className="primary" disabled={reason.trim().length < 20}>Record decision</button>
-        <span className="dim" style={{ fontSize: 12 }}>Operator key only. Recording an approval changes no rule: a change still ships as reviewed code.</span></div>
+        <span className="dim" style={{ fontSize: 12 }}>Operator key only. An approval binds to the candidate's fingerprint (version, configuration, risk policy, commit, execution model, manifest); any change voids it. It changes no rule: deployment is a reviewed code change.</span></div>
       {msg && <p style={{ margin: 0 }} className={msg.startsWith("Not") ? "down" : "up"}>{msg}</p>}
     </form>
   );
@@ -132,7 +133,14 @@ export default function Integrity() {
             <div className="h"><div><h2 id="pr-h">Promotion eligibility</h2><div className="sub2">{d.promotion.candidate ? `Candidate: ${d.promotion.candidate}` : "No challenger running"}</div></div>
               <Tag tone={d.promotion.eligible_for_operator_review ? "ok" : "wait"} testid="ei-eligible">{d.promotion.eligible_for_operator_review ? "Ready for operator review" : "Not eligible"}</Tag></div>
             <div className="b"><ul className="gates" data-testid="ei-gates">{d.promotion.gates.map((g: any) => <li key={g.gate}><i style={{ background: g.pass ? "var(--good)" : "var(--warn)" }} />{g.gate}<span className="r">{g.pass ? "pass" : "not yet"}</span></li>)}</ul>
-              <p className="dim" style={{ fontSize: 12, margin: "8px 0 0" }}>{d.promotion.note}</p></div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }} data-testid="ei-states">
+                <Tag tone={d.promotion.eligible_for_operator_review ? "ok" : ""}>eligible for review: {d.promotion.eligible_for_operator_review ? "yes" : "no"}</Tag>
+                <Tag tone={d.promotion.approved ? "ok" : ""}>approved: {d.promotion.approved ? "yes" : "no"}</Tag>
+                <Tag tone="">deployed: {d.promotion.deployed ? "yes" : "no"}</Tag></div>
+              {d.promotion.candidate_fingerprint && <p className="dim" style={{ fontSize: 12, margin: "8px 0 0" }} data-testid="ei-fingerprint">
+                Candidate fingerprint {d.promotion.candidate_fingerprint.fingerprint.slice(0, 16)} · commit {String(d.promotion.candidate_fingerprint.parts.commit || "—").slice(0, 10)} ·
+                execution {d.promotion.candidate_fingerprint.parts.execution_version} · {d.promotion.candidate_fingerprint.parts.challenger}</p>}
+              <p className="dim" style={{ fontSize: 12, margin: "8px 0 0" }}>{d.promotion.states}. {d.promotion.note}</p></div>
           </section>
           <section className="vp" aria-labelledby="su-h">
             <div className="h"><div><h2 id="su-h">When it must stop</h2><div className="sub2">Predeclared suspension rules, fixed in code before the data</div></div></div>
@@ -144,9 +152,29 @@ export default function Integrity() {
         </div>
 
         <div className="grid g2" style={{ marginTop: 14 }}>
+          <section className="vp" aria-labelledby="pt-h">
+            <div className="h"><div><h2 id="pt-h">Research partitions and holdouts</h2><div className="sub2">Registered once; the holdout only grows forward and is read once per definition</div></div></div>
+            {d.research_protocols?.length ? <div className="tw" tabIndex={0} aria-label="Research partitions (scrollable)"><table data-testid="ei-protocols"><thead><tr><th>Study</th><th>Development until</th><th>Holdout from</th><th className="r">Holdout reads</th><th>Status</th></tr></thead>
+              <tbody>{d.research_protocols.map((p: any) => <tr key={p.key}><td>{p.key}</td><td>{p.dev_until || p.development_until || "—"}</td><td>{p.holdout_from || "not yet"}</td>
+                <td className="r">{p.holdout_accesses}</td><td>{p.holdout_reused ? <Tag tone="no">reused by other definitions</Tag> : <Tag tone="ok">clean</Tag>}</td></tr>)}</tbody></table></div>
+              : <p className="empty">No study has registered a partition yet.</p>}
+          </section>
+          <section className="vp" aria-labelledby="an-h">
+            <div className="h"><div><h2 id="an-h">Audit anchors</h2><div className="sub2">The ledger head anchored outside the ledger after every review, with a verified backup</div></div>
+              <Tag tone={d.ledger.anchors?.ok ? "ok" : "no"} testid="ei-anchors">{d.ledger.anchors?.ok ? "consistent" : "mismatch"}</Tag></div>
+            <div className="b vlist">
+              <div><span>Anchors</span><b>{d.ledger.anchors?.anchors ?? 0}</b></div>
+              <div><span>Latest head</span><b>{d.ledger.anchors?.latest ? `${String(d.ledger.anchors.latest.head).slice(0, 16)} (${d.ledger.anchors.latest.entries} entries)` : "—"}</b></div>
+              {(d.ledger.anchors?.problems || []).map((p_: any, i: number) => <div key={i}><span className="down">{p_.anchor}</span><b className="down">{p_.problem}</b></div>)}
+            </div>
+            <div className="ft"><span>Residual risk: {d.ledger.anchors?.residual_risk}</span></div>
+          </section>
+        </div>
+
+        <div className="grid g2" style={{ marginTop: 14 }}>
           <section className="vp" aria-labelledby="op-h">
             <div className="h"><div><h2 id="op-h">Operator decision</h2><div className="sub2">Human approval is recorded before any promotion</div></div></div>
-            <Decision onDone={() => q.reload()} />
+            <Decision onDone={() => q.reload()} candidate={d.promotion.candidate_fingerprint?.fingerprint} />
           </section>
           <section className="vp" aria-labelledby="lg-h">
             <div className="h"><div><h2 id="lg-h">Evidence ledger</h2><div className="sub2">Latest entries · nothing is ever rewritten</div></div></div>

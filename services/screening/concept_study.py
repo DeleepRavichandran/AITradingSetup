@@ -10,12 +10,9 @@ For every concept in market_structure.CONCEPTS, on every stock and session avail
   4. Benjamini-Hochberg across all concepts; stability across a chronological split (first 60% of sessions = development,
      last 40% = holdout); consistency across stocks; by session window (NSE "kill-zone" adaptation), by the previous day's
      volatility regime (known at the open), and in combination with trend alignment and premium/discount.
-  5. Verdict (never "validated": that needs forward evidence and the operator):
-       insufficient sample         fewer than MIN_EVENTS events
-       no value after costs        mean not above zero after correction, or the holdout disagrees
-       no edge over the simpler rule
-       no edge over random timing
-       candidate                   all of the above passed; next: forward confirmatory sessions
+  5. Status (validation_protocol.py; never "validated"): selection uses development sessions only, with session-clustered
+     tests corrected across all concepts and horizons; only development survivors are evaluated once on the sealed holdout.
+     insufficient evidence / rejected / exploratory finding / validation candidate / holdout-supported finding.
 """
 from __future__ import annotations
 
@@ -30,7 +27,11 @@ import pandas as pd
 from nseql.screening import integrity as I
 from nseql.screening import market_structure as M
 
-VERSION = "cs-1.0"
+VERSION = "cs-2.0"
+# evidence status -> knowledge status (validation_protocol.STATUSES; never "validated" from an event study)
+STATUS_TO_KNOWLEDGE = {"holdout-supported finding": "experimental finding", "validation candidate": "unverified hypothesis",
+                       "exploratory finding": "unverified hypothesis", "insufficient evidence": "unverified hypothesis",
+                       "rejected": "contradicted finding"}
 COST = 0.0015
 HORIZONS = (6, 12)              # candles (30 and 60 minutes on 5-minute candles; 6 and 12 days on daily)
 MIN_EVENTS = 30
@@ -133,80 +134,104 @@ def run(account: Path | None, exp_dir: Path, data_dir: Path | None = None, tf: i
                         continue
                     draws = rng.choice(pool, size=8)
                     v = _outcomes(c, draws, np.full(8, r["dir"]), h, intraday)
-                    plac_rows.append({"type": r["type"], "h": h, "vals": v})
+                    vv = v[np.isfinite(v)]
+                    if len(vv):
+                        plac_rows.append({"type": r["type"], "h": h, "day": r["day"], "v": float(vv.mean())})
         E, Bdf = pd.DataFrame(ev_rows), pd.DataFrame(base_rows)
         if E.empty:
             runs.append({"source": source, "sessions": len(sessions), "events": 0})
             continue
         all_days = sorted(sessions)
-        cut = all_days[int(len(all_days) * 0.6)] if len(all_days) >= 5 else None
+        # ---- staged validation (validation_protocol.py): development selects, the sealed holdout is read once per
+        # definition and only for development survivors; session-clustered inference; correction across everything
+        from nseql.screening import validation_protocol as V
+        from nseql.screening.evidence_guard import GuardedLedger
+        EV = GuardedLedger(I.Ledger(exp_dir), "evaluation")
+        data_fp = V.fingerprint({"source": source, "sessions": all_days, "symbols": sorted(f[0] for f in frames)})
+        defs = V.fingerprint({"params": M.params_hash(), "study": VERSION, "horizons": HORIZONS, "cost": COST})
+        key = f"concepts {source}"
+        part = V.register_partition(EV, key, all_days, data_fp, defs)
+        dev_days, emb_days, hold_days = V.split(all_days, part)
+        P = pd.DataFrame(plac_rows) if plac_rows else pd.DataFrame(columns=["type", "h", "day", "v"])
+        tests = []
         for h in HORIZONS:
             col = f"h{h}"
-            rows_h = []
             for concept, g in E.groupby("type"):
-                x = g[col].dropna()
                 fam, base_name = M.CONCEPTS[concept]
-                t = I.t_test(x)
-                b = Bdf[(Bdf.type == base_name)][col].dropna() if base_name and len(Bdf) else pd.Series(dtype=float)
-                pv = [p for p in plac_rows if p["type"] == concept and p["h"] == h]
-                plac = np.concatenate([p["vals"] for p in pv]) if pv else np.array([])
-                plac = plac[np.isfinite(plac)]
-                from scipy import stats as _s
-                p_b = float(_s.ttest_ind(x, b, equal_var=False, alternative="greater").pvalue) if len(x) >= 2 and len(b) >= 2 else None
-                # placebo p: share of resampled placebo means (same size as x) at least the concept's mean
-                p_pl = None
-                if len(plac) >= 10 and len(x) >= 2:
-                    sims = rng.choice(plac, size=(PLACEBO_DRAWS, len(x)), replace=True).mean(axis=1)
-                    p_pl = float((np.sum(sims >= x.mean()) + 1) / (PLACEBO_DRAWS + 1))
-                dev = g[g.day < cut][col].dropna() if cut else x
-                hold = g[g.day >= cut][col].dropna() if cut else pd.Series(dtype=float)
-                st = g.groupby("symbol")[col].agg(["mean", "count"])
+                gd = g[g.day.isin(dev_days)]
+                xd = gd[[col, "day"]].dropna().rename(columns={col: "v", "day": "c"})
+                dev = V.cluster_test(xd.v, xd.c)
+                bd = Bdf[(Bdf.type == base_name) & Bdf.day.isin(dev_days)][[col, "day"]].dropna().rename(columns={col: "v", "day": "c"}) \
+                    if base_name and len(Bdf) else pd.DataFrame(columns=["v", "c"])
+                pdv = P[(P.type == concept) & (P.h == h) & P.day.isin(dev_days)][["v", "day"]].rename(columns={"day": "c"})
+                vs_b = V.paired_cluster_test(xd, bd) if len(bd) and len(xd) else None
+                vs_p = V.paired_cluster_test(xd, pdv) if len(pdv) and len(xd) else None
+                st = gd.groupby("symbol")[col].agg(["mean", "count"])
                 st = st[st["count"] >= 3]
-                share = float((st["mean"] > 0).mean()) if len(st) else None
-                aligned = g[((g.trend == "up") & (g.dir > 0)) | ((g.trend == "down") & (g.dir < 0))][col].dropna()
-                pdz = g[((g.pd == "discount") & (g.dir > 0)) | ((g.pd == "premium") & (g.dir < 0))][col].dropna()
-                vol_t = g.dropna(subset=["prev_vol"])
+                aligned = gd[((gd.trend == "up") & (gd.dir > 0)) | ((gd.trend == "down") & (gd.dir < 0))][col].dropna()
+                pdz = gd[((gd.pd == "discount") & (gd.dir > 0)) | ((gd.pd == "premium") & (gd.dir < 0))][col].dropna()
+                vol_t = gd.dropna(subset=["prev_vol"])
+                reg = {}
                 if len(vol_t) >= 9:
                     q = vol_t.prev_vol.quantile([1 / 3, 2 / 3]).to_numpy()
                     reg = {name: float(vol_t[m][col].mean()) if m.sum() else None for name, m in
                            (("quiet days", vol_t.prev_vol <= q[0]), ("normal days", (vol_t.prev_vol > q[0]) & (vol_t.prev_vol <= q[1])),
                             ("volatile days", vol_t.prev_vol > q[1]))}
-                else:
-                    reg = {}
-                rows_h.append({"source": source, "concept": concept, "family": fam, "horizon": h, "n": int(len(x)),
-                               "mean_net": None if x.empty else float(x.mean()), "p": t["p"], "baseline": base_name,
-                               "baseline_mean": None if b.empty else float(b.mean()), "p_vs_baseline": p_b,
-                               "placebo_mean": None if not len(plac) else float(plac.mean()), "p_vs_placebo": p_pl,
-                               "dev_mean": None if dev.empty else float(dev.mean()), "holdout_mean": None if hold.empty else float(hold.mean()),
-                               "stock_share_positive": share,
-                               "detail": {"sessions": {k: float(v) for k, v in g.groupby("session")[col].mean().dropna().items()},
-                                          "regimes": reg, "trend_aligned": {"n": int(len(aligned)), "mean": None if aligned.empty else float(aligned.mean())},
-                                          "premium_discount_aligned": {"n": int(len(pdz)), "mean": None if pdz.empty else float(pdz.mean())},
-                                          "holdout_n": int(len(hold))}})
-            keep = I.bh([r["p"] if r["n"] >= MIN_EVENTS else None for r in rows_h], ALPHA)
-            keep_b = I.bh([r["p_vs_baseline"] if r["n"] >= MIN_EVENTS else None for r in rows_h], ALPHA)
-            ps = sorted([r["p"] for r in rows_h if r["p"] is not None and r["n"] >= MIN_EVENTS])
-            for r, k, kb in zip(rows_h, keep, keep_b):
-                r["p_bh_pass"] = bool(k)
-                if r["n"] < MIN_EVENTS:
-                    v = "insufficient sample"
-                elif not k or (r["holdout_mean"] is not None and r["holdout_mean"] <= 0):
-                    v = "no value after costs"
-                elif r["baseline"] and not kb:
-                    v = "no edge over the simpler rule"
-                elif r["p_vs_placebo"] is not None and r["p_vs_placebo"] >= ALPHA:
-                    v = "no edge over random timing"
-                else:
-                    v = "candidate"
-                r["verdict"] = v
-            results += rows_h
+                tests.append({"source": source, "concept": concept, "family": fam, "horizon": h, "baseline": base_name, "g": g, "col": col,
+                              "dev": dev, "vs_b": vs_b, "vs_p": vs_p, "baseline_mean": None if bd.empty else float(bd.v.mean()),
+                              "placebo_mean": None if pdv.empty else float(pdv.v.mean()),
+                              "stock_share_positive": float((st["mean"] > 0).mean()) if len(st) else None,
+                              "detail": {"sessions": {k: float(v) for k, v in gd.groupby("session")[col].mean().dropna().items()}, "regimes": reg,
+                                         "trend_aligned": {"n": int(len(aligned)), "mean": None if aligned.empty else float(aligned.mean())},
+                                         "premium_discount_aligned": {"n": int(len(pdz)), "mean": None if pdz.empty else float(pdz.mean())},
+                                         "inference": "session-clustered (session means, then across sessions)"}})
+        # one correction across concepts x horizons, for each comparison
+        k0 = V.bh([t["dev"]["p"] for t in tests])
+        kb = V.bh([t["vs_b"]["p"] if t["vs_b"] else None for t in tests])
+        kp = V.bh([t["vs_p"]["p"] if t["vs_p"] else None for t in tests])
+        for t, a0, ab, ap in zip(tests, k0, kb, kp):
+            t["fail"] = [] if a0 and (t["dev"]["mean"] or 0) > 0 else ["no value after costs in development"]
+            if t["vs_b"] is not None and not ab:
+                t["fail"].append(f"no edge over the simpler rule ({t['baseline']}) in development")
+            if t["vs_p"] is not None and not ap:
+                t["fail"].append("no edge over random timing in development")
+            t["dev_pass"] = not t["fail"]
+            t["p_bh_pass"] = bool(a0)
+        cands = [t for t in tests if t["dev_pass"] and t["dev"]["clusters"] >= V.MIN_DEV_SESSIONS and t["dev"]["n"] >= V.MIN_EVENTS]
+        access = V.holdout_access(EV, key, defs, data_fp) if cands and hold_days else None
+        for t in cands:
+            gh = t["g"][t["g"].day.isin(hold_days)][[t["col"], "day"]].dropna().rename(columns={t["col"]: "v", "day": "c"})
+            t["hold"] = V.cluster_test(gh.v, gh.c)
+            bh_ = Bdf[(Bdf.type == t["baseline"]) & Bdf.day.isin(hold_days)][[t["col"], "day"]].dropna().rename(columns={t["col"]: "v", "day": "c"}) \
+                if t["baseline"] and len(Bdf) else pd.DataFrame(columns=["v", "c"])
+            t["hold_vs_b"] = V.paired_cluster_test(gh, bh_) if len(bh_) and len(gh) else None
+        kh = V.bh([t["hold"]["p"] for t in cands])
+        for t, ok in zip(cands, kh):
+            t["hold_pass"] = bool(ok and (t["hold"]["mean"] or 0) > 0 and (t["hold_vs_b"] is None or (t["hold_vs_b"]["p"] or 1) < V.ALPHA))
+        for t in tests:
+            status, reason = V.decide(t["dev"], t["dev_pass"], t.get("hold"), t.get("hold_pass", False), bool(access and access["reused"]))
+            if status == "rejected" and not t["dev_pass"]:
+                reason = "; ".join(t["fail"])
+                if not t["p_bh_pass"] and (t["dev"]["p"] or 1) < V.ALPHA and (t["dev"]["mean"] or 0) > 0:
+                    status, reason = "exploratory finding", "raw development signal that does not survive correction: " + reason
+            h_ = t.get("hold") or {}
+            results.append({"source": t["source"], "concept": t["concept"], "family": t["family"], "horizon": t["horizon"],
+                            "n": int(t["dev"]["n"] + h_.get("n", 0)), "dev_sessions": t["dev"]["clusters"], "holdout_sessions": h_.get("clusters", 0),
+                            "mean_net": t["dev"]["mean"], "p": t["dev"]["p"], "ci": [t["dev"]["lo"], t["dev"]["hi"]], "baseline": t["baseline"],
+                            "baseline_mean": t["baseline_mean"], "p_vs_baseline": (t["vs_b"] or {}).get("p"), "placebo_mean": t["placebo_mean"],
+                            "p_vs_placebo": (t["vs_p"] or {}).get("p"), "dev_mean": t["dev"]["mean"], "holdout_mean": h_.get("mean"),
+                            "holdout_p": h_.get("p"), "stock_share_positive": t["stock_share_positive"], "p_bh_pass": t["p_bh_pass"],
+                            "verdict": status, "reason": reason, "detail": t["detail"]})
+        cut = part.get("holdout_from")
         runs.append({"source": source, "sessions": len(sessions), "symbols": len(frames), "events": int(len(E)),
                      "development_until": cut, "baseline_events": int(len(Bdf))})
     out = {"run": run_id, "version": VERSION, "params_hash": M.params_hash(), "generated_at": datetime.now().isoformat(timespec="seconds"),
            "runs": runs, "results": results, "cost_round_trip": COST, "horizons": HORIZONS, "min_events": MIN_EVENTS,
            "unavailable": M.UNAVAILABLE,
-           "note": ("Historical, exploratory-then-holdout evidence on existing data with thresholds fixed before the run. A 'candidate' "
-                    "still needs forward confirmatory sessions and the operator's approval before any rule may use it.")}
+           "statuses": list(__import__("nseql.screening.validation_protocol", fromlist=["STATUSES"]).STATUSES),
+           "note": ("Development selects; the sealed holdout is read once per definition, only for development survivors; "
+                    "session-clustered inference. Even a holdout-supported finding needs forward shadow evidence and the operator's "
+                    "approval before any rule may use it.")}
     if record:
         _record(out, exp_dir)
     return out
@@ -229,7 +254,8 @@ def _record(out: dict, exp_dir: Path) -> None:
     finally:
         db.close()
     # evidence ledger: definitions registered once (hash), each verdict recorded when it changes; knowledge follows
-    L = I.Ledger(exp_dir)
+    from nseql.screening.evidence_guard import GuardedLedger
+    L = GuardedLedger(I.Ledger(exp_dir), "research")
     if not any(e["body"].get("params_hash") == out["params_hash"] for e in L.entries("concept")):
         L.append("concept", "MS-definitions", {"params_hash": out["params_hash"], "version": M.VERSION, "params": M.PARAMS,
                                                "concepts": {k: {"family": v[0], "baseline": v[1]} for k, v in M.CONCEPTS.items()}})
@@ -243,19 +269,20 @@ def _record(out: dict, exp_dir: Path) -> None:
         body = {"verdict": r["verdict"], "n": r["n"], "mean_net": r["mean_net"], "p": r["p"], "status": r["verdict"], "version": VERSION}
         if last.get(sub, {}).get("verdict") != r["verdict"] or last.get(sub, {}).get("n") != r["n"]:
             L.append("result", sub, body)
-        st = {"candidate": "experimental finding", "insufficient sample": "unverified hypothesis"}.get(r["verdict"], "contradicted finding")
+        st = STATUS_TO_KNOWLEDGE.get(r["verdict"], "unverified hypothesis")
         prev = K.current().get(sub)
         if st == "contradicted finding" and prev and prev["status"] == "experimental finding":
             st = "invalidated finding"
         K.write(sub, st, f"{r['concept'].replace('_', ' ')} ({r['family']}) has value after costs beyond {r['baseline'] or 'random timing'}",
                 "concept_study", evidence={"n": r["n"], "mean_net": r["mean_net"], "p": r["p"], "vs_simpler": r["p_vs_baseline"],
                                            "vs_random": r["p_vs_placebo"], "holdout_mean": r["holdout_mean"]},
-                contradicting=[f"verdict: {r['verdict']}"] if r["verdict"] != "candidate" else [],
+                contradicting=[f"verdict: {r['verdict']} ({r.get('reason', '')})"] if r["verdict"] in ("rejected", "insufficient evidence") else [],
                 limitations="candle-based pattern, inferred; no order-book data; historical evidence until forward sessions confirm",
                 revalidate="every concept study run", reason=r["verdict"])
 
 
-def latest(exp_dir: Path) -> dict:
+def latest(exp_dir: Path, as_of=None) -> dict:
+    """The newest concept study; with `as_of`, the newest one COMPLETED by then (playback)."""
     from nseql.screening.opportunities import research_db
     f = research_db(exp_dir)
     if not f.exists():
@@ -264,7 +291,8 @@ def latest(exp_dir: Path) -> dict:
     db.row_factory = sqlite3.Row
     try:
         try:
-            r = db.execute("SELECT run FROM concept_runs ORDER BY at DESC LIMIT 1").fetchone()
+            r = (db.execute("SELECT run FROM concept_runs WHERE at <= ? ORDER BY at DESC LIMIT 1", (pd.Timestamp(as_of).isoformat(),)).fetchone()
+                 if as_of is not None else db.execute("SELECT run FROM concept_runs ORDER BY at DESC LIMIT 1").fetchone())
         except sqlite3.Error:
             return {"run": None, "results": []}
         if not r:
@@ -279,3 +307,26 @@ def latest(exp_dir: Path) -> dict:
         return {"run": r["run"], "runs": runs, "results": res, "unavailable": M.UNAVAILABLE}
     finally:
         db.close()
+
+
+def consistency(exp_dir: Path) -> dict:
+    """The research store is a convenience copy; the evidence ledger is authoritative. Every verdict in the latest run must
+    match the ledger's latest result for that concept (first horizon). A mismatch means the research record was edited."""
+    lat = latest(exp_dir)
+    if not lat.get("run"):
+        return {"checked": 0, "mismatches": []}
+    L = I.Ledger(exp_dir)
+    led = {}
+    for e in L.entries("result"):
+        if e["subject"].startswith("MS-"):
+            led[e["subject"]] = e["body"]
+    bad, n = [], 0
+    for r in lat["results"]:
+        if r["horizon"] != HORIZONS[0]:
+            continue
+        sub = f"MS-{r['concept']} ({r['source']})"
+        if sub in led:
+            n += 1
+            if led[sub].get("verdict") != r["verdict"]:
+                bad.append({"concept": sub, "research_store": r["verdict"], "ledger": led[sub].get("verdict")})
+    return {"checked": n, "mismatches": bad}

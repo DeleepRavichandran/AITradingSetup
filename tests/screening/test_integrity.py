@@ -166,7 +166,13 @@ def test_api_reads_with_the_viewer_key_and_only_the_operator_records_decisions(d
         assert viewer.post("/api/integrity/decision", json=body).status_code in (401, 403)
         assert op.post("/api/integrity/decision", json={**body, "reason": "short"}).status_code == 422
         assert op.post("/api/integrity/decision", json={**body, "decision": "promote now"}).status_code == 422
-        assert op.post("/api/integrity/decision", json=body).json()["recorded"] is True
+        # an approval must name the exact current candidate (fingerprint); a bare "challenger" approval is refused
+        assert op.post("/api/integrity/decision", json=body).status_code == 409
+        assert j["promotion"]["candidate_fingerprint"] is None                         # no challenger here: nothing to approve
+        assert op.post("/api/integrity/decision", json={**body, "subject": "challenger 0123456789abcdef",
+                                                        "candidate_fingerprint": "0" * 64}).status_code == 409
+        # (the bound approval itself: test_approval_is_bound_to_the_exact_candidate)
+        assert op.post("/api/integrity/decision", json={**body, "subject": "rules 1.5"}).json()["recorded"] is True
         j = viewer.get("/api/integrity?refresh=true").json()
         assert j["decisions"][0]["decision"] == "approve" and j["ledger"]["ok"]
         assert j["promotion"]["promoted"] is False                       # an approval alone promotes nothing
@@ -231,3 +237,35 @@ def test_loosening_the_evaluation_criteria_is_detected_and_blocks_promotion(lab,
     I.Ledger(e2).append("decision", f"criteria {r['criteria']['hash'][:16]}", {"decision": "approve", "reason": "operator reviewed the change"})
     assert I.report(e2)["criteria"]["approved"]
     assert len(I.Ledger(e2).entries("criteria")) == 2                    # both versions stay on record
+
+
+# ------------------------------------------------------------------ promotion integrity (phase "brain validation")
+def test_a_missing_benchmark_blocks_promotion_instead_of_counting_as_zero(lab, tmp_path):
+    e2 = _copy(lab[0], tmp_path)
+    r = I.report(e2)
+    b = r["promotion"]["benchmarks"]
+    assert b["NIFTY 50"]["available"] is False and b["NIFTY 50"]["pass"] is False          # not stored here: blocked
+    g = next(x for x in r["promotion"]["gates"] if x["gate"].startswith("beats NIFTY 50"))
+    assert g["pass"] is False and "not available" in g["detail"]
+    assert set(b) == set(I.REQUIRED_BENCHMARKS) and r["promotion"]["eligible_for_operator_review"] is False
+    # 3 sessions: an available benchmark never passes on an interval that cannot exist yet (n <= bootstrap block length)
+    for k, v in b.items():
+        if v["available"]:
+            assert v["sessions"] < I.MIN_SESSIONS and v["pass"] is False and "too few" in v["reading"]
+
+
+def test_approval_is_bound_to_the_exact_candidate(lab, tmp_path, monkeypatch):
+    e2 = _copy(lab[0], tmp_path)
+    fp = I.report(e2)["promotion"]["candidate_fingerprint"]
+    assert fp and fp["parts"]["execution_version"] and fp["parts"]["challenger"]
+    I.Ledger(e2).append("decision", "challenger", {"decision": "approve", "reason": "a vague approval for 'the challenger'"})
+    gate = lambda r: next(x for x in r["promotion"]["gates"] if x["gate"].startswith("operator approval"))["pass"]
+    assert gate(I.report(e2)) is False                                              # an unbound approval counts for nothing
+    I.Ledger(e2).append("decision", f"challenger {fp['fingerprint'][:16]}", {"decision": "approve", "candidate_fingerprint": fp["fingerprint"],
+                                                                             "reason": "reviewed every gate for this exact candidate"})
+    assert gate(I.report(e2)) is True
+    import nseql.screening.contest as C
+    monkeypatch.setattr(C, "code_version", lambda *a, **k: {"commit": "a-modified-challenger"})
+    r = I.report(e2)
+    assert r["promotion"]["candidate_fingerprint"]["fingerprint"] != fp["fingerprint"] and gate(r) is False   # modified: approval void
+    assert r["promotion"]["approved"] is False and r["promotion"]["deployed"] is False

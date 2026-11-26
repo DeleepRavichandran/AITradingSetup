@@ -1151,6 +1151,32 @@ def create_app() -> FastAPI:
         _register(ch, {"root": str(croot), "mode": "live", "account": croot.name, "challenger": CHALLENGER_VERSION}, activate=False)
         log(f"challenger {CHALLENGER_VERSION}: paper account {croot.name} (start cash {cm['start_cash']:,.2f}), contest from {cm['contest_from']}")
 
+    def _attach_shadow(sch, name: str, syms: list[str], log) -> None:
+        """Prospective shadow portfolio B (uncertainty-aware, brain_comparison.py): its own capital, limits, execution and
+        accounting, fed the incumbent's exact bars every minute. Decisions are frozen as they happen; nothing here trades
+        real money or changes the incumbent. Hypothetical by construction: reported separately from the account."""
+        from nseql.screening import brain_comparison as BC
+        from nseql.screening.execution import EXECUTION_VERSION
+        from nseql.screening.scheduler import MinuteScheduler
+        root = st.exp_dir / "screening" / f"{name}_shadow_B_{BC.VERSION.replace('.', '_')}_x{EXECUTION_VERSION.replace('.', '')}"
+        cf = root / "live.json"
+        now = datetime.now()
+        if cf.exists():
+            cm = json.loads(cf.read_text())
+        else:
+            cm = {"shadow": "B", "variant": "uncertainty-aware", "incumbent_account": name, "start_cash": round(sch.engine.x.equity() / 100, 2),
+                  "live_from": now.strftime("%Y-%m-%dT%H:%M:00"), "symbols": syms, "version": BC.VERSION,
+                  "note": "prospective shadow paper portfolio; hypothetical, never mixed with the account's results"}
+        shadow = MinuteScheduler(root, syms, kill=st.kill, mode="live", calendar=_calendar(), live_from=cm["live_from"],
+                                 experiments_dir=st.exp_dir, portfolio=BC.rules("B", cm["start_cash"]))
+        if not cf.exists():
+            root.mkdir(parents=True, exist_ok=True)
+            cm["rules"] = BC.rules("B", cm["start_cash"]).to_dict()
+            cf.write_text(json.dumps(cm))
+        sch.followers.append(shadow)
+        screening["shadow_B"] = (shadow, cm)
+        log(f"shadow portfolio B ({cm['variant']}): {root.name} (start cash {cm['start_cash']:,.2f}) from {cm['live_from']}")
+
     def _review_busy() -> bool:
         """The daily review waits while a session is on (09:00-15:35 IST on a trading day): the live bot keeps the CPU."""
         now = datetime.now(views.IST).replace(tzinfo=None)
@@ -1248,6 +1274,11 @@ def create_app() -> FastAPI:
                     _attach_challenger(sch, name, syms, log)
                 except Exception as e:      # noqa: BLE001 - the challenger never stops the incumbent
                     log(f"challenger not started: {type(e).__name__}: {e}")
+            if os.environ.get("NSEQL_SHADOW_B", "on").lower() not in ("off", "false", "0"):
+                try:
+                    _attach_shadow(sch, name, syms, log)
+                except Exception as e:      # noqa: BLE001 - a shadow portfolio never stops the incumbent
+                    log(f"shadow portfolio B not started: {type(e).__name__}: {e}")
             sch.on_session_close = lambda day, _n=name: reviews.submit(_n, day)     # automatic daily review after 15:30
             sch.start()
             try:
@@ -2028,6 +2059,21 @@ def create_app() -> FastAPI:
         """Start a historical validation now (operator key only; refused during market hours)."""
         return {"result": _history_job(force=True)}
 
+    @api.get("/integrity/anchors")
+    def integrity_anchors():
+        """Evidence-ledger head and its anchors outside the ledger, for an outside witness to record (read-only)."""
+        from nseql.screening import integrity as I
+        from nseql.screening.evidence_guard import verify_anchors
+        L = I.Ledger(st.exp_dir)
+        return clean({"head": L.verify(), **verify_anchors(st.exp_dir, L)})
+
+    @api.get("/data/audit")
+    def data_audit_view():
+        """What the live Angel One feed actually delivered per session (first bar, bars per stock, late, re-sent, quarantined,
+        arrival delay) and the historical minute dataset's coverage."""
+        from nseql.screening import data_audit as DA
+        return clean(DA.audit(st.exp_dir, st.data_dir))
+
     @api.get("/heatmaps")
     def heatmaps_catalog():
         """The sixteen heatmaps, each available / limited / unavailable (with the reason), plus the latest feature study."""
@@ -2163,6 +2209,11 @@ def create_app() -> FastAPI:
         from nseql.screening import integrity as I
         rep = _integrity_report(max_age=0)
         fired = I.enforce(rep, st.kill, I.Ledger(st.exp_dir))
+        try:
+            from nseql.screening.evidence_guard import anchor
+            anchor(st.exp_dir, I.Ledger(st.exp_dir), audit=reg.audit, note="integrity check")
+        except Exception as e:      # noqa: BLE001 - an anchor failure is reported, never stops the lab
+            print(f"[integrity] anchor failed: {type(e).__name__}: {e}", flush=True)
         if fired:
             for s_ in st.sessions.values():
                 s_.halt(st.kill.reason)
@@ -2212,13 +2263,23 @@ def create_app() -> FastAPI:
         subject: str = Field(min_length=2, max_length=80)
         decision: str = Field(pattern="^(approve|reject)$")
         reason: str = Field(min_length=20, max_length=2000)
+        candidate_fingerprint: str | None = Field(default=None, max_length=64)
 
     @api.post("/integrity/decision")
     def integrity_decision(body: IntegrityDecision, request: Request):
         """The operator's recorded decision on a promotion or a rules change (operator key only: the viewer key cannot write).
         Recording an approval changes no rule by itself: a rule change still ships as reviewed code."""
         from nseql.screening import integrity as I
-        d = I.Ledger(st.exp_dir).append("decision", body.subject, {"decision": body.decision, "reason": body.reason.strip(), "by": request.state.role})
+        from nseql.screening.evidence_guard import GuardedLedger
+        rec = {"decision": body.decision, "reason": body.reason.strip(), "by": request.state.role}
+        if body.subject.startswith("challenger"):
+            # bound to the exact candidate: the subject must name the current fingerprint, which is stored with the decision
+            fp = (_integrity_report(max_age=0)["promotion"].get("candidate_fingerprint") or {})
+            if not fp or body.subject != f"challenger {fp['fingerprint'][:16]}" or (body.candidate_fingerprint or fp["fingerprint"]) != fp["fingerprint"]:
+                raise HTTPException(409, "an approval must name the current candidate fingerprint (see Evidence Integrity); "
+                                         "the candidate may have changed")
+            rec.update(candidate_fingerprint=fp["fingerprint"], candidate=fp["parts"])
+        d = GuardedLedger(I.Ledger(st.exp_dir), "operator").append("decision", body.subject, rec)
         reg.audit(request.state.role, "INTEGRITY_DECISION", subject=body.subject, decision=body.decision, reason=body.reason, digest=d)
         _ig.pop("rep", None)
         return {"recorded": True, "digest": d}
@@ -2453,7 +2514,8 @@ def create_app() -> FastAPI:
         reg.audit(body.operator, "KILL_SWITCH_RESET", reason=body.reason)
         try:                                           # current integrity triggers are acknowledged; a new one engages again
             from nseql.screening import integrity as I
-            ack = I.acknowledge(I.Ledger(st.exp_dir), _integrity_report(max_age=0), body.operator, body.reason)
+            from nseql.screening.evidence_guard import GuardedLedger
+            ack = I.acknowledge(GuardedLedger(I.Ledger(st.exp_dir), "operator"), _integrity_report(max_age=0), body.operator, body.reason)
             if ack:
                 reg.audit(body.operator, "INTEGRITY_ACKNOWLEDGED", triggers=ack)
         except Exception as e:      # noqa: BLE001 - the reset itself has happened

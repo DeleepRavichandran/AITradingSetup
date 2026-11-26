@@ -77,9 +77,14 @@ def swings(c: pd.DataFrame) -> tuple[list[tuple[int, float]], list[tuple[int, fl
 
 
 def _load(db: sqlite3.Connection, symbol: str, as_of: pd.Timestamp, days: int = 40) -> pd.DataFrame:
-    return pd.read_sql_query("SELECT ts, open, high, low, close, volume FROM events WHERE symbol=? AND late=0 AND ts >= ? AND ts < ? ORDER BY ts",
-                             db, params=(symbol, (as_of.normalize() - pd.Timedelta(days=days)).strftime("%Y-%m-%d"),
-                                         as_of.strftime("%Y-%m-%dT%H:%M:%S")))
+    """Completed bars before `as_of`; on a live feed only bars that had ARRIVED by then (market_structure.observable)."""
+    from nseql.screening.market_structure import arrival_mode
+    q = "SELECT ts, open, high, low, close, volume FROM events WHERE symbol=? AND late=0 AND ts >= ? AND ts < ?"
+    params = [symbol, (as_of.normalize() - pd.Timedelta(days=days)).strftime("%Y-%m-%d"), as_of.strftime("%Y-%m-%dT%H:%M:%S")]
+    if arrival_mode(db):
+        q += " AND (received_at IS NULL OR received_at <= ?)"
+        params.append(as_of.tz_localize("Asia/Kolkata").timestamp())
+    return pd.read_sql_query(q + " ORDER BY ts", db, params=params)
 
 
 def analyse(db: sqlite3.Connection, symbol: str, as_of, series: bool = False) -> dict:

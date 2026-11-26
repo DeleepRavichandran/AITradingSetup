@@ -143,3 +143,7 @@ export function Usage({ usage }: { usage?: any[] }) {
     </div>
   );
 }
+
+/** Evidence status (validation_protocol.STATUSES) -> tag tone. "Validated" is never used for a study result. */
+export const statusTone = (v?: string) => (v === "holdout-supported finding" || v === "forward-supported finding" || v === "promotion-eligible methodology" ? "ok"
+  : v === "rejected" ? "no" : v ? "wait" : "");

@@ -403,6 +403,44 @@ def data_quality(account: Path) -> dict:
         con.close()
 
 
+def _agenda(exp_dir: Path, rep: dict, brain_bits: dict, K) -> dict:
+    """The brain's research questions and adaptation recommendations (research_agenda.py), from recorded evidence only."""
+    from nseql.screening import concept_study as CS, feature_study as FS, history_validation as H, research_agenda as RA
+    import json as _json
+    opp = None
+    reviews = sorted((Path(exp_dir) / "daily_review").glob("*/*/opportunities.json"), key=lambda f: f.parent.name)
+    if reviews:
+        try:
+            opp = _json.loads(reviews[-1].read_text())
+        except (OSError, ValueError):
+            opp = None
+    hist = H.latest(exp_dir)
+    return {"research_questions": RA.questions(rep, brain_bits, opp, CS.latest(exp_dir), FS.latest(exp_dir), K.current()),
+            "recommendations": RA.recommendations(rep, brain_bits, hist)}
+
+
+def shadow_forward(exp_dir: Path, cur: Path) -> dict | None:
+    """Forward evidence for prospective shadow portfolio B against the incumbent: same sessions since B started, after
+    costs, paired by session with a block-bootstrap interval. Hypothetical portfolio: never reported as account results."""
+    import json as _json
+    from nseql.screening import brain_comparison as BC
+    from nseql.screening.contest import block_bootstrap
+    for f in sorted((Path(exp_dir) / "screening").glob(f"{cur.name}_shadow_B_*/live.json")):
+        m = _json.loads(f.read_text())
+        b = I.daily_returns(f.parent)
+        a = I.daily_returns(cur)
+        j = pd.concat([b, a], axis=1, keys=["b", "a"]).dropna()
+        j = j[j.index >= str(m.get("live_from", ""))[:10]]
+        ci = block_bootstrap((j.b - j.a).to_numpy()) if len(j) else {"mean": None, "low": None, "high": None, "n": 0}
+        reading = ("too few sessions" if len(j) < 20 else "ahead (interval above zero)" if ci["low"] > 0 else
+                   "behind (interval below zero)" if ci["high"] < 0 else "indistinguishable")
+        return {"account": f.parent.name, "since": m.get("live_from"), "sessions": int(len(j)), "mean_daily_difference": ci["mean"],
+                "ci": [ci["low"], ci["high"]], "reading": reading, "quality_B": BC.trade_quality(f.parent), "quality_A": BC.trade_quality(cur),
+                "note": "prospective shadow portfolio (decisions frozen as they happened); hypothetical, not account performance; "
+                        "at least 60 sessions and 100 trades before it could even be considered"}
+    return None
+
+
 def report(exp_dir: Path, rep: dict | None = None, data_dir: Path | None = None) -> dict:
     exp_dir = Path(exp_dir)
     rep = rep or I.report(exp_dir, data_dir)
@@ -426,5 +464,6 @@ def report(exp_dir: Path, rep: dict | None = None, data_dir: Path | None = None)
                             "note": "computed from data at each decision minute; observation only (H-ABSTAIN tests whether abstaining would help)"},
             "quality": q, "shadow": shadow(cur, exp_dir), "decay": decay(cur), "shared_risk": shared_risk(cur), "data_quality": dq,
             "knowledge": sorted(K.current().values(), key=lambda x: x["at"], reverse=True), "corrections": K.corrections(),
-            "metrics": metrics(rep, g, q, K, dq), "not_implemented": NOT_IMPLEMENTED,
+            "metrics": metrics(rep, g, q, K, dq), "not_implemented": NOT_IMPLEMENTED, "shadow_B": shadow_forward(exp_dir, cur),
+            **_agenda(exp_dir, rep, {"uncertainty": {"entries": len(g), "would_abstain": int(g.abstain.sum()) if len(g) else 0}, "decay": decay(cur)}, K),
             "principles": "No combined intelligence score. Profit is not decision quality. AI agreement is not evidence."}

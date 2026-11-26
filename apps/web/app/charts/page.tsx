@@ -47,7 +47,7 @@ export default function Charts() {
     .map((l: any) => ({ price: l.price, label: `${l.kind} ${num(l.price, 2)}`, color: LIQ })) : [];
   const val = layers.value && ms?.profile_today ? [{ price: ms.profile_today.vah, label: `VAH ${num(ms.profile_today.vah, 2)}`, color: VAL },
     { price: ms.profile_today.poc, label: `POC ${num(ms.profile_today.poc, 2)}`, color: VAL }, { price: ms.profile_today.val, label: `VAL ${num(ms.profile_today.val, 2)}`, color: VAL }] : [];
-  const verdictTone = (v?: string) => (v === "candidate" ? "ok" : v === "insufficient sample" ? "wait" : v ? "no" : "");
+  const verdictTone = (v?: string) => (v === "holdout-supported finding" ? "ok" : v === "rejected" ? "no" : v ? "wait" : "");
   return (
     <>
       <h1>Chart Analyst</h1>

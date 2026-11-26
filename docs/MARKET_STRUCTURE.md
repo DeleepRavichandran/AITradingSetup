@@ -129,3 +129,24 @@ All thresholds are in `PARAMS`, fixed before any study. Their hash is registered
   - The paper bot only buys.
   - Short-direction concepts are measured for knowledge, but could not be traded as is.
 - **Regimes:** the regime labels are coarse (volatility terciles). Sector rotation and cross-asset inputs need data that is not stored yet.
+
+## Validation protocol (updated 2026-11-26)
+
+The study no longer tests on the whole sample. It follows `validation_protocol.py` (see docs/VALIDATION.md):
+- The partition is registered once: development, a one-session embargo, then a sealed holdout.
+- Development selects. Tests are session-clustered and corrected across all concepts × horizons × comparisons.
+- Only development survivors are evaluated on the holdout, once per definition, and each access is logged.
+- A holdout already inspected under other definitions is not independent evidence.
+- Missing or small holdout evidence keeps a concept at "validation candidate".
+
+The statuses replace "candidate":
+
+| Status | Meaning |
+|---|---|
+| insufficient evidence | too few development sessions or events |
+| rejected | the reason is stated |
+| exploratory finding | a raw development signal that did not survive correction |
+| validation candidate | passed development; holdout missing, too small, or already inspected |
+| holdout-supported finding | passed development and the sealed holdout |
+
+Even a holdout-supported finding needs forward shadow evidence and your approval before any rule may use it.

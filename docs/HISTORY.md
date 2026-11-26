@@ -55,3 +55,18 @@ Results go to `experiments/history/<run>/report.json`, the evidence ledger (`HIS
 - **Survivorship:** only the current watchlist, so stocks that left the large caps are absent.
 - **Corporate actions:** no adjustment is applied to minute data.
 - **Coverage:** whatever Angel One returns decides the period. Coverage is shown per symbol, and gaps are never filled.
+
+## Brain comparison inside the replay (updated 2026-11-26)
+
+The replay also runs:
+- **B**, the uncertainty-aware variant: capital only for configurations with qualified forward evidence; others explore at a quarter size.
+- **B0**, the matched control: the incumbent's own ranking, limited to B's number of new trades a day and scaled to B's average ticket size.
+
+Ablations, paired by session with intervals:
+- **B vs A** asks whether uncertainty-awareness helps.
+- **B vs B0** asks whether that is better selection, or merely trading less or smaller.
+- **B0 vs A** measures the effect of trading less or smaller alone.
+
+C (market context) and D (combined) run only when a concept or feature is holdout-supported. Otherwise they are reported as not run, because they would be identical to A and B.
+
+B also runs forward as a live shadow paper portfolio (hypothetical; never account performance).

@@ -549,9 +549,30 @@ def po3(m1_day: pd.DataFrame) -> dict | None:
 
 
 # ================================================================================================ point-in-time chart annotation
+def arrival_mode(db) -> bool:
+    """True when the ledger's arrival times are real (a live feed): then a bar counts as observable only once it had
+    ARRIVED. Replayed or back-filled history records the replay's clock instead; there the bar's close time is used."""
+    r = db.execute("SELECT ts, received_at FROM events WHERE late=0 AND received_at IS NOT NULL ORDER BY ts DESC LIMIT 400").fetchall()
+    if not r:
+        return False
+    lag = [ra - pd.Timestamp(t).tz_localize("Asia/Kolkata").timestamp() for t, ra in r]
+    return 0 <= float(np.median(lag)) <= 600
+
+
+def observable(db, upto) -> tuple[str, list]:
+    """SQL condition (and parameters) for 1-minute bars observable at `upto`: closed by then and, on a live feed, arrived."""
+    upto = pd.Timestamp(upto)
+    cond, params = "late=0 AND ts <= ?", [upto.strftime("%Y-%m-%dT%H:%M:%S")]
+    if arrival_mode(db):
+        cond += " AND (received_at IS NULL OR received_at <= ?)"
+        params.append(upto.tz_localize("Asia/Kolkata").timestamp())
+    return cond, params
+
+
 def load_m1(db, symbol: str, upto: pd.Timestamp, days: int = 10) -> pd.DataFrame:
-    m1 = pd.read_sql_query("SELECT ts, open, high, low, close, volume FROM events WHERE symbol=? AND late=0 AND ts >= ? AND ts <= ? ORDER BY ts",
-                           db, params=(symbol, (upto.normalize() - pd.Timedelta(days=days)).strftime("%Y-%m-%d"), upto.strftime("%Y-%m-%dT%H:%M:%S")))
+    cond, params = observable(db, upto)
+    m1 = pd.read_sql_query(f"SELECT ts, open, high, low, close, volume FROM events WHERE symbol=? AND ts >= ? AND {cond} ORDER BY ts",
+                           db, params=(symbol, (upto.normalize() - pd.Timedelta(days=days)).strftime("%Y-%m-%d"), *params))
     m1["ts"] = pd.to_datetime(m1.ts)
     return m1
 

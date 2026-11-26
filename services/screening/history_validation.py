@@ -37,6 +37,10 @@ DATASET = "angel_minute"
 WARMUP = 5
 FIRST_LIVE_DAY = "2026-11-23"            # the live paper account began; rules 1.1-1.4 were shaped on sessions from here
 SEGMENTS = ("development", "validation", "holdout", "contaminated")
+# (label, variant, reference): does each brain component add value, and is it more than trading less or smaller?
+ABLATIONS = (("B vs A: uncertainty-awareness", "B uncertainty-aware", "incumbent"),
+             ("B vs B0: selection quality, not just fewer or smaller trades", "B uncertainty-aware", "B0 matched control"),
+             ("B0 vs A: effect of merely trading less or smaller", "B0 matched control", "incumbent"))
 
 
 def history_root(exp_dir: Path) -> Path:
@@ -105,7 +109,8 @@ def _day_stream(frames: dict[str, pd.DataFrame], day: str) -> list[tuple]:
 # ================================================================================================ 2. protocol
 def protocol(exp_dir: Path, dataset_id: str, sessions: list[str]) -> dict:
     """Registered once per dataset: the holdout cut-off never moves back (new data only extends the holdout)."""
-    L = I.Ledger(exp_dir)
+    from nseql.screening.evidence_guard import GuardedLedger
+    L = GuardedLedger(I.Ledger(exp_dir), "evaluation")
     reg = [e for e in L.entries("protocol") if e["subject"] == f"HIST {dataset_id}"]
     if reg:
         return reg[0]["body"]
@@ -162,15 +167,23 @@ def _series_stats(r: list[float]) -> dict:
             "max_drawdown": float((np.concatenate([[1.0], eq]) / peak - 1).min()), "worst_day": float(x.min()), "best_day": float(x.max())}
 
 
+MIN_READING_SESSIONS = I.MIN_SESSIONS     # 20: below this a paired comparison gets numbers but no reading
+
+
 def _excess(a: list[float], b: list[float]) -> dict:
+    """Paired daily difference a - b with a block-bootstrap interval. No reading below MIN_READING_SESSIONS: with as many
+    sessions as the bootstrap block length or fewer, every resample is the whole series and the 'interval' is a point, so a
+    single good day would read as 'ahead'."""
     from nseql.screening.contest import block_bootstrap
     d = np.array([x - y for x, y in zip(a, b) if x is not None and y is not None and math.isfinite(x) and math.isfinite(y)], dtype=float)
     if len(d) < 2:
         return {"sessions": int(len(d))}
     ci = block_bootstrap(d)
     t = I.t_test(d)
-    return {"sessions": int(len(d)), "mean_daily_excess": float(d.mean()), "ci_low": ci["low"], "ci_high": ci["high"], "p": t["p"],
-            "reading": "ahead (interval above zero)" if ci["low"] > 0 else "behind (interval below zero)" if ci["high"] < 0 else "indistinguishable"}
+    out = {"sessions": int(len(d)), "mean_daily_excess": float(d.mean()), "ci_low": ci["low"], "ci_high": ci["high"], "p": t["p"]}
+    if len(d) < MIN_READING_SESSIONS:
+        return {**out, "reading": f"too few sessions ({len(d)} of {MIN_READING_SESSIONS})"}
+    return {**out, "reading": "ahead (interval above zero)" if ci["low"] > 0 else "behind (interval below zero)" if ci["high"] < 0 else "indistinguishable"}
 
 
 def plain(seg: dict, who: str) -> str:
@@ -209,27 +222,57 @@ def validate(data_dir: Path, exp_dir: Path, dataset_id: str = DATASET, capital: 
     root = Path(out) if out else history_root(exp_dir) / run_id
     if root.exists():
         shutil.rmtree(root)
+    from nseql.screening import brain_comparison as BC
+    from nseql.screening.scheduler import MinuteScheduler
     pair = C.open_pair(root / "replay", stocks, capital)
     live_from = pd.Timestamp(f"{sessions[min(WARMUP, len(sessions) - 1)]}T09:16:00").isoformat()
-    for s in (pair.incumbent, pair.challenger):
-        s.live_from = live_from
-    _status(exp_dir, state="replaying", run=run_id, sessions=len(sessions), done=0, phase="minute replay: incumbent and challenger")
+    variant_b = MinuteScheduler(root / "replay" / "variant_B", stocks, portfolio=BC.rules("B", capital), mode="replay")
+    variant_b.verbose = False
+    for s_ in (pair.incumbent, pair.challenger, variant_b):
+        s_.live_from = live_from
+    _status(exp_dir, state="replaying", run=run_id, sessions=len(sessions), done=0, phase="minute replay: incumbent, challenger, variant B")
     sub = {s: frames[s] for s in stocks}
     import time as _time
+
+    def _feed(scheds, day):
+        for t, bars in _day_stream(sub, day):
+            for s_ in scheds:
+                s_.ingest(bars)
+                s_.run_cycle(pd.Timestamp(t) + pd.Timedelta(seconds=6))
+
     for k, day in enumerate(sessions):
         while yield_to_market and market_session_on():
             _status(exp_dir, phase=f"paused for the market session (resumes after 15:35); next {day}")
             _time.sleep(120)
-        C.feed(pair, _day_stream(sub, day))
+        _feed([pair.incumbent, pair.challenger, variant_b], day)
         if k % 5 == 0:
             _status(exp_dir, done=k + 1, phase=f"minute replay {day}")
-    for s in (pair.incumbent, pair.challenger):
-        s.store.db.commit()
+    # second pass: the matched control. A's own ranking, limited to B's average number of new trades a day and scaled to B's
+    # average ticket, so "B is better" cannot mean "B trades less or smaller"
+    counted0 = sessions[WARMUP:]
+    b_per_day = BC.entries_per_day(variant_b, counted0)
+    b_ratio = BC.size_ratio(variant_b, pair.incumbent, counted0)
+    variant_b0 = MinuteScheduler(root / "replay" / "variant_B0", stocks, portfolio=BC.rules("B0", capital, max(1, round(b_per_day)), b_ratio), mode="replay")
+    variant_b0.verbose = False
+    variant_b0.live_from = live_from
+    _status(exp_dir, phase="minute replay: matched control (B0)", done=0)
+    for k, day in enumerate(sessions):
+        while yield_to_market and market_session_on():
+            _status(exp_dir, phase=f"paused for the market session (resumes after 15:35); next {day}")
+            _time.sleep(120)
+        _feed([variant_b0], day)
+        if k % 5 == 0:
+            _status(exp_dir, done=k + 1, phase=f"control replay {day}")
+    for s_ in (pair.incumbent, pair.challenger, variant_b, variant_b0):
+        s_.store.db.commit()
     counted = sessions[WARMUP:]
     bench = _benchmarks(frames, counted)
     inc_all = C.account_metrics(pair.incumbent, capital, counted)
     ch_all = C.account_metrics(pair.challenger, capital, counted)
-    series = {"incumbent": [d["return"] for d in inc_all["daily"]], "challenger": [d["return"] for d in ch_all["daily"]], **bench}
+    b_all = C.account_metrics(variant_b, capital, counted)
+    b0_all = C.account_metrics(variant_b0, capital, counted)
+    series = {"incumbent": [d["return"] for d in inc_all["daily"]], "challenger": [d["return"] for d in ch_all["daily"]],
+              "B uncertainty-aware": [d["return"] for d in b_all["daily"]], "B0 matched control": [d["return"] for d in b0_all["daily"]], **bench}
     segs = {}
     for name in SEGMENTS:
         idx = [i for i, d in enumerate(counted) if segment_of(d, p) == name]
@@ -242,6 +285,7 @@ def validate(data_dir: Path, exp_dir: Path, dataset_id: str = DATASET, capital: 
         seg["vs"] = {who: {b: _excess([series[who][i] for i in idx], [series[b][i] for i in idx]) for b in bench}
                      for who in ("incumbent", "challenger")}
         seg["challenger_vs_incumbent"] = _excess([series["challenger"][i] for i in idx], [series["incumbent"][i] for i in idx])
+        seg["ablation"] = {name: _excess([series[a][i] for i in idx], [series[b][i] for i in idx]) for name, a, b in ABLATIONS}
         seg["plain"] = [plain(seg, "incumbent"), plain(seg, "challenger")]
         segs[name] = seg
     # trade-level checks on the holdout round trips
@@ -252,24 +296,38 @@ def validate(data_dir: Path, exp_dir: Path, dataset_id: str = DATASET, capital: 
     trade = {"round_trips_all": int(len(rt)), "round_trips_holdout": int(len(rt_h)),
              "placebo_holdout": I.placebo(inc_dir, rt_h) if len(rt_h) >= 2 else {"p": None},
              "stress_holdout": I.stress(inc_dir, rt_h) if len(rt_h) else {"n": 0}}
-    rep = {"version": VERSION, "run": run_id, "generated_at": datetime.now().isoformat(timespec="seconds"), "dataset": coverage(ds),
+    quality = {name: BC.trade_quality(root / "replay" / folder) for name, folder in
+               (("incumbent", "incumbent"), ("challenger", "challenger"), ("B uncertainty-aware", "variant_B"), ("B0 matched control", "variant_B0"))}
+    rep = {"version": VERSION, "run": run_id, "variants": {"B_entries_per_day": round(b_per_day, 2), "trade_quality": quality,
+                                                            "B_size_ratio": None if b_ratio is None else round(b_ratio, 3),
+                                                            "rules": {"B": BC.rules("B", capital).to_dict(), "B0": BC.rules("B0", capital, max(1, round(b_per_day)), b_ratio).to_dict()}}, "generated_at": datetime.now().isoformat(timespec="seconds"), "dataset": coverage(ds),
            "protocol": p, "capital": capital, "kind": "SYNTHETIC replay" if ds.synthetic else "historical replay of real NSE 1-minute data",
            "incumbent_rules": inc_all.get("version") or C.incumbent_label(), "challenger": C.CHALLENGER_VERSION,
            "segments": segs, "trades": trade,
            "curves": {"days": counted, **{k: [None if v is None or not math.isfinite(v) else round(float(v), 6) for v in r] for k, r in series.items()}},
-           "limits": ["Candle-based fills at the next minute with the modelled spread, impact and dated charges; real fills can be worse.",
+           "limits": ["Candle-based fills at the first price after the decision (execution 2.1: the open two minutes after the decision candle) "
+                      "with the modelled spread, impact and dated charges; real fills can be worse.",
                       "Current watchlist only: stocks that left the large caps are absent (survivorship).",
                       "No corporate-action adjustment is applied to the minute data.",
                       "Angel One coverage decides the period; gaps are reported, never filled."]}
+    rep["variants"]["warnings"] = [(f"{k} made no round trips: comparisons with it measure staying in cash, not selection"
+                                    if not (v.get("round_trips") or 0) else
+                                    f"{k} made {v['round_trips']} round trips (fewer than {I.MIN_TRADES}): too few to judge its selection")
+                                   for k, v in quality.items() if k.startswith("B") and (v.get("round_trips") or 0) < I.MIN_TRADES]
     if studies:
         _status(exp_dir, state="studies", phase="concept and feature studies on the same data")
         from nseql.screening import concept_study as CS, feature_study as FS
         from nseql.screening.price_action import candles
         cs = CS.run(None, exp_dir, frames=[(s, candles(frames[s], 5), frames[s], True) for s in stocks], source_label=f"{dataset_id} 5-minute")
         fs = FS.run(inc_dir, exp_dir, source_label=f"{dataset_id} replay")
-        rep["concepts"] = {"run": cs["run"], "candidates": [r["concept"] for r in cs["results"] if r["verdict"] == "candidate" and r["horizon"] == CS.HORIZONS[0]],
+        rep["concepts"] = {"run": cs["run"], "candidates": [r["concept"] for r in cs["results"] if r["verdict"] == "holdout-supported finding" and r["horizon"] == CS.HORIZONS[0]],
+                           "validation_candidates": [r["concept"] for r in cs["results"] if r["verdict"] == "validation candidate" and r["horizon"] == CS.HORIZONS[0]],
                            "verdicts": {v: sum(1 for r in cs["results"] if r["verdict"] == v and r["horizon"] == CS.HORIZONS[0]) for v in {r["verdict"] for r in cs["results"]}}}
         rep["features"] = {"run": fs["run"], "verdicts": {r["feature"]: r["verdict"] for r in fs["results"]}}
+        adds = BC.supported_additions({"results": cs["results"]}, {"results": fs["results"]})
+        rep["variants"]["C_market_context"] = ({"status": "not run", "why": "no concept or feature reached holdout-supported status, so C would be "
+                                                "identical to A and D to B"} if not adds else {"status": "pending", "supported_additions": adds,
+                                                "why": "supported additions exist; wiring them as entry filters needs the operator's go-ahead"})
     root.mkdir(parents=True, exist_ok=True)
     (root / "report.json").write_text(json.dumps(rep, indent=1, default=str))
     _record(exp_dir, rep)
@@ -279,7 +337,8 @@ def validate(data_dir: Path, exp_dir: Path, dataset_id: str = DATASET, capital: 
 
 def _record(exp_dir: Path, rep: dict) -> None:
     from nseql.screening.brain import Knowledge
-    L = I.Ledger(exp_dir)
+    from nseql.screening.evidence_guard import GuardedLedger
+    L = GuardedLedger(I.Ledger(exp_dir), "research")
     K = Knowledge(L)
     h = rep["segments"]["holdout"]
     for who in ("incumbent", "challenger"):

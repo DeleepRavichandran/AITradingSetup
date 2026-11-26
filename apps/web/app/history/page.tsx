@@ -11,7 +11,7 @@ const SEG = ["development", "validation", "holdout", "contaminated"] as const;
 const SEG_NOTE: Record<string, string> = {
   development: "first half of the history before the live account", validation: "next quarter", holdout: "registered once; only grows forward",
   contaminated: "sessions the live rules were shaped on: shown, never counted as evidence" };
-const WHO = ["incumbent", "challenger", "NIFTY 50", "buy and hold watchlist", "cash"];
+const WHO = ["incumbent", "B uncertainty-aware", "B0 matched control", "challenger", "NIFTY 50", "buy and hold watchlist", "cash"];
 const tone = (r?: string) => (r?.startsWith("ahead") ? "ok" : r?.startsWith("behind") ? "no" : "wait");
 
 export default function History() {
@@ -58,6 +58,18 @@ export default function History() {
               <ul className="list" style={{ marginTop: 8 }}>{(s.plain || []).map((p: string) => <li key={p} className="t" style={{ fontSize: 13 }}>{p}</li>)}</ul>
             </div></> : <p className="empty">No sessions in this segment.</p>}
         </section>
+        {s?.ablation && <section className="vp" style={{ marginTop: 14 }} aria-labelledby="ab-h">
+          <div className="h"><div><h2 id="ab-h">Is the new brain better? ({seg})</h2><div className="sub2">Paired by session, block-bootstrap interval (shown from 20 sessions); B0 keeps A's ranking but matches B's trade count and ticket size, so B vs B0 separates better selection from merely trading less or smaller</div></div></div>
+          <div className="tw"><table data-testid="hv-ablation"><thead><tr><th>Comparison</th><th className="r">Mean daily difference</th><th className="r">95% interval</th><th>Reading</th></tr></thead>
+            <tbody>{Object.entries(s.ablation).map(([k, v]: any) => <tr key={k}><td>{k}</td><td className="r">{signedPct(v.mean_daily_excess, 3)}</td>
+              <td className="r">{v.ci_low == null || String(v.reading || "").startsWith("too few") ? "—" : `${signedPct(v.ci_low, 3)} .. ${signedPct(v.ci_high, 3)}`}</td><td><Tag tone={tone(v.reading)}>{v.reading || "too few sessions"}</Tag></td></tr>)}</tbody></table></div>
+          {r.variants && <div className="tw" style={{ marginTop: 8 }}><table data-testid="hv-quality"><thead><tr><th>Variant (all counted sessions)</th><th className="r">Round trips</th><th className="r">Mean per trade</th><th className="r">Share won</th><th className="r">Charges</th><th className="r">Net</th></tr></thead>
+            <tbody>{Object.entries(r.variants.trade_quality).map(([k, v]: any) => <tr key={k}><td>{k}</td><td className="r">{v.round_trips}</td><td className="r">{v.mean_net_inr == null ? "—" : `₹${v.mean_net_inr}`}</td>
+              <td className="r">{v.share_won == null ? "—" : `${Math.round(v.share_won * 100)}%`}</td><td className="r">{v.charges_inr == null ? "—" : `₹${Math.round(v.charges_inr).toLocaleString("en-IN")}`}</td>
+              <td className="r">{v.net_inr == null ? "—" : `₹${Math.round(v.net_inr).toLocaleString("en-IN")}`}</td></tr>)}</tbody></table></div>}
+          {r.variants?.warnings?.length > 0 && <div className="banner info" role="note" data-testid="hv-variant-warnings" style={{ margin: "8px 0 0" }}>{r.variants.warnings.join(" · ")}</div>}
+          {r.variants?.C_market_context && <div className="ft"><span>C (market context) and D (combined): {r.variants.C_market_context.status}: {r.variants.C_market_context.why}</span></div>}
+        </section>}
         {curves && <section className="vp" style={{ marginTop: 14 }} aria-labelledby="cv-h">
           <div className="h"><div><h2 id="cv-h">Cumulative result, all counted sessions</h2><div className="sub2">After costs; holdout from {r.protocol.holdout_from}; contaminated from {r.protocol.contaminated_from}</div></div></div>
           <div className="b"><LineChart x={curves.x} series={curves.series} height={240} fmt={(v) => signedPct(v, 1)} zero /></div></section>}
@@ -71,7 +83,7 @@ export default function History() {
             </div></section>
           <section className="vp" aria-labelledby="cs-h"><div className="h"><h2 id="cs-h">Concepts and features on this data</h2></div>
             <div className="b vlist">
-              <div><span>ICT/SMC/price-action candidates</span><b>{r.concepts ? (r.concepts.candidates.length ? r.concepts.candidates.join(", ") : "none") : "—"}</b></div>
+              <div><span>Holdout-supported concepts</span><b>{r.concepts ? (r.concepts.candidates.length ? r.concepts.candidates.join(", ") : "none") : "—"}</b></div>
               {r.features && Object.entries(r.features.verdicts).map(([f, v]: any) => <div key={f}><span>{f}</span><b>{v}</b></div>)}
             </div><div className="ft"><span>Full tables: Brain Intelligence and Heatmap Intelligence.</span></div></section>
           <section className="vp" aria-labelledby="cov-h"><div className="h"><h2 id="cov-h">Data coverage</h2></div>
