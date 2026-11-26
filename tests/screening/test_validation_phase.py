@@ -235,3 +235,28 @@ def test_volume_profile_keeps_a_bar_at_the_days_high():
     with np.errstate(all="raise"):                                       # 0/0 used to raise here
         p = M.profile(m1, bins=4)
     assert p is not None and p["poc"] >= 101.5                           # the 50-share bar at the high is counted
+
+
+def test_overwriting_a_dataset_with_read_only_raw_files(tmp_path, monkeypatch):
+    """2026-11-26 on Windows: a retried history import could not replace the partial dataset because raw files are kept
+    read-only (PermissionError). Overwrite now makes them writable first. Windows' refusal is simulated here."""
+    import os, shutil, stat
+    import pandas as pd
+    from nseql.data import store as S
+    def make():
+        w = S.DatasetWriter(tmp_path, "d", description="t", source="t", licence="t", synthetic=True, overwrite=True)
+        raw = tmp_path / "r.json"; raw.write_text("{}"); w.add_raw(raw)
+        w.write_bars("AAA", "1m", pd.DataFrame({"ts": [pd.Timestamp("2026-11-26 09:16")], "open": [1.0], "high": [1.0], "low": [1.0],
+                                                "close": [1.0], "volume": [1]}))
+        return w.finish()
+    make()
+    ro = [p for p in (tmp_path / "d" / "raw").iterdir()]
+    assert ro and not os.access(ro[0], os.W_OK) or not (os.stat(ro[0]).st_mode & stat.S_IWUSR)
+    real_unlink = os.unlink
+    def windows_unlink(path, *a, **k):                       # Windows: a read-only file cannot be deleted
+        if not (os.stat(path, dir_fd=k.get("dir_fd")).st_mode & stat.S_IWUSR):
+            raise PermissionError(5, "Access is denied", str(path))
+        return real_unlink(path, *a, **k)
+    monkeypatch.setattr(os, "unlink", windows_unlink)
+    make()                                                   # used to raise PermissionError
+    assert (tmp_path / "d").exists()

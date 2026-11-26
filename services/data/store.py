@@ -142,6 +142,18 @@ class Dataset:
         return (str(lo), str(hi)) if lo is not None else None
 
 
+def _rmtree_readonly(root: Path) -> None:
+    """Remove a dataset folder whose raw files were made read-only (0o444, so evidence is not edited by accident).
+    Windows refuses to delete read-only files (2026-11-26: PermissionError on overwrite); make each writable first."""
+    import os
+    import stat
+
+    def again(func, path, _exc):
+        os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+        func(path)
+    shutil.rmtree(root, onerror=again)
+
+
 class DatasetWriter:
     """Builds a new dataset version. Refuses to overwrite an existing one (immutability)."""
 
@@ -153,7 +165,7 @@ class DatasetWriter:
             if not overwrite:
                 raise FileExistsError(f"dataset {dataset_id} already exists; datasets are immutable — "
                                       "choose a new id/version")
-            shutil.rmtree(self.root)
+            _rmtree_readonly(self.root)
         (self.root / "raw").mkdir(parents=True)
         self.manifest = Manifest(dataset_id, description, source, licence, synthetic,
                                  created_at or datetime.now().isoformat(timespec="seconds"),
