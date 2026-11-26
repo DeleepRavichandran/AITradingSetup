@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS entries (seq INTEGER PRIMARY KEY AUTOINCREMENT, at TE
 CREATE TRIGGER IF NOT EXISTS entries_no_update BEFORE UPDATE ON entries BEGIN SELECT RAISE(ABORT, 'evidence ledger is append-only'); END;
 CREATE TRIGGER IF NOT EXISTS entries_no_delete BEFORE DELETE ON entries BEGIN SELECT RAISE(ABORT, 'evidence ledger is append-only'); END;
 """
-KINDS = ("hypothesis", "result", "decision", "suspension", "acknowledged", "criteria", "ledger_digest", "knowledge", "concept")
+KINDS = ("hypothesis", "result", "decision", "suspension", "acknowledged", "criteria", "ledger_digest", "knowledge", "concept", "protocol")
 
 
 def _digest(prev: str, at: str, kind: str, subject: str | None, body: str) -> str:

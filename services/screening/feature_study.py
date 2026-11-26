@@ -179,10 +179,10 @@ SCHEMA = """CREATE TABLE IF NOT EXISTS feature_results (run TEXT, at TEXT, sourc
   incremental_mean_ic REAL, p_incremental REAL, holdout_mean_ic REAL, top_third_net REAL, verdict TEXT, PRIMARY KEY (run, feature))"""
 
 
-def run(account: Path, exp_dir: Path, df: pd.DataFrame | None = None, record: bool = True) -> dict:
+def run(account: Path, exp_dir: Path, df: pd.DataFrame | None = None, record: bool = True, source_label: str | None = None) -> dict:
     df = panel(account) if df is None else df
     res = study(df)
-    out = {"run": datetime.now().strftime("%Y%m%dT%H%M%S"), "version": VERSION, "source": Path(account).name if account is not None else "supplied panel",
+    out = {"run": datetime.now().strftime("%Y%m%dT%H%M%S"), "version": VERSION, "source": source_label or (Path(account).name if account is not None else "supplied panel"),
            "observations": int(len(df)), "times": int(df.time.nunique()) if len(df) else 0, "results": res, "features": list(FEATURES),
            "note": "information coefficients from point-in-time features; a 'candidate' still needs forward sessions and the operator's approval"}
     if record and res:

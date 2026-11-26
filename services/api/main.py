@@ -1260,6 +1260,7 @@ def create_app() -> FastAPI:
             log(f"running: {len(syms)} symbols, {len(sch.reg):,} configurations, paper account {name} (capital {capital:,.0f}, rules {LIVE_RULES_VERSION}), "
                 f"paper orders from {live_from}" + (f"; not found: {', '.join(missing)}" if missing else ""))
             _integrity_watch()
+            _history_watch()
             reg.audit("system", "LIVE_SCREENING_STARTED", broker="angelone", symbols=len(syms), live_from=live_from, account=name,
                       rules_version=LIVE_RULES_VERSION, rules=PortfolioRules.live(capital).to_dict())
         except Exception as e:                      # reported, never crashes the API
@@ -1975,6 +1976,57 @@ def create_app() -> FastAPI:
         out["verdicts"] = verdicts
         out["study_run"] = lat.get("run")
         return clean(out)
+
+    # ------------------------------------------------------------------ historical validation (history_validation.py)
+    def _history_job(force: bool = False) -> str:
+        """Weekly, unattended, outside market hours: import Angel One 1-minute history and replay the live rules on it, in a
+        separate low-priority process (never during a session; the live bot keeps the CPU)."""
+        import subprocess
+        import sys
+        from nseql.screening import history_validation as H
+        stt = H.status(st.exp_dir)
+        if stt.get("state") in ("importing", "replaying", "studies") and _ig.get("history_proc") and _ig["history_proc"].poll() is None:
+            return "running"
+        last = stt.get("finished_at")
+        if not force and last and (datetime.now() - datetime.fromisoformat(last)).days < 7:
+            return "recent"
+        if _review_busy():
+            return "market hours"
+        flags = 0x00004000 if os.name == "nt" else 0
+        log = open(H.history_root(st.exp_dir) / "run.log", "w")
+        _ig["history_proc"] = subprocess.Popen([sys.executable, "-m", "nseql.cli", "history-validate", "--months", "12"], stdout=log,
+                                               stderr=subprocess.STDOUT, creationflags=flags,
+                                               preexec_fn=(lambda: os.nice(10)) if os.name != "nt" else None)
+        H._status(st.exp_dir, state="importing", phase="started", started_at=datetime.now().isoformat(timespec="seconds"))
+        reg.audit("system", "HISTORY_VALIDATION_STARTED", forced=force)
+        return "started"
+
+    def _history_watch() -> None:
+        import threading
+
+        def loop():
+            while True:
+                time.sleep(1800)
+                try:
+                    if reviews.current is None and not reviews.pending:
+                        _history_job()
+                except Exception as e:      # noqa: BLE001
+                    print(f"[history] {type(e).__name__}: {e}", flush=True)
+        if not _ig.get("history_watch"):
+            _ig["history_watch"] = threading.Thread(target=loop, name="history", daemon=True)
+            _ig["history_watch"].start()
+
+    @api.get("/history")
+    def history_view():
+        """Latest historical validation: protocol, segments (development, validation, holdout, contaminated), the live rules
+        and the challenger against cash, NIFTY 50 and buy and hold, placebo and stress, concept and feature verdicts."""
+        from nseql.screening import history_validation as H
+        return clean(H.latest(st.exp_dir))
+
+    @api.post("/history/run")
+    def history_run():
+        """Start a historical validation now (operator key only; refused during market hours)."""
+        return {"result": _history_job(force=True)}
 
     @api.get("/heatmaps")
     def heatmaps_catalog():

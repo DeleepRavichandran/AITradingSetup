@@ -107,6 +107,11 @@ def main(argv: list[str] | None = None) -> int:
                                              "the lab runs it by itself after 15:30")
     dr.add_argument("--account", required=True); dr.add_argument("--day", required=True, help="YYYY-MM-DD")
     dr.add_argument("--force", action="store_true", help="run again even if the review is finished")
+    hv = sub.add_parser("history-validate", help="import months of Angel One 1-minute history and replay the live rules and the challenger on it "
+                        "(registered holdout, benchmarks, placebo, stress, concept and feature studies)")
+    hv.add_argument("--months", type=int, default=12); hv.add_argument("--skip-import", action="store_true", help="use the stored dataset as is")
+    hv.add_argument("--dataset", default="angel_minute"); hv.add_argument("--capital", type=float, default=100_000)
+    hv.add_argument("--no-studies", action="store_true")
     sub.add_parser("brain-verify", help="verify the episodic memory hash chain and the correctness probes")
     v = sub.add_parser("serve", help="start the API server"); v.add_argument("--host", default="127.0.0.1"); v.add_argument("--port", type=int, default=8000)
     a = ap.parse_args(argv)
@@ -399,6 +404,35 @@ def main(argv: list[str] | None = None) -> int:
         from nseql.data.adapters.angel_verify import verify
         rep = verify(s.experiments_dir, symbol=a.symbol)
         return 0 if rep["passed"] else 1
+    elif a.cmd == "history-validate":
+        from nseql.screening import history_validation as H
+        if not a.skip_import:
+            from nseql.data.adapters.angelone import AngelError, AngelHistorical, missing_credentials, watchlist
+            miss = missing_credentials()
+            if miss:
+                print("missing in .env:", ", ".join(miss)); return 2
+            try:
+                cov = H.import_history(AngelHistorical(session_dir=s.experiments_dir), s.data_dir, s.experiments_dir, watchlist(s.experiments_dir), a.months)
+            except AngelError as e:
+                H._status(s.experiments_dir, state="failed", phase="import", error=str(e))
+                print(e); return 1
+            for r in cov["symbols"]:
+                print(f"{r['symbol']:>12}: {r['sessions']:>4} sessions {r['first']} .. {r['last']}")
+            if cov["not_imported"]:
+                print("not imported:", ", ".join(cov["not_imported"]))
+        try:
+            rep = H.validate(s.data_dir, s.experiments_dir, a.dataset, a.capital, studies=not a.no_studies, yield_to_market=True)
+        except Exception as e:      # noqa: BLE001 - recorded for the dashboard, then re-raised
+            H._status(s.experiments_dir, state="failed", phase="validation", error=f"{type(e).__name__}: {e}")
+            raise
+        print(rep["kind"])
+        for name in H.SEGMENTS:
+            seg = rep["segments"][name]
+            if seg["sessions"]:
+                print(f"{name} ({len(seg['sessions'])} sessions {seg['sessions'][0]} .. {seg['sessions'][-1]})")
+                for line in seg["plain"]:
+                    print("  " + line)
+        print(f"report {H.history_root(s.experiments_dir) / rep['run'] / 'report.json'}")
     elif a.cmd in ("angel-check", "import-angelone"):
         from datetime import date as _d
         from datetime import datetime as _dt

@@ -167,3 +167,13 @@ Sixteen heatmaps are built from stored data.
 - **Trading:** no trade uses a feature until it is validated and approved.
 
 See docs/HEATMAPS.md.
+
+## Historical validation (added 2026-11-26)
+
+Every week, on the laptop, 12 months of Angel One 1-minute history are replayed through the exact live rules and the challenger.
+- The protocol is registered once.
+- The holdout only grows forward.
+- Days the rules were shaped on are kept out of the evidence.
+- Results are measured against cash, NIFTY 50 and buy-and-hold, with placebo and stress tests, and run through the concept and feature studies.
+
+See docs/HISTORY.md.

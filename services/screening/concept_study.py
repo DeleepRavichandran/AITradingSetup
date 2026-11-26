@@ -87,13 +87,14 @@ def _sources(account: Path | None, data_dir: Path | None, tf: int = 5) -> list[t
     return out
 
 
-def run(account: Path | None, exp_dir: Path, data_dir: Path | None = None, tf: int = 5, record: bool = True, frames: list | None = None) -> dict:
+def run(account: Path | None, exp_dir: Path, data_dir: Path | None = None, tf: int = 5, record: bool = True, frames: list | None = None,
+        source_label: str = "supplied frames") -> dict:
     """`frames` (symbol, candles, m1 or None, intraday) replaces the stored sources (used by tests and replays)."""
     rng = np.random.default_rng(SEED)
     exp_dir = Path(exp_dir)
     run_id = datetime.now().strftime("%Y%m%dT%H%M%S")
     results, runs = [], []
-    for source, frames in ([("supplied frames", frames)] if frames is not None else _sources(account, data_dir, tf)):
+    for source, frames in ([(source_label, frames)] if frames is not None else _sources(account, data_dir, tf)):
         ev_rows, base_rows, plac_rows = [], [], []
         sessions = set()
         nifty = next((f for f in frames if f[0] == "NIFTY50"), None)

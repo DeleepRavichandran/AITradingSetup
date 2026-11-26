@@ -206,7 +206,7 @@ describe("Command Deck safety", () => {
 });
 
 describe("Accessibility and layout", () => {
-  for (const path of ["/", "/radar", "/heatmaps", "/book", "/integrity", "/brain", "/today", "/hud", "/contest", "/deck", "/screening", "/universe", "/planner", "/funds"]) for (const colorScheme of ["light", "dark"]) {
+  for (const path of ["/", "/radar", "/heatmaps", "/book", "/integrity", "/history", "/brain", "/today", "/hud", "/contest", "/deck", "/screening", "/universe", "/planner", "/funds"]) for (const colorScheme of ["light", "dark"]) {
     test(`${path} (${colorScheme}): no serious or critical axe violations`, async () => {
       const { page, ctx } = await open(path, { colorScheme });
       await page.waitForLoadState("networkidle");
@@ -658,6 +658,21 @@ describe("VEGA: Mission Control, radar, dossier, portfolio and evidence integrit
     await page.getByRole("button", { name: "ICT/SMC inferred liquidity zones" }).click();
     await page.getByTestId("hm-grid").locator("button.hm-r").first().click();
     await page.getByTestId("hm-levels").getByText(/not resting orders/).waitFor();
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  });
+
+  test("Historical validation: segments with benchmarks, contaminated days separate, synthetic labelled, operator can start a run", async () => {
+    const { page, ctx, errors, state } = await open("/history");
+    await page.getByTestId("hv-state").getByText("done").waitFor();
+    await page.getByTestId("hv-kind").getByText(/SYNTHETIC replay/).waitFor();
+    await page.getByTestId("hv-segment").getByText("buy and hold watchlist").waitFor();
+    assert.ok(await page.getByTestId("hv-readings").locator(".tag").count() >= 2);
+    await page.getByRole("button", { name: /^contaminated/ }).click();
+    await page.getByText("sessions the live rules were shaped on: shown, never counted as evidence").waitFor();
+    await page.getByTestId("hv-run").click();
+    await page.getByText(/Result:/).waitFor();
+    assert.equal(state.posts.filter((x) => x.path === "/history/run").length, 1);
     assert.deepEqual(errors, []);
     await ctx.close();
   });

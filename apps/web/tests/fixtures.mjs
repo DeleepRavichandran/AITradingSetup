@@ -187,6 +187,7 @@ export function fixtures(state) {
     "/structure": () => VEGA.structure,
     "/research/concepts": () => VEGA.concepts,
     "/heatmaps": () => VEGA.heatmaps.catalog,
+    "/history": () => VEGA.history,
     "/research/features": () => VEGA.heatmaps.catalog.features,
     ...Object.fromEntries(Object.keys(VEGA.heatmaps).filter((k) => k !== "catalog").map((k) => [`/heatmaps/${k}`, () => VEGA.heatmaps[k]])),
     "/benchmarks": () => ({ account: "live_x_v14", sessions: ["2026-11-23", "2026-11-24", "2026-11-25"], start_value: 100000, notes: ["3 session(s): risk-adjusted figures (Sharpe, Sortino) are not meaningful before 20"],
