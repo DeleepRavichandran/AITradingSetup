@@ -110,7 +110,8 @@ def profile(m1: pd.DataFrame, bins: int = PARAMS["profile_bins"]) -> dict | None
     vol = np.zeros(bins)
     for l, h, v in zip(m1.low.to_numpy(float), m1.high.to_numpy(float), m1.volume.to_numpy(float)):
         a, b = np.searchsorted(edges, l, "right") - 1, np.searchsorted(edges, h, "left")
-        a, b = max(a, 0), min(max(b, a + 1), bins)
+        a = min(max(a, 0), bins - 1)                     # a bar at exactly the day's high used to fall outside the bins (0/0)
+        b = min(max(b, a + 1), bins)
         vol[a:b] += v / (b - a)
     poc = int(np.argmax(vol))
     lo_i = hi_i = poc

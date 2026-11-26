@@ -569,7 +569,11 @@ def evaluate(h: dict, ev: dict) -> dict:
             res.update(status="abstain", reason="no completed entries yet", p=None, need=f"{MIN_TRADES} per group", enough=False,
                        confirmatory={"round_trips": 0})
             return res
-        g = g.assign(late=~g.abstain)                       # 'late' = the group expected to be better (passes every gate)
+        # concat with an account that has no entries yet turns the column into objects, where ~True is -2 (2026-11-26):
+        # unknown values are left out, the rest are real booleans before negating
+        g = g.assign(ret=pd.to_numeric(g.ret, errors="coerce"))
+        g = g[g.abstain.notna() & g.ret.notna()]
+        g = g.assign(late=~g.abstain.astype(bool))           # 'late' = the group expected to be better (passes every gate)
         r = g.rename(columns={"exit_ts": "exit_ts"})
         ex = r[r.exit_ts.str[:10] <= reg_at[:10]]
         cf = r[r.exit_ts.str[:10] > reg_at[:10]]

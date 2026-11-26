@@ -199,3 +199,39 @@ def test_a_blocked_self_update_is_shown_never_silent(tmp_path):
     with log.open("a", encoding="utf-8") as f:
         f.write("2026-11-27 16:12:00 new version unhealthy (build ok: True): rolling back to 87354f9\n")
     assert update_status(tmp_path)["status"] == "blocked"
+
+
+def test_gate_split_survives_an_account_with_no_entries_yet(tmp_path):
+    """2026-11-26 evening review: a new rules version opened an empty account; concatenating its empty gate table made the
+    abstain column object-typed, ~True became -2, and the integrity step (and the brain after it) failed with a KeyError."""
+    import pandas as pd
+    from nseql.screening import integrity as I
+    from tests.screening.test_integrity import _account
+    exp = tmp_path / "exp"
+    _account(exp / "screening" / "live_g_v12", 21, {"rules_version": "1.2"})
+    empty = exp / "screening" / "live_g_v14"
+    empty.mkdir(parents=True)
+    import shutil, json
+    shutil.copy(exp / "screening" / "live_g_v12" / "screening.sqlite", empty / "screening.sqlite")
+    import sqlite3
+    con = sqlite3.connect(empty / "screening.sqlite")
+    for t in ("paper_fills", "paper_orders", "signals", "journal"):
+        try:
+            con.execute(f"DELETE FROM {t}")
+        except sqlite3.OperationalError:
+            pass
+    con.commit(); con.close()
+    (empty / "live.json").write_text(json.dumps({"live_from": "2026-11-26T19:35:00", "symbols": [], "capital": 100000, "start_cash": 100000,
+                                                 "rules_version": "1.4"}))
+    rep = I.report(exp)                                                  # used to raise KeyError
+    h = next(x for x in rep["hypotheses"] if x["id"] == "H-ABSTAIN")
+    assert h.get("status") and "confirmatory" in h                        # evaluated, not crashed
+
+
+def test_volume_profile_keeps_a_bar_at_the_days_high():
+    import numpy as np, pandas as pd
+    from nseql.screening import market_structure as M
+    m1 = pd.DataFrame({"low": [100.0, 101.0, 102.0], "high": [101.0, 102.0, 102.0], "volume": [10.0, 10.0, 50.0]})
+    with np.errstate(all="raise"):                                       # 0/0 used to raise here
+        p = M.profile(m1, bins=4)
+    assert p is not None and p["poc"] >= 101.5                           # the 50-share bar at the high is counted
