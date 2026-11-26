@@ -224,7 +224,11 @@ def test_unattended_api_start_with_angel_one(data_dir, tmp_path, monkeypatch):
     # the challenger runs beside the live bot in its own account, fed the same bars (forward contest)
     fw = c.get("/api/contest").json()["forward"]
     assert fw["kind"] == "forward" and fw["challenger"]["version"] == "orb30-breadth-1.0" and fw["verdict"]["status"] == "inconclusive"
-    cf = tmp_path / "exp" / "screening" / "live_angelone_r2_v14_challenger_orb30-breadth-1_0_x20" / "live.json"
+    from nseql.screening.execution import EXECUTION_VERSION
+    x = EXECUTION_VERSION.replace(".", "")                     # the contest folder is tied to the execution version (2.1: _x21)
+    cf = tmp_path / "exp" / "screening" / f"live_angelone_r2_v14_challenger_orb30-breadth-1_0_x{x}" / "live.json"
+    # the prospective shadow portfolio B follows the same bars in its own folder (hypothetical, never an account)
+    assert list((tmp_path / "exp" / "screening").glob(f"live_angelone_r2_v14_shadow_B_*_x{x}"))
     assert cf.exists()
     import json as _json
     cm = _json.loads(cf.read_text())                     # forward manifest frozen when the challenger account is created
