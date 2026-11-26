@@ -37,19 +37,19 @@ def _run(root, cfgs, script, bars, portfolio):
 # ---------------------------------------------------------------------------------------------------- E2
 def test_e2_standalone_fills_do_not_depend_on_unrelated_configurations(tmp_path):
     """Config 0 alone vs config 0 with config 1 (same stock, decided first): standalone, each has its own 10% of the bar."""
-    bars = _bars(8, thin_at="09:21")                                            # 1,000 shares traded: 100 each allowed
+    bars = _bars(8, thin_at="09:22")                                            # 1,000 shares traded: 100 each allowed (2.1: first fill bar 09:22)
     alone = _run(tmp_path / "a", [("AAA", True), ("AAA", True)], {"09:20": {1: "BUY"}}, bars, None)
     both = _run(tmp_path / "b", [("AAA", True), ("AAA", True)], {"09:20": {0: "BUY", 1: "BUY"}}, bars, None)    # config 0 is matched first
-    q = lambda s: s.store.db.execute("SELECT qty FROM paper_fills WHERE config_id=? AND ts=?", (str(s.reg.ids[1]), f"{DAY}T09:21:00")).fetchall()
+    q = lambda s: s.store.db.execute("SELECT qty FROM paper_fills WHERE config_id=? AND ts=?", (str(s.reg.ids[1]), f"{DAY}T09:22:00")).fetchall()
     assert [r[0] for r in q(alone)] == [100] and [r[0] for r in q(both)] == [100]
 
 
 def test_e2_a_shared_portfolio_still_shares_the_bar(tmp_path):
-    bars = _bars(8, thin_at="09:21")
+    bars = _bars(8, thin_at="09:22")
     sch = _run(tmp_path / "p", [("AAA", True), ("BBB", True), ("AAA", True)], {"09:20": {0: "BUY", 2: "BUY"}}, bars,
                rules(1_000_000, per_trade_pct=0.05))
-    tot = sch.store.db.execute("SELECT COALESCE(SUM(qty),0) FROM paper_fills WHERE symbol='AAA' AND ts=?", (f"{DAY}T09:21:00",)).fetchone()[0]
-    assert tot <= 100                                                           # competing inside one portfolio: one allowance
+    tot = sch.store.db.execute("SELECT COALESCE(SUM(qty),0) FROM paper_fills WHERE symbol='AAA' AND ts=?", (f"{DAY}T09:22:00",)).fetchone()[0]
+    assert 0 < tot <= 100                                                       # competing inside one portfolio: one allowance
 
 
 # ---------------------------------------------------------------------------------------------------- E3

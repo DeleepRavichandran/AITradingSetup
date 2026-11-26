@@ -140,10 +140,11 @@ def test_d2_simultaneous_buys_respect_the_symbol_cap(tmp_path):
 def test_d2_a_price_gap_is_rechecked_at_the_fill(tmp_path):
     sch = sched(tmp_path, [("AAA", True)], {"09:20": {0: "BUY"}}, qty={0: 9}, portfolio=rules(10_000, max_symbol_pct=0.10))
     bars = flat(100.0, 8)
-    bars["09:21"] = [bar("AAA", T("09:21"), 120.0, op=120.0), bar("BBB", T("09:21"), 100.0)]     # gap up 20%
+    bars["09:22"] = [bar("AAA", T("09:22"), 120.0, op=120.0), bar("BBB", T("09:22"), 100.0)]     # gap up 20% on the 2.1 fill bar
     run(sch, bars)
     f = fills(sch, "BUY")
-    assert f and sum(x[3] * x[4] for x in f) <= 1_000 * (1 + 1e-9)                                # cut to what the cap allows
+    assert f and min(x[4] for x in f) >= 120.0                                                     # the fill really faced the gap
+    assert sum(x[3] * x[4] for x in f) <= 1_000 * (1 + 1e-9) and sum(x[3] for x in f) < 9         # cut to what the cap allows
 
 
 def test_d2_partial_fill_then_retry_counts_what_is_already_held(tmp_path):
@@ -163,11 +164,12 @@ def test_d2_partial_fill_then_retry_counts_what_is_already_held(tmp_path):
 def test_d3_delivery_buy_never_takes_cash_below_zero_after_charges(tmp_path):
     sch = sched(tmp_path, [("AAA", False)], {"09:20": {0: "BUY"}}, portfolio=rules(10_000, per_trade_pct=0.99, cost_buffer=0.003))
     bars = flat(100.0, 8)
-    bars["09:21"] = [bar("AAA", T("09:21"), 101.0, op=101.0), bar("BBB", T("09:21"), 100.0)]
+    bars["09:22"] = [bar("AAA", T("09:22"), 101.0, op=101.0), bar("BBB", T("09:22"), 100.0)]     # dearer on the 2.1 fill bar
     run(sch, bars)
     x, db = sch.engine.x, sch.store.db
     f = fills(sch, "BUY")
     assert f, "the buy should still fill (smaller)"
+    assert min(q[4] for q in f) >= 101.0                                                           # at the higher price
     spent = sum(round(q * p * 100) + ch for _, _, _, q, p, ch in f)
     assert x.cash >= 0 and x.cash == 10_000 * 100 - spent and x.reserved == 0
 
